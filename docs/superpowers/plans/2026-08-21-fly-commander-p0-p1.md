@@ -1416,7 +1416,8 @@ final class CommandRouterTests: XCTestCase {
         rightDir = base.appendingPathComponent("R")
         try FileManager.default.createDirectory(at: leftDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: rightDir, withIntermediateDirectories: true)
-        try "x".write(to: leftDir.appendingPathComponent("only.txt"), atomically: true, encoding: .utf8)
+        try "a".write(to: leftDir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try "z".write(to: leftDir.appendingPathComponent("z.txt"), atomically: true, encoding: .utf8)
         let source = LocalFileSource()
         let left = FilePane(id: .left, source: source, startPath: TCPath(url: leftDir))
         let right = FilePane(id: .right, source: source, startPath: TCPath(url: rightDir))
@@ -1436,13 +1437,13 @@ final class CommandRouterTests: XCTestCase {
 
     func testCopyToInactivePane() {
         router.execute(.copy)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("only.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("a.txt").path))
     }
 
     func testMoveToInactivePane() {
         router.execute(.move)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("only.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: leftDir.appendingPathComponent("only.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("a.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leftDir.appendingPathComponent("a.txt").path))
     }
 
     func testRenameViaMethod() {
@@ -1460,7 +1461,7 @@ final class CommandRouterTests: XCTestCase {
         var got: [FileItem] = []
         router.onDelete = { _, items in got = items }
         router.execute(.delete)
-        XCTAssertEqual(got.map { $0.name }, ["only.txt"])
+        XCTAssertEqual(got.map { $0.name }, ["a.txt"])
     }
 
     func testOperationStateEmittedOnCopy() {
