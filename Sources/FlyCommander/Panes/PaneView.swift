@@ -71,7 +71,7 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
 
     override func layout() {
         super.layout()
-        flowLayout.itemSize = NSSize(width: max(320, scrollView.contentSize.width), height: 20)
+        flowLayout.itemSize = NSSize(width: max(320, frame.width), height: 20)
         flowLayout.invalidateLayout()
     }
 
