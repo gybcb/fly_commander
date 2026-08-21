@@ -10,11 +10,22 @@ public struct SelectionModel: Equatable {
 
     public init() {}
 
-    public mutating func reload(with ids: [String]) {
+    public mutating func reload(with ids: [String], previousFocusID: String? = nil) {
         items = ids
-        focusIndex = 0
-        marked = []
         anchor = nil
+        guard let previousFocusID else { focusIndex = 0; marked = []; return }
+        if let kept = ids.firstIndex(of: previousFocusID) {
+            focusIndex = kept
+            marked.formIntersection(Set(ids))
+        } else if ids.isEmpty {
+            focusIndex = 0
+            marked = []
+        } else {
+            // Focused item vanished (moved/trashed): land on the "next" item,
+            // clamping when it was the last one.
+            focusIndex = min(focusIndex, ids.count - 1)
+            marked = []
+        }
     }
 
     public var hasItems: Bool { !items.isEmpty }

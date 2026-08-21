@@ -65,4 +65,43 @@ final class SelectionModelTests: XCTestCase {
         XCTAssertEqual(s.focusIndex, 0)
         XCTAssertEqual(s.focusID, "x")
     }
+
+    func testReloadKeepsFocusWhenPreviousFocusStillPresent() {
+        var s = SelectionModel()
+        s.reload(with: ["x", "a", "b"])
+        s.moveFocus(to: 1, mode: .simple)           // focus a
+        s.reload(with: ["x", "a", "b"], previousFocusID: "a")
+        XCTAssertEqual(s.focusIndex, 1)
+        XCTAssertEqual(s.focusID, "a")
+    }
+
+    func testReloadMovesFocusToNextWhenPreviousFocusRemoved() {
+        var s = SelectionModel()
+        s.reload(with: ["x", "a", "b"])
+        s.moveFocus(to: 1, mode: .simple)           // focus a
+        s.reload(with: ["x", "b"], previousFocusID: "a")
+        XCTAssertEqual(s.focusIndex, 1)
+        XCTAssertEqual(s.focusID, "b")
+    }
+
+    func testReloadMovesFocusToLastWhenLastRemoved() {
+        var s = SelectionModel()
+        s.reload(with: ["x", "a", "b"])
+        s.moveFocus(to: 2, mode: .simple)           // focus b (last)
+        s.reload(with: ["x", "a"], previousFocusID: "b")
+        XCTAssertEqual(s.focusIndex, 1)
+        XCTAssertEqual(s.focusID, "a")
+    }
+
+    func testReloadKeepsMarksForSurvivingIDs() {
+        var s = SelectionModel()
+        s.reload(with: ["x", "a", "b"])
+        s.moveFocus(to: 1, mode: .simple)           // focus a
+        s.toggleMark()                              // mark a
+        s.moveFocusBy(delta: 1, mode: .additive)    // focus+mark b
+        XCTAssertEqual(s.markedIDs, ["a", "b"])
+        s.reload(with: ["x", "a"], previousFocusID: "a")
+        XCTAssertEqual(s.focusID, "a")
+        XCTAssertEqual(s.markedIDs, ["a"])
+    }
 }

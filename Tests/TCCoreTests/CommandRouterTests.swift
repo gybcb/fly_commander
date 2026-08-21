@@ -38,10 +38,39 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("a.txt").path))
     }
 
+    func testCopyKeepsFocusOnSource() {
+        router.execute(.copy)
+        XCTAssertTrue(workspace.activePane.selection.focusID?.hasSuffix("L/a.txt") ?? false,
+                      "focus: \(String(describing: workspace.activePane.selection.focusID))")
+    }
+
+    func testCopyKeepsFocusOnMarkedLastItem() {
+        workspace.activePane.moveFocus(to: 1, mode: .simple)   // focus z.txt
+        workspace.activePane.toggleMark()
+        router.execute(.copy)
+        let sel = workspace.activePane.selection
+        XCTAssertTrue(sel.focusID?.hasSuffix("L/z.txt") ?? false,
+                      "focus: \(String(describing: sel.focusID))")
+        XCTAssertTrue(sel.focusID.map { sel.isMarked($0) } ?? false)
+    }
+
     func testMoveToInactivePane() {
         router.execute(.move)
         XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("a.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: leftDir.appendingPathComponent("a.txt").path))
+    }
+
+    func testMoveMovesFocusToNext() {
+        router.execute(.move)
+        XCTAssertTrue(workspace.activePane.selection.focusID?.hasSuffix("L/z.txt") ?? false,
+                      "focus: \(String(describing: workspace.activePane.selection.focusID))")
+    }
+
+    func testMoveLastFileFocusMovesToFirstRemaining() {
+        workspace.activePane.moveFocus(to: 1, mode: .simple)   // focus z.txt (last)
+        router.execute(.move)
+        XCTAssertTrue(workspace.activePane.selection.focusID?.hasSuffix("L/a.txt") ?? false,
+                      "focus: \(String(describing: workspace.activePane.selection.focusID))")
     }
 
     func testRenameViaMethod() {

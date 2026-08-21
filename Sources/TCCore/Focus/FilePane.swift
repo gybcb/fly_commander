@@ -30,12 +30,13 @@ public final class FilePane {
     public var focusedItem: FileItem? { selection.focusID.flatMap { itemByID[$0] } }
     public var itemCount: Int { page?.items.count ?? 0 }
 
-    public func load() {
+    public func load(preserveFocus: Bool = true) {
+        let keep = preserveFocus ? selection.focusID : nil
         do {
             let items = try source.listDirectory(path)
             let page = DirectoryPage(path: path, items: items)
             self.page = page
-            selection.reload(with: items.map { $0.id })
+            selection.reload(with: items.map { $0.id }, previousFocusID: keep)
         } catch {
             self.page = DirectoryPage(path: path, items: [])
             selection.reload(with: [])
@@ -46,7 +47,7 @@ public final class FilePane {
     public func navigate(to newPath: TCPath) {
         guard newPath.isRoot || source.isDirectory(newPath) else { return }
         path = newPath
-        load()
+        load(preserveFocus: false)
     }
 
     public func enterFocusedDirectory() {

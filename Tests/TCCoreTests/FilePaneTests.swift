@@ -35,6 +35,17 @@ final class FilePaneTests: XCTestCase {
         XCTAssertEqual(pane.path.url.lastPathComponent, "dir1")
         pane.gotoParent()
         XCTAssertEqual(pane.path.url.lastPathComponent, tmp.lastPathComponent)
+        XCTAssertEqual(pane.selection.focusIndex, 0)      // navigation resets focus
+    }
+
+    func testReloadSameDirectoryPreservesFocus() {
+        let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
+        pane.load()
+        pane.moveFocus(to: 1, mode: .simple)              // focus file.txt
+        pane.load()                                       // same directory relist
+        XCTAssertEqual(pane.selection.focusIndex, 1)
+        XCTAssertTrue(pane.selection.focusID?.hasSuffix("file.txt") ?? false,
+                      "focus: \(String(describing: pane.selection.focusID))")
     }
 
     func testOperationTargetsUsesSelection() {
