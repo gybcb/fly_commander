@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **macOS 14 minimum.** `Package.swift` sets `platforms: [.macOS(.v14)]`.
-- **Swift 5 language mode.** `Package.swift` sets `.swiftLanguageVersion(.v5)` to avoid strict-concurrency/Sendable friction.
+- **Swift 5 language mode.** The root manifest is `swift-tools-version: 5.9`, which compiles in Swift 5 mode by default (no `swiftSettings` needed — `.swiftLanguageVersion(.v5)` is not in the 5.9 manifest API on this toolchain). This avoids strict-concurrency/Sendable friction.
 - **No third-party dependencies.** Only `Foundation`, `AppKit`, `Dispatch`.
 - **Layering.** `TCCore` must **not** `import AppKit`. `FlyCommander` may `import AppKit` and `import TCCore`.
 - **Naming.** App target `FlyCommander`, library target `TCCore`, test target `TCCoreTests`.
@@ -102,13 +102,11 @@ let package = Package(
         .executable(name: "FlyCommander", targets: ["FlyCommander"]),
     ],
     targets: [
-        .target(name: "TCCore", swiftSettings: [.swiftLanguageVersion(.v5)]),
+        .target(name: "TCCore"),
         .executableTarget(name: "FlyCommander",
-                          dependencies: ["TCCore"],
-                          swiftSettings: [.swiftLanguageVersion(.v5)]),
+                          dependencies: ["TCCore"]),
         .testTarget(name: "TCCoreTests",
-                    dependencies: ["TCCore"],
-                    swiftSettings: [.swiftLanguageVersion(.v5)]),
+                    dependencies: ["TCCore"]),
     ]
 )
 ```
@@ -1514,16 +1512,13 @@ Edit `Package.swift` to add the target and a product-independent test target. Re
 
 ```swift
     targets: [
-        .target(name: "TCCore", swiftSettings: [.swiftLanguageVersion(.v5)]),
+        .target(name: "TCCore"),
         .executableTarget(name: "FlyCommander",
-                          dependencies: ["TCCore"],
-                          swiftSettings: [.swiftLanguageVersion(.v5)]),
+                          dependencies: ["TCCore"]),
         .testTarget(name: "TCCoreTests",
-                    dependencies: ["TCCore"],
-                    swiftSettings: [.swiftLanguageVersion(.v5)]),
+                    dependencies: ["TCCore"]),
         .testTarget(name: "FlyCommanderTests",
-                    dependencies: ["FlyCommander"],
-                    swiftSettings: [.swiftLanguageVersion(.v5)]),
+                    dependencies: ["FlyCommander"]),
     ]
 ```
 
