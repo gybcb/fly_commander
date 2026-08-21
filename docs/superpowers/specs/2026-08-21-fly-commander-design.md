@@ -145,25 +145,31 @@ NSResponder.keyDown
 
 ## 7. 项目结构
 
+单一根 SPM 包，含三个 target：`TCCore`（headless 库）、`FlyCommander`（可执行 AppKit app）、`TCCoreTests`（内核测试）。一条 `swift build` / `swift test` 即可构建与验证，无需易碎的 `.xcodeproj`；App 用 SPM 可执行 target + `NSApplication` bootstrap 起 GUI。
+
 ```
 fly_commander/
-├─ Packages/TCCore/               # headless 内核，纯 Swift
-│   ├─ Package.swift
-│   ├─ Sources/TCCore/
-│   │   ├─ Path/                  # TCPath, PathUtils
-│   │   ├─ Model/                 # DirectoryPage, FileItem
-│   │   ├─ Selection/             # SelectionModel, MarkedSet
-│   │   ├─ Commands/              # Command, CommandMap, CommandContext
-│   │   ├─ Operations/            # FileOperation, OperationEngine, ConflictPolicy
-│   │   ├─ Focus/                 # PaneState, FocusController
-│   │   ├─ Sources/               # FileSource, LocalFileSource
-│   │   └─ Events/                # 内核→视图 回调协议
-│   └─ Tests/TCCoreTests/…
-└─ Apps/FlyCommander/             # AppKit 薄视图层
-    ├─ App/                       # AppDelegate, MainWindowController
-    ├─ Panes/                     # PaneView, PaneTable(NSCollectionView), 面包屑
-    ├─ Bars/                      # 命令栏, 状态栏
-    └─ Support/                   # 键位分发、资源
+├─ Package.swift                 # 根包：定义 TCCore / FlyCommander / TCCoreTests
+├─ Sources/
+│  ├─ TCCore/                    # headless 内核，纯 Swift（零 AppKit）
+│  │  ├─ Path/                   # TCPath, PathUtils
+│  │  ├─ Model/                  # DirectoryPage, FileItem, FileVisualRole
+│  │  ├─ Selection/              # SelectionModel, MarkedSet
+│  │  ├─ Commands/               # Command, CommandMap, CommandContext
+│  │  ├─ Operations/             # FileOperation, OperationEngine, ConflictPolicy
+│  │  ├─ Focus/                  # PaneState, FocusController
+│  │  ├─ Sources/                # FileSource, LocalFileSource
+│  │  ├─ Events/                 # 内核→视图 回调协议（CoreEvents）
+│  │  └─ TCError.swift           # 错误归一化
+│  └─ FlyCommander/              # AppKit 薄视图层
+│     ├─ main.swift              # @main / NSApplication bootstrap
+│     ├─ App/                    # AppDelegate, MainWindowController
+│     ├─ Panes/                  # PaneView, PaneTable(NSCollectionView), 面包屑
+│     ├─ Bars/                   # 命令栏, 状态栏
+│     └─ Support/                # 键位分发、角色→NSColor 配色映射
+├─ Tests/
+│  └─ TCCoreTests/               # 内核全量单测（选择/命令/操作/目录/数据源）
+└─ docs/superpowers/…
 ```
 
 ## 8. 实施计划（P0 + P1）
