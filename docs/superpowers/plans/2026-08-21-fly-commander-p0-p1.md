@@ -534,12 +534,12 @@ final class LocalFileSourceTests: XCTestCase {
 
     func testListsDirectoriesFirstThenFilesSorted() throws {
         try FileManager.default.createDirectory(at: tmp.appendingPathComponent("zeta_dir"))
-        try FileManager.default.createFile(atPath: tmp.appendingPathComponent("apple").path, contents: Data([1]))
-        try FileManager.default.createFile(atPath: tmp.appendingPathComponent("Banana").path, contents: Data([1, 2]))
+        try FileManager.default.createFile(atPath: tmp.appendingPathComponent("alpha").path, contents: Data([1]))
+        try FileManager.default.createFile(atPath: tmp.appendingPathComponent("beta").path, contents: Data([1, 2]))
         let items = try src.listDirectory(TCPath(url: tmp))
         let names = items.map { $0.name }
         XCTAssertEqual(names.first, "zeta_dir")          // directory first
-        XCTAssertEqual(Array(names.dropFirst()), ["apple", "Banana"]) // localized case-insensitive order
+        XCTAssertEqual(Array(names.dropFirst()), ["alpha", "beta"]) // localized case-insensitive order
         XCTAssertEqual(items[0].isDirectory, true)
         XCTAssertEqual(items[0].size, 0)
     }
