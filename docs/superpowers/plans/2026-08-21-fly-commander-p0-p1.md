@@ -921,8 +921,8 @@ final class FilePaneTests: XCTestCase {
         XCTAssertEqual(ws.active, .left)
         ws.switchActive()
         XCTAssertEqual(ws.active, .right)
-        XCTAssertEqual(ws.activePane, b)
-        XCTAssertEqual(ws.inactivePane, a)
+        XCTAssert(ws.activePane === b)
+        XCTAssert(ws.inactivePane === a)
         XCTAssertEqual(fired, 1)
     }
 }
