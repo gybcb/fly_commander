@@ -105,6 +105,38 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(got.map { $0.name }, ["a.txt"])
     }
 
+    func testViewFileDelegatesToOnView() {
+        var got: FileItem?
+        router.onView = { got = $0 }
+        router.execute(.viewFile)
+        XCTAssertEqual(got?.name, "a.txt")
+    }
+
+    func testEditFileDelegatesToOnEdit() {
+        var got: FileItem?
+        router.onEdit = { got = $0 }
+        router.execute(.editFile)
+        XCTAssertEqual(got?.name, "a.txt")
+    }
+
+    func testSearchDelegatesToOnSearch() {
+        var got: TCPath?
+        router.onSearch = { got = $0 }
+        router.execute(.search)
+        XCTAssertEqual(got, TCPath(url: leftDir))
+    }
+
+    func testViewFileIgnoresDirectory() {
+        let dirURL = leftDir.appendingPathComponent("subdir")
+        try! FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: false)
+        workspace.activePane.load()
+        workspace.activePane.moveFocus(to: 0, mode: .simple)   // focus subdir (dirs first)
+        var called = false
+        router.onView = { _ in called = true }
+        router.execute(.viewFile)
+        XCTAssertFalse(called)
+    }
+
     func testOperationStateEmittedOnCopy() {
         var last: OperationState?
         workspace.onOperationState = { last = $0 }

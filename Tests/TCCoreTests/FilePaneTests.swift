@@ -48,6 +48,15 @@ final class FilePaneTests: XCTestCase {
                       "focus: \(String(describing: pane.selection.focusID))")
     }
 
+    func testRevealItem() {
+        let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
+        pane.load()
+        let fileID = pane.page!.items[1].id               // file.txt
+        XCTAssertTrue(pane.revealItem(id: fileID))
+        XCTAssertEqual(pane.selection.focusIndex, 1)
+        XCTAssertFalse(pane.revealItem(id: "/no/such/id"))
+    }
+
     func testOperationTargetsUsesSelection() {
         let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
         pane.load()

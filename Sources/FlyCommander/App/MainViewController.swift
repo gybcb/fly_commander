@@ -10,6 +10,7 @@ final class MainViewController: NSViewController {
     private var rightPaneView: PaneView!
     private var commandBar: CommandBar!
     private var statusBar: StatusBar!
+    private let searchWindow = SearchWindowController()
 
     // Minimal compile fix: the reduced SDK (Xcode 26.6) does not expose an
     // inherited no-argument initializer on NSViewController, so provide one.
@@ -30,6 +31,9 @@ final class MainViewController: NSViewController {
         router = CommandRouter(workspace: workspace, engine: OperationEngine())
         router.conflictPrompt = { [weak self] src, dst in self?.promptConflict(src, dst) ?? .overwrite }
         router.onDelete = { [weak self] pane, targets in self?.doTrashDelete(pane: pane, targets: targets) }
+        router.onView = { [weak self] item in self?.showPreview(item) }
+        router.onEdit = { [weak self] item in self?.openForEdit(item) }
+        router.onSearch = { [weak self] root in self?.beginSearch(in: root) }
 
         left.onReload = { [weak self] p in self?.refresh(p) }
         right.onReload = { [weak self] p in self?.refresh(p) }
@@ -120,6 +124,50 @@ final class MainViewController: NSViewController {
     }
 
     // MARK: - AppKit-provided operations
+
+    private static let textExtensions: Set<String> = [
+        "txt", "md", "markdown", "log", "csv", "json", "xml", "plist", "ini",
+        "swift", "m", "h", "mm", "c", "cpp", "hxx", "py", "js", "ts", "rb",
+        "go", "rs", "sh", "zsh", "yml", "yaml", "toml", "html", "css", "sql",
+    ]
+
+    private func showPreview(_ item: FileItem) {
+        PreviewWindowController.show(item: item)
+    }
+
+    private func openForEdit(_ item: FileItem) {
+        let url = item.path.url
+        if Self.textExtensions.contains(url.pathExtension.lowercased()),
+           let textEdit = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
+            NSWorkspace.shared.open([url], withApplicationAt: textEdit, configuration: .init()) { [weak self] _, error in
+                if error != nil {
+                    DispatchQueue.main.async {
+                        if let self, !NSWorkspace.shared.open(url) {
+                            self.commandBar.setStatus("无法打开文件")
+                        }
+                    }
+                }
+            }
+        } else {
+            if !NSWorkspace.shared.open(url) {
+                commandBar.setStatus("无法打开文件")
+            }
+        }
+    }
+
+    private func beginSearch(in root: TCPath) {
+        searchWindow.onOperation = { [weak self] state in self?.workspace.operationState(state) }
+        searchWindow.present(root: root) { [weak self] hit in
+            guard let self else { return }
+            let pane = self.workspace.activePane
+            if hit.isDirectory {
+                pane.navigate(to: hit.path)
+            } else if let parent = hit.path.parent {
+                pane.navigate(to: parent)
+            }
+            pane.revealItem(id: hit.path.pathString)
+        }
+    }
 
     private func promptConflict(_ src: TCPath, _ dst: TCPath) -> ConflictChoice {
         let alert = NSAlert()

@@ -46,6 +46,10 @@ enum KeyDispatcher {
         case 97: return DispatchResult(command: .move, moveMode: .simple)       // F6
         case 98: return DispatchResult(command: .makeDirectory, moveMode: .simple) // F7
         case 99: return DispatchResult(command: .delete, moveMode: .simple)     // F8
+        case 94: return DispatchResult(command: .viewFile, moveMode: .simple)   // F3
+        case 95: return DispatchResult(command: .editFile, moveMode: .simple)   // F4
+        case 3: // F
+            return has(.command) ? DispatchResult(command: .search, moveMode: .simple) : nil
         case 12: // Q
             return has(.option) ? DispatchResult(command: .toggleMark, moveMode: .simple) : nil
         case 0: // A

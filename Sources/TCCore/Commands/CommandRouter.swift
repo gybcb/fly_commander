@@ -5,6 +5,9 @@ public final class CommandRouter {
     public let engine: OperationEngine
     public var conflictPrompt: ConflictPrompt?
     public var onDelete: ((FilePane, [FileItem]) -> Void)?
+    public var onView: ((FileItem) -> Void)?
+    public var onEdit: ((FileItem) -> Void)?
+    public var onSearch: ((TCPath) -> Void)?
 
     public init(workspace: Workspace, engine: OperationEngine = OperationEngine()) {
         self.workspace = workspace
@@ -33,6 +36,12 @@ public final class CommandRouter {
             if !targets.isEmpty { onDelete?(a, targets) }
         case .rename: break
         case .makeDirectory: break
+        case .viewFile:
+            if let item = a.focusedItem, !item.isDirectory { onView?(item) }
+        case .editFile:
+            if let item = a.focusedItem, !item.isDirectory { onEdit?(item) }
+        case .search:
+            onSearch?(a.path)
         }
     }
 

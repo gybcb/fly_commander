@@ -6,5 +6,6 @@ public enum CommandID: Hashable {
     case switchPane
     case toggleMark, selectAll, clearMarks
     case copy, move, delete, rename, makeDirectory
+    case viewFile, editFile, search
     case cancel
 }

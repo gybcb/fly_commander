@@ -30,6 +30,16 @@ public final class FilePane {
     public var focusedItem: FileItem? { selection.focusID.flatMap { itemByID[$0] } }
     public var itemCount: Int { page?.items.count ?? 0 }
 
+    /// Focus the item with this id if it is on the current page (used after
+    /// jumping to a directory from search results).
+    @discardableResult
+    public func revealItem(id: String) -> Bool {
+        guard let idx = selection.items.firstIndex(of: id) else { return false }
+        selection.setFocus(to: idx)
+        onReload?(self)
+        return true
+    }
+
     public func load(preserveFocus: Bool = true) {
         let keep = preserveFocus ? selection.focusID : nil
         do {
