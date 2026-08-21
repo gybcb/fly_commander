@@ -533,7 +533,7 @@ final class LocalFileSourceTests: XCTestCase {
     }
 
     func testListsDirectoriesFirstThenFilesSorted() throws {
-        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("zeta_dir"))
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("zeta_dir"), withIntermediateDirectories: false)
         try FileManager.default.createFile(atPath: tmp.appendingPathComponent("alpha").path, contents: Data([1]))
         try FileManager.default.createFile(atPath: tmp.appendingPathComponent("beta").path, contents: Data([1, 2]))
         let items = try src.listDirectory(TCPath(url: tmp))
@@ -589,7 +589,7 @@ public struct LocalFileSource: FileSource {
     private let fm = FileManager.default
     private let keys: Set<URLResourceKey> = [
         .isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
-        .isHiddenKey, .isImmutableKey, .isExecutableKey,
+        .isHiddenKey, .isWritableKey, .isExecutableKey,
     ]
 
     public func isDirectory(_ path: TCPath) -> Bool {
@@ -621,7 +621,7 @@ public struct LocalFileSource: FileSource {
                 size: size,
                 modificationDate: date,
                 isHidden: rv.isHidden ?? false,
-                isReadOnly: rv.isImmutable ?? false,
+                isReadOnly: !(rv.isWritable ?? true),
                 isExecutable: rv.isExecutable ?? false
             ))
         }
@@ -874,7 +874,7 @@ final class FilePaneTests: XCTestCase {
     override func setUpWithError() throws {
         tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pane_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("dir1"))
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("dir1"), withIntermediateDirectories: false)
         try FileManager.default.createFile(atPath: tmp.appendingPathComponent("file.txt").path, contents: Data([1,2,3]))
     }
     override func tearDownWithError() throws {
@@ -1104,7 +1104,7 @@ final class OperationEngineTests: XCTestCase {
         try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
         try "hello".write(to: src.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
-        try FileManager.default.createDirectory(at: src.appendingPathComponent("sub"))
+        try FileManager.default.createDirectory(at: src.appendingPathComponent("sub"), withIntermediateDirectories: false)
     }
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: src.deletingLastPathComponent())
