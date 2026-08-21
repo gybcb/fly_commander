@@ -25,7 +25,7 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
         flowLayout.scrollDirection = .vertical
         flowLayout.minimumLineSpacing = 0
         flowLayout.minimumInteritemSpacing = 0
-        flowLayout.itemSize = NSSize(width: 500, height: 20)
+        flowLayout.itemSize = NSSize(width: 500, height: 22)
 
         let cv = FileCollectionView(frame: .zero)
         cv.collectionViewLayout = flowLayout
@@ -50,8 +50,12 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
         addSubview(titleLabel)
         addSubview(sv)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 11)
+        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
         titleLabel.textColor = .secondaryLabelColor
+        titleLabel.drawsBackground = true
+        titleLabel.backgroundColor = .controlBackgroundColor
+        titleLabel.wantsLayer = true
+        titleLabel.layer?.cornerRadius = 4
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -71,7 +75,7 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
 
     override func layout() {
         super.layout()
-        flowLayout.itemSize = NSSize(width: max(320, frame.width), height: 20)
+        flowLayout.itemSize = NSSize(width: max(320, frame.width), height: 22)
         flowLayout.invalidateLayout()
     }
 
@@ -181,8 +185,13 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
     private func scrollFocusIntoView() {
         let idx = pane.selection.focusIndex
         guard idx >= 0, idx < items.count else { return }
-        collectionView.scrollToItems(at: [IndexPath(item: idx, section: 0)],
-                                     scrollPosition: .nearestVerticalEdge)
+        // reloadData() is asynchronous; scroll after the layout pass so the
+        // target item's position is valid.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, idx < self.items.count else { return }
+            self.collectionView.scrollToItems(at: [IndexPath(item: idx, section: 0)],
+                                             scrollPosition: .nearestVerticalEdge)
+        }
     }
 
     private func updateActiveBorder() {

@@ -8,9 +8,10 @@ final class FileItemCellView: NSCollectionViewItem {
     private let bgView = NSView()
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 20))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 22))
         self.view = container
         bgView.wantsLayer = true
+        bgView.layer?.cornerRadius = 2
         container.addSubview(bgView)
         container.addSubview(nameLabel)
         container.addSubview(sizeLabel)
@@ -35,11 +36,11 @@ final class FileItemCellView: NSCollectionViewItem {
             nameLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             nameLabel.trailingAnchor.constraint(equalTo: sizeLabel.leadingAnchor, constant: -6),
 
-            sizeLabel.widthAnchor.constraint(equalToConstant: 90),
+            sizeLabel.widthAnchor.constraint(equalToConstant: 72),
             sizeLabel.trailingAnchor.constraint(equalTo: dateLabel.leadingAnchor, constant: -6),
             sizeLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
-            dateLabel.widthAnchor.constraint(equalToConstant: 150),
+            dateLabel.widthAnchor.constraint(equalToConstant: 160),
             dateLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
             dateLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
@@ -52,11 +53,17 @@ final class FileItemCellView: NSCollectionViewItem {
 
         let text = PaneColor.text(for: role, dark: dark)
         nameLabel.textColor = text
-        sizeLabel.textColor = text.withAlphaComponent(0.7)
-        dateLabel.textColor = text.withAlphaComponent(0.7)
+        sizeLabel.textColor = .secondaryLabelColor
+        dateLabel.textColor = .secondaryLabelColor
 
         let bold = PaneColor.isBold(role)
         nameLabel.font = bold ? .systemFont(ofSize: 12, weight: .bold) : .systemFont(ofSize: 12)
         bgView.layer?.backgroundColor = PaneColor.background(for: role, active: true, dark: dark).cgColor
+        if let borderColor = PaneColor.border(for: role) {
+            bgView.layer?.borderColor = borderColor.cgColor
+            bgView.layer?.borderWidth = 1
+        } else {
+            bgView.layer?.borderWidth = 0
+        }
     }
 }
