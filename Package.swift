@@ -14,5 +14,7 @@ let package = Package(
                           dependencies: ["TCCore"]),
         .testTarget(name: "TCCoreTests",
                     dependencies: ["TCCore"]),
+        .testTarget(name: "FlyCommanderTests",
+                    dependencies: ["FlyCommander"]),
     ]
 )
