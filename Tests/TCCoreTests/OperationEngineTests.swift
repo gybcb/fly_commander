@@ -44,7 +44,9 @@ final class OperationEngineTests: XCTestCase {
 
     func testCopyCancelThrows() {
         try? "old".write(to: dst.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try engine.performCopy(try! copyTargets(src), to: TCPath(url: dst)) { _, _ in .cancel })
+        XCTAssertThrowsError(try engine.performCopy(try! copyTargets(src), to: TCPath(url: dst)) { _, _ in .cancel }) { error in
+            XCTAssertEqual(error as? TCError, .cancelled)
+        }
     }
 
     func testMoveRemovesSource() throws {

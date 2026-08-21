@@ -16,17 +16,17 @@ public final class OperationEngine {
             let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
             if exists {
                 if skipAll { progress?(i + 1, total); continue }
-                if overwriteAll { try? fm.removeItem(at: dst) }
+                if overwriteAll { do { try fm.removeItem(at: dst) } catch { throw asTCError(error) } }
                 else if let choice = prompt?(item.path, TCPath(url: dst)) {
                     switch choice {
-                    case .overwrite: try? fm.removeItem(at: dst)
-                    case .overwriteAll: overwriteAll = true; try? fm.removeItem(at: dst)
+                    case .overwrite: do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                    case .overwriteAll: overwriteAll = true; do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                     case .skip: progress?(i + 1, total); continue
                     case .skipAll: skipAll = true; progress?(i + 1, total); continue
                     case .cancel: throw TCError.cancelled
                     }
                 } else {
-                    try? fm.removeItem(at: dst)
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                 }
             }
             do { try fm.copyItem(at: src, to: dst) } catch { throw asTCError(error) }
@@ -47,17 +47,17 @@ public final class OperationEngine {
             let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
             if exists {
                 if skipAll { progress?(i + 1, total); continue }
-                if overwriteAll { try? fm.removeItem(at: dst) }
+                if overwriteAll { do { try fm.removeItem(at: dst) } catch { throw asTCError(error) } }
                 else if let choice = prompt?(item.path, TCPath(url: dst)) {
                     switch choice {
-                    case .overwrite: try? fm.removeItem(at: dst)
-                    case .overwriteAll: overwriteAll = true; try? fm.removeItem(at: dst)
+                    case .overwrite: do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                    case .overwriteAll: overwriteAll = true; do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                     case .skip: progress?(i + 1, total); continue
                     case .skipAll: skipAll = true; progress?(i + 1, total); continue
                     case .cancel: throw TCError.cancelled
                     }
                 } else {
-                    try? fm.removeItem(at: dst)
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                 }
             }
             do {
