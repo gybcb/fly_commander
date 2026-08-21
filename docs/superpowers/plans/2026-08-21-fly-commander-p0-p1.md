@@ -1230,32 +1230,32 @@ public final class OperationEngine {
         for (i, item) in items.enumerated() {
             let src = item.path.url
             let dst = destDir.url.appendingPathComponent(item.name)
-            var dstIsDir: ObjCBool = false
-            let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
-            if exists {
-                if skipAll { progress?(i + 1, total); continue }
-                if overwriteAll {
-                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
-                }
-                else if let choice = prompt?(item.path, TCPath(url: dst)) {
-                    switch choice {
-                    case .overwrite:
-                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
-                    case .overwriteAll:
-                        overwriteAll = true
-                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
-                    case .skip: progress?(i + 1, total); continue
-                    case .skipAll: skipAll = true; progress?(i + 1, total); continue
-                    case .cancel: throw TCError.cancelled
-                    }
-                } else {
-                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
-                }
-            }
             do {
+                var dstIsDir: ObjCBool = false
+                let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
+                if exists {
+                    if skipAll { progress?(i + 1, total); continue }
+                    if overwriteAll {
+                        try fm.removeItem(at: dst)
+                    } else if let choice = prompt?(item.path, TCPath(url: dst)) {
+                        switch choice {
+                        case .overwrite:
+                            try fm.removeItem(at: dst)
+                        case .overwriteAll:
+                            overwriteAll = true
+                            try fm.removeItem(at: dst)
+                        case .skip: progress?(i + 1, total); continue
+                        case .skipAll: skipAll = true; progress?(i + 1, total); continue
+                        case .cancel: throw TCError.cancelled
+                        }
+                    } else {
+                        try fm.removeItem(at: dst)
+                    }
+                }
                 try fm.moveItem(at: src, to: dst)
                 moved.append((dst, src))
             } catch {
+                if case TCError.cancelled = asTCError(error) { throw error }
                 for pair in moved.reversed() { try? fm.moveItem(at: pair.from, to: pair.to) }
                 throw asTCError(error)
             }
