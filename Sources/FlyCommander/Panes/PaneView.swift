@@ -1,7 +1,7 @@
 import AppKit
 import TCCore
 
-final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelegate {
+final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelegate, FileItemCellDelegate {
     let pane: FilePane
     private let workspace: Workspace
     private let router: CommandRouter
@@ -25,6 +25,7 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
         flowLayout.scrollDirection = .vertical
         flowLayout.minimumLineSpacing = 0
         flowLayout.minimumInteritemSpacing = 0
+        flowLayout.sectionInset = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         flowLayout.itemSize = NSSize(width: 500, height: 22)
 
         let cv = FileCollectionView(frame: .zero)
@@ -75,7 +76,11 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
 
     override func layout() {
         super.layout()
-        flowLayout.itemSize = NSSize(width: max(320, frame.width), height: 22)
+        // Initial width; FileCollectionView.layout keeps it in sync when the
+        // scroller appears (it shrinks the document view without re-running
+        // this layout).
+        let width = collectionView.bounds.width > 0 ? collectionView.bounds.width : frame.width
+        flowLayout.itemSize = NSSize(width: max(320, width - 20), height: 22)
         flowLayout.invalidateLayout()
     }
 
@@ -98,8 +103,31 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
                               isFocus: pane.selection.isFocus(item.id))
         let cell = FileItemCellView()
         _ = cell.view
+        cell.cellDelegate = self
         cell.configure(with: item, role: role, dark: isDarkAppearance)
+        refreshColumns(on: cell)
         return cell
+    }
+
+    // MARK: - Column widths
+
+    func fileItemCellDidChangeColumns(_ cell: FileItemCellView) {
+        refreshVisibleCellColumns()
+    }
+
+    private func refreshColumns(on cell: NSCollectionViewItem) {
+        guard let cell = cell as? FileItemCellView else { return }
+        let layout = PaneColumnLayout()
+        cell.applyColumnWidths(size: layout.sizeWidth, date: layout.dateWidth)
+    }
+
+    func refreshVisibleCellColumns() {
+        let layout = PaneColumnLayout()
+        for item in collectionView.visibleItems() {
+            if let cell = item as? FileItemCellView {
+                cell.applyColumnWidths(size: layout.sizeWidth, date: layout.dateWidth)
+            }
+        }
     }
 
     // MARK: - Public
@@ -185,12 +213,27 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
     private func scrollFocusIntoView() {
         let idx = pane.selection.focusIndex
         guard idx >= 0, idx < items.count else { return }
-        // reloadData() is asynchronous; scroll after the layout pass so the
-        // target item's position is valid.
+        // scrollToItems(.nearestVerticalEdge) proved unreliable on this
+        // toolchain (the clip view never moves), so scroll the clip view
+        // manually. The collection view is flipped: y grows downward, and
+        // item N's layout y is exactly N * row height.
         DispatchQueue.main.async { [weak self] in
             guard let self, idx < self.items.count else { return }
-            self.collectionView.scrollToItems(at: [IndexPath(item: idx, section: 0)],
-                                             scrollPosition: .nearestVerticalEdge)
+            self.collectionView.layoutSubtreeIfNeeded()
+            guard let attrs = self.flowLayout.layoutAttributesForItem(at: IndexPath(item: idx, section: 0)) else { return }
+            let clip = self.scrollView.contentView
+            let visibleHeight = clip.bounds.height
+            let itemTop = attrs.frame.minY
+            let itemBottom = attrs.frame.maxY
+            var target = clip.bounds.origin.y
+            if itemBottom > clip.bounds.origin.y + visibleHeight {
+                target = itemBottom - visibleHeight
+            } else if itemTop < clip.bounds.origin.y {
+                target = itemTop
+            }
+            let maxOffset = max(0, self.collectionView.bounds.height - visibleHeight)
+            target = min(max(target, 0), maxOffset)
+            clip.scroll(NSPoint(x: 0, y: target))
         }
     }
 
