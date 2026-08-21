@@ -1134,7 +1134,9 @@ final class OperationEngineTests: XCTestCase {
 
     func testCopyCancelThrows() {
         try? "old".write(to: dst.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try engine.performCopy(try! copyTargets(src), to: TCPath(url: dst)) { _, _ in .cancel })
+        XCTAssertThrowsError(try engine.performCopy(try! copyTargets(src), to: TCPath(url: dst)) { _, _ in .cancel }) { error in
+            XCTAssertEqual(error as? TCError, .cancelled)
+        }
     }
 
     func testMoveRemovesSource() throws {
@@ -1192,21 +1194,26 @@ public final class OperationEngine {
         for (i, item) in items.enumerated() {
             let src = item.path.url
             let dst = destDir.url.appendingPathComponent(item.name)
-            var exists = false
-            fm.fileExists(atPath: dst.path, isDirectory: &exists)
+            var dstIsDir: ObjCBool = false
+            let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
             if exists {
                 if skipAll { progress?(i + 1, total); continue }
-                if overwriteAll { try? fm.removeItem(at: dst) }
+                if overwriteAll {
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                }
                 else if let choice = prompt?(item.path, TCPath(url: dst)) {
                     switch choice {
-                    case .overwrite: try? fm.removeItem(at: dst)
-                    case .overwriteAll: overwriteAll = true; try? fm.removeItem(at: dst)
+                    case .overwrite:
+                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                    case .overwriteAll:
+                        overwriteAll = true
+                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                     case .skip: progress?(i + 1, total); continue
                     case .skipAll: skipAll = true; progress?(i + 1, total); continue
                     case .cancel: throw TCError.cancelled
                     }
                 } else {
-                    try? fm.removeItem(at: dst)
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                 }
             }
             do { try fm.copyItem(at: src, to: dst) } catch { throw asTCError(error) }
@@ -1223,21 +1230,26 @@ public final class OperationEngine {
         for (i, item) in items.enumerated() {
             let src = item.path.url
             let dst = destDir.url.appendingPathComponent(item.name)
-            var exists = false
-            fm.fileExists(atPath: dst.path, isDirectory: &exists)
+            var dstIsDir: ObjCBool = false
+            let exists = fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
             if exists {
                 if skipAll { progress?(i + 1, total); continue }
-                if overwriteAll { try? fm.removeItem(at: dst) }
+                if overwriteAll {
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                }
                 else if let choice = prompt?(item.path, TCPath(url: dst)) {
                     switch choice {
-                    case .overwrite: try? fm.removeItem(at: dst)
-                    case .overwriteAll: overwriteAll = true; try? fm.removeItem(at: dst)
+                    case .overwrite:
+                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
+                    case .overwriteAll:
+                        overwriteAll = true
+                        do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                     case .skip: progress?(i + 1, total); continue
                     case .skipAll: skipAll = true; progress?(i + 1, total); continue
                     case .cancel: throw TCError.cancelled
                     }
                 } else {
-                    try? fm.removeItem(at: dst)
+                    do { try fm.removeItem(at: dst) } catch { throw asTCError(error) }
                 }
             }
             do {
