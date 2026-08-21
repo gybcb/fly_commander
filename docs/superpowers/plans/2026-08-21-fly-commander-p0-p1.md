@@ -313,12 +313,12 @@ final class TCPathTests: XCTestCase {
         XCTAssertFalse(TCPath("/a/file").isHidden)
     }
     func testTildeExpansion() {
-        let home = FileManager.default.homeDirectoryForUser
+        let home = FileManager.default.homeDirectoryForCurrentUser
         let p = TCPath("~/dev")
         XCTAssertEqual(p.pathString, home.appendingPathComponent("dev").path)
     }
     func testDisplayStringUsesTilde() {
-        let home = FileManager.default.homeDirectoryForUser.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         XCTAssertEqual(TCPath(home + "/dev").displayString(), "~/dev")
         XCTAssertEqual(TCPath(home).displayString(), "~")
     }
@@ -344,7 +344,7 @@ public struct TCPath: Hashable, Equatable {
 
     public init(_ string: String) {
         var s = string
-        let home = FileManager.default.homeDirectoryForUser.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         if s == "~" {
             s = home
         } else if s.hasPrefix("~/") {
@@ -363,7 +363,7 @@ public struct TCPath: Hashable, Equatable {
     public func joining(_ name: String) -> TCPath { TCPath(url: url.appendingPathComponent(name)) }
 
     public func displayString() -> String {
-        let home = FileManager.default.homeDirectoryForUser.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         if url.path == home { return "~" }
         if url.path.hasPrefix(home + "/") {
             return "~" + url.path.dropFirst(home.count)
@@ -2315,7 +2315,7 @@ final class MainViewController: NSViewController {
     }
 
     private static func diskFree() -> Int64 {
-        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: FileManager.default.homeDirectoryForUser.path)
+        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: FileManager.default.homeDirectoryForCurrentUser.path)
         return (attrs?[.systemFreeSize] as? Int64) ?? 0
     }
 
