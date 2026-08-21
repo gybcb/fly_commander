@@ -2108,8 +2108,8 @@ final class CommandBar: NSView {
             path.centerYAnchor.constraint(equalTo: centerYAnchor),
             status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             status.centerYAnchor.constraint(equalTo: centerYAnchor),
-            status.setContentCompressionResistancePriority(.required, for: .horizontal),
         ])
+        status.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
