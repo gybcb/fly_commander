@@ -55,6 +55,20 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: leftDir.appendingPathComponent("newdir").path))
     }
 
+    func testRenameFailureSurfacesTCErrorMessage() {
+        // a.txt already exists, so renaming z.txt -> a.txt must fail. The
+        // user-facing message must be the normalized TCError.message (Chinese),
+        // not a localized-Error boilerplate string.
+        workspace.activePane.moveFocus(to: 1, mode: .simple) // focus z.txt
+        var last: OperationState?
+        workspace.onOperationState = { last = $0 }
+        router.rename(to: "a.txt")
+        guard case .failed(let message)? = last else {
+            return XCTFail("expected .failed, got \(String(describing: last))")
+        }
+        XCTAssertTrue(message.hasPrefix("已存在同名"), "got: \(message)")
+    }
+
     func testDeleteDelegatesToOnDelete() {
         var got: [FileItem] = []
         router.onDelete = { _, items in got = items }

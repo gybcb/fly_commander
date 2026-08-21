@@ -45,7 +45,7 @@ public final class CommandRouter {
             workspace.operationState(.done("已重命名"))
         } catch {
             workspace.activePane.load()
-            workspace.operationState(.failed(error.localizedDescription))
+            workspace.operationState(.failed(asTCError(error).message))
         }
     }
 
@@ -58,7 +58,7 @@ public final class CommandRouter {
             workspace.operationState(.done("已新建目录"))
         } catch {
             a.load()
-            workspace.operationState(.failed(error.localizedDescription))
+            workspace.operationState(.failed(asTCError(error).message))
         }
     }
 
