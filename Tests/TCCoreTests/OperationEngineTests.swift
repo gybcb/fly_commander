@@ -55,6 +55,36 @@ final class OperationEngineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: dst.appendingPathComponent("a.txt").path))
     }
 
+    func testMoveRollsBackOnPreOverwriteDeleteFailure() throws {
+        // Stage: first item moves cleanly; second item's destination exists
+        // and carries the user-immutable (uchg) flag, so the pre-overwrite
+        // removeItem fails deterministically (EPERM even for root).
+        try "one".write(to: src.appendingPathComponent("first.txt"), atomically: true, encoding: .utf8)
+        try "two".write(to: src.appendingPathComponent("second.txt"), atomically: true, encoding: .utf8)
+        try "old".write(to: dst.appendingPathComponent("second.txt"), atomically: true, encoding: .utf8)
+        let protectedURL = dst.appendingPathComponent("second.txt")
+        XCTAssertEqual(chflags(protectedURL.path, 0x00000002), 0, "could not set uchg on \(protectedURL.path)")
+        // chflags replaces the whole flag set; 0 clears it.
+        defer { chflags(protectedURL.path, 0) }
+
+        let items = ["first.txt", "second.txt"].map {
+            FileItem(id: src.appendingPathComponent($0).path,
+                     path: TCPath(url: src.appendingPathComponent($0)),
+                     name: $0, isDirectory: false, size: 0,
+                     modificationDate: .distantPast, isHidden: false,
+                     isReadOnly: false, isExecutable: false)
+        }
+
+        XCTAssertThrowsError(try engine.performMove(items, to: TCPath(url: dst))) { error in
+            XCTAssertNotEqual(error as? TCError, .cancelled)
+        }
+        // Rollback: the first item is back at its ORIGINAL location...
+        XCTAssertTrue(FileManager.default.fileExists(atPath: src.appendingPathComponent("first.txt").path))
+        // ...and out of the destination; second.txt was never moved.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dst.appendingPathComponent("first.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: src.appendingPathComponent("second.txt").path))
+    }
+
     func testRename() throws {
         let items = try copyTargets(src)
         let a = items.first { $0.name == "a.txt" }!
