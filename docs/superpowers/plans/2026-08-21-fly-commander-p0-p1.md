@@ -2215,12 +2215,23 @@ import AppKit
 import TCCore
 
 final class MainViewController: NSViewController {
-    private let workspace: Workspace
-    private let router: CommandRouter
+    // Minimal compile fix: this toolchain forbids assigning `let` stored
+    // properties inside loadView(); declare them implicitly unwrapped instead.
+    private var workspace: Workspace!
+    private var router: CommandRouter!
     private var leftPaneView: PaneView!
     private var rightPaneView: PaneView!
     private var commandBar: CommandBar!
     private var statusBar: StatusBar!
+
+    // Minimal compile fix: the reduced SDK (Xcode 26.6) does not expose an
+    // inherited no-argument initializer on NSViewController, so provide one.
+    init() {
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
 
     override func loadView() {
         let home = TCPath("~")
@@ -2244,7 +2255,9 @@ final class MainViewController: NSViewController {
         statusBar = StatusBar(frame: .zero)
         leftPaneView = PaneView(pane: left, workspace: workspace, router: router, id: .left)
         rightPaneView = PaneView(pane: right, workspace: workspace, router: router, id: .right)
-        for v in [leftPaneView, rightPaneView, commandBar, statusBar] { v.translatesAutoresizingMaskIntoConstraints = false }
+        // Minimal compile fix: IUO values become plain optionals inside an
+        // array literal on this toolchain, so unwrap explicitly.
+        for v in [leftPaneView!, rightPaneView!, commandBar!, statusBar!] { v.translatesAutoresizingMaskIntoConstraints = false }
 
         root.addSubview(leftPaneView)
         root.addSubview(rightPaneView)
@@ -2285,7 +2298,9 @@ final class MainViewController: NSViewController {
     // MARK: - Core callbacks
 
     private func refresh(_ pane: FilePane) {
-        let pv = pane.id == .left ? leftPaneView : rightPaneView
+        // Minimal compile fix: IUO values become plain optionals inside a
+        // ternary on this toolchain, so unwrap explicitly.
+        let pv: PaneView = pane.id == .left ? leftPaneView! : rightPaneView!
         pv.reload()
         updateBars()
     }
@@ -2328,11 +2343,14 @@ final class MainViewController: NSViewController {
         alert.addButton(withTitle: "全部覆盖")
         alert.addButton(withTitle: "全部跳过")
         alert.addButton(withTitle: "取消")
+        // Minimal compile fix: this reduced SDK's NSApplication.ModalResponse only
+        // names the first three alert buttons; per NSAlert.h, the Nth button
+        // (N > 3) returns NSAlertThirdButtonReturn + (N - 3), i.e. 1003 for button 4.
         switch alert.runModal() {
         case .alertFirstButtonReturn: return .overwrite
         case .alertSecondButtonReturn: return .skip
         case .alertThirdButtonReturn: return .overwriteAll
-        case .alertFourthButtonReturn: return .skipAll
+        case NSApplication.ModalResponse(rawValue: 1003): return .skipAll
         default: return .cancel
         }
     }
