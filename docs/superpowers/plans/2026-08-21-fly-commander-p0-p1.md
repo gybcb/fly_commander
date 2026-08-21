@@ -33,7 +33,6 @@ fly_commander/
 ├─ .gitignore
 ├─ Sources/
 │  ├─ TCCore/
-│  │  ├─ TCCore.swift                 # umbrella placeholder (Task 1)
 │  │  ├─ TCError.swift                # error normalization (Task 2)
 │  │  ├─ Path/TCPath.swift            # path wrapper (Task 3)
 │  │  ├─ Model/FileItem.swift         # one listing entry (Task 4)
@@ -62,7 +61,6 @@ fly_commander/
 │     └─ Bars/StatusBar.swift         # disk + selection row (Task 13)
 ├─ Tests/
 │  └─ TCCoreTests/
-│     ├─ SmokeTests.swift             # (Task 1)
 │     ├─ TCErrorTests.swift           # (Task 2)
 │     ├─ TCPathTests.swift            # (Task 3)
 │     ├─ FileVisualRoleTests.swift    # (Task 4)
@@ -81,12 +79,10 @@ fly_commander/
 **Files:**
 - Create: `Package.swift`
 - Create: `.gitignore`
-- Create: `Sources/TCCore/TCCore.swift`
 - Create: `Sources/FlyCommander/main.swift`
-- Create: `Tests/TCCoreTests/SmokeTests.swift`
 
 **Interfaces:**
-- Produces: package targets `TCCore` (library), `FlyCommander` (executable), `TCCoreTests`. A placeholder `public enum TCCore {}` so the library target has at least one symbol.
+- Produces: package targets `TCCore` (library), `FlyCommander` (executable), `TCCoreTests`. (The original placeholder `public enum TCCore {}` was REMOVED post-Task 1 — commit 388f9cc: an umbrella enum named `TCCore` shadows the module name, breaking all `TCCore.X` qualified references from the app target. Real symbols from Tasks 2+ make the placeholder moot; library loadability is implied by every `@testable import TCCore` test.)
 
 - [ ] **Step 1: Write `Package.swift`**
 
@@ -121,16 +117,7 @@ xcuserdata/
 *.xcodeproj
 ```
 
-- [ ] **Step 3: Write `Sources/TCCore/TCCore.swift`**
-
-```swift
-import Foundation
-
-/// Umbrella for the TCCore library. Real symbols are added by later tasks.
-public enum TCCore {
-    public static let name = "TCCore"
-}
-```
+- [x] **Step 3 (REMOVED post-Task 1):** Do NOT create `Sources/TCCore/TCCore.swift`. The placeholder `public enum TCCore {}` was removed (commit 388f9cc) because it shadowed the module name and broke `TCCore.X` qualified references in the app target. The library needs no placeholder symbol.
 
 - [ ] **Step 4: Write `Sources/FlyCommander/main.swift`** (minimal bootstrap proving AppKit runs; replaced/extended in Task 14)
 
@@ -152,23 +139,12 @@ app.activate(ignoringOtherApps: true)
 app.run()
 ```
 
-- [ ] **Step 5: Write `Tests/TCCoreTests/SmokeTests.swift`**
-
-```swift
-import XCTest
-@testable import TCCore
-
-final class SmokeTests: XCTestCase {
-    func testLibraryLoads() {
-        XCTAssertEqual(TCCore.name, "TCCore")
-    }
-}
-```
+- [x] **Step 5 (REMOVED post-Task 1):** Do NOT create `Tests/TCCoreTests/SmokeTests.swift`. Its only assertion (`XCTAssertEqual(TCCore.name, "TCCore")`) tested the removed umbrella enum; library loadability is covered by every subsequent `@testable import TCCore` test compiling.
 
 - [ ] **Step 6: Build and test**
 
 Run: `swift build && swift test`
-Expected: build succeeds; `SmokeTests/testLibraryLoads` passes.
+Expected: build succeeds; `swift test` passes (no TCCore test cases yet — TCCoreTests gains real tests from Task 2 onward; the former smoke test was removed with the umbrella enum, see Step 5 note).
 
 - [ ] **Step 7: Run the app skeleton**
 
@@ -1603,7 +1579,7 @@ struct KeyInput {
 }
 
 struct DispatchResult {
-    let command: TCCore.CommandID
+    let command: CommandID
     let moveMode: SelectionModel.MoveMode
 }
 
