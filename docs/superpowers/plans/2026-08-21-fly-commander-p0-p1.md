@@ -259,7 +259,7 @@ public func asTCError(_ error: Error) -> TCError {
         return .notFound(ns.localizedDescription)
     case NSFileReadNoPermissionError, NSFileWriteNoPermissionError:
         return .permissionDenied(ns.localizedDescription)
-    case NSFileIsNotDirectoryError, NSFileReadUnknownError:
+    case NSFileReadInvalidFileNameError, NSFileReadUnknownError:
         return .invalidPath(ns.localizedDescription)
     default:
         return .unknown(ns.localizedDescription)
