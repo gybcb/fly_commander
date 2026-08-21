@@ -32,6 +32,12 @@ final class StatusBar: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
     func show(diskFree: Int64, selected: Int, totalBytes: Int64) {
         left.stringValue = "磁盘可用 " + ByteCountFormatter().string(fromByteCount: max(0, diskFree))
         right.stringValue = selected > 0

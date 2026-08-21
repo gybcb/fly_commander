@@ -36,6 +36,12 @@ final class CommandBar: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
     func setPath(_ p: String, selected: Int) {
         path.stringValue = p + (selected > 0 ? "  (\(selected))" : "")
     }
