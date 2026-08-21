@@ -1885,12 +1885,9 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
         flowLayout.minimumInteritemSpacing = 0
         flowLayout.itemSize = NSSize(width: 500, height: 20)
 
-        let cv = FileCollectionView(frame: .zero, collectionViewLayout: flowLayout)
+        let cv = FileCollectionView(frame: .zero)
+        cv.collectionViewLayout = flowLayout
         cv.isSelectable = false
-        cv.backgroundColor = .clear
-        cv.isVerticallyResizable = true
-        cv.isHorizontallyResizable = false
-        cv.hasVerticalScroller = true
         cv.autoresizingMask = [.width]
         cv.translatesAutoresizingMaskIntoConstraints = false
         self.collectionView = cv
@@ -1930,8 +1927,8 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
 
-    override func viewDidLayout() {
-        super.viewDidLayout()
+    override func layout() {
+        super.layout()
         flowLayout.itemSize = NSSize(width: max(320, scrollView.contentSize.width), height: 20)
         flowLayout.invalidateLayout()
     }
@@ -1955,7 +1952,7 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
                               isFocus: pane.selection.isFocus(item.id))
         let cell = FileItemCellView()
         _ = cell.view
-        (cell as! FileItemCellView).configure(with: item, role: role, dark: isDarkAppearance)
+        cell.configure(with: item, role: role, dark: isDarkAppearance)
         return cell
     }
 
@@ -2042,7 +2039,8 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
     private func scrollFocusIntoView() {
         let idx = pane.selection.focusIndex
         guard idx >= 0, idx < items.count else { return }
-        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0))
+        collectionView.scrollToItems(at: [IndexPath(item: idx, section: 0)],
+                                     scrollPosition: .nearestVerticalEdge)
     }
 
     private func updateActiveBorder() {
