@@ -1792,7 +1792,7 @@ final class FileItemCellView: NSCollectionViewItem {
 
     func configure(with item: FileItem, role: FileVisualRole, dark: Bool) {
         nameLabel.stringValue = item.name
-        sizeLabel.stringValue = item.isDirectory ? "" : ByteCountFormatter().string(from: UInt64(max(0, item.size)))
+        sizeLabel.stringValue = item.isDirectory ? "" : ByteCountFormatter().string(fromByteCount: max(0, item.size))
         dateLabel.stringValue = item.modificationDate.formatted(date: .abbreviated, time: .shortened)
 
         let text = PaneColor.text(for: role, dark: dark)
@@ -2164,9 +2164,9 @@ final class StatusBar: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(diskFree: Int64, selected: Int, totalBytes: Int64) {
-        left.stringValue = "磁盘可用 " + ByteCountFormatter().string(from: UInt64(max(0, diskFree)))
+        left.stringValue = "磁盘可用 " + ByteCountFormatter().string(fromByteCount: max(0, diskFree))
         right.stringValue = selected > 0
-            ? "选中 \(selected) 项 · \(ByteCountFormatter().string(from: UInt64(max(0, totalBytes))))"
+            ? "选中 \(selected) 项 · \(ByteCountFormatter().string(fromByteCount: max(0, totalBytes)))"
             : ""
     }
 }
