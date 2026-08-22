@@ -165,9 +165,17 @@ final class PaneView: NSView, NSCollectionViewDataSource, NSCollectionViewDelega
     // MARK: - Key handling
 
     override func keyDown(with event: NSEvent) {
-        guard window?.firstResponder === self else { super.keyDown(with: event); return }
+        let isFirstResponder = (window?.firstResponder === self)
         let input = KeyInput(keyCode: event.keyCode, modifiers: event.modifierFlags)
-        guard let result = KeyDispatcher.dispatch(input) else { super.keyDown(with: event); return }
+        let result = KeyDispatcher.dispatch(input)
+        // DIAG: 临时按键日志（诊断 Cmd+F），定案后删除
+        let cmdName = result.map { String(describing: $0.command) } ?? "unmapped"
+        DiagLog.write("key keyCode=\(event.keyCode) chars=\"\(event.characters ?? "")\" "
+            + "charsIgnoring=\"\(event.charactersIgnoringModifiers ?? "")\" "
+            + "modifiers=\(event.modifierFlags.rawValue) isFirstResponder=\(isFirstResponder) "
+            + "dispatch=\(cmdName)")
+        guard isFirstResponder else { super.keyDown(with: event); return }
+        guard let result else { super.keyDown(with: event); return }
         switch result.command {
         case .rename: promptRename()
         case .makeDirectory: promptMakeDirectory()

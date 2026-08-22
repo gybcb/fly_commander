@@ -11,13 +11,27 @@ final class PreviewViewController: NSViewController {
     }
 
     func show(item: FileItem) {
+        let url = item.path.url
+        let kind: Kind
+        if Self.imageExtensions.contains(url.pathExtension.lowercased()) {
+            kind = .image
+        } else {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+            if let size, Int64(size) > Int64(Self.textMaxBytes) {
+                kind = .binary
+            } else {
+                kind = Self.classify(url: url)
+            }
+        }
         let content: NSView
-        switch Self.classify(url: item.path.url) {
+        switch kind {
         case .text:
-            content = makeTextView(url: item.path.url)
+            content = makeTextView(url: url, item: item)
         case .image:
-            content = makeImageView(url: item.path.url)
+            NSLog("FLYPREVIEW kind=image url=\(url.path)")
+            content = makeImageView(url: url)
         case .binary:
+            NSLog("FLYPREVIEW kind=binary url=\(url.path)")
             content = makeFallbackView(item: item)
         }
         // Swap content
@@ -35,59 +49,50 @@ final class PreviewViewController: NSViewController {
     private enum Kind { case text, image, binary }
 
     private static func classify(url: URL) -> Kind {
-        if imageExtensions.contains(url.pathExtension.lowercased()) { return .image }
         do {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            let head = (try? handle.read(upToCount: textSniffSize)) ?? Data()
+            let head = try Data(contentsOf: url).prefix(Self.textSniffSize)
             return !head.isEmpty && head.contains(0) ? .binary : .text
         } catch {
             return .binary
         }
     }
 
-    private func makeTextView(url: URL) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    private func makeTextView(url: URL, item: FileItem) -> NSView {
+        guard let textStr = Self.previewText(url: url) else {
+            return makeFallbackView(item: item)
+        }
+        let scroll = NSTextView.scrollableTextView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
 
-        let text = NSTextView()
+        guard let text = scroll.documentView as? NSTextView else {
+            return makeFallbackView(item: item)
+        }
         text.isEditable = false
         text.isSelectable = true
         text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         text.isRichText = false
-        text.autoresizingMask = []
-        text.translatesAutoresizingMaskIntoConstraints = false
+        text.string = textStr
+        NSLog("FLYPREVIEW kind=text url=\(url.path) chars=\(textStr.count)")
 
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = text
-
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         container.addSubview(scroll)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
             scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
         ])
-
-        let data = Self.readLimited(url: url, limit: Self.textMaxBytes)
-        text.string = String(decoding: data, as: UTF8.self)
         return container
     }
 
-    private static func readLimited(url: URL, limit: Int) -> Data {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
-        defer { try? handle.close() }
-        var data = Data()
-        while data.count < limit {
-            let chunk = (try? handle.read(upToCount: min(1 << 20, limit - data.count))) ?? Data()
-            if chunk.isEmpty { break }
-            data.append(chunk)
-        }
-        return data
+    private static func previewText(url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let limited = data.prefix(Self.textMaxBytes)
+        return String(decoding: limited, as: UTF8.self)
     }
 
     private func makeImageView(url: URL) -> NSView {

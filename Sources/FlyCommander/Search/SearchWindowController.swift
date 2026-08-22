@@ -26,5 +26,6 @@ final class SearchWindowController: NSWindowController {
         window?.center()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        NSLog("FLYSEARCH present: window=\(String(describing: window)) visible=\(window?.isVisible ?? false) keyWindow=\(NSApp.keyWindow === window)")
     }
 }

@@ -132,6 +132,7 @@ final class MainViewController: NSViewController {
     ]
 
     private func showPreview(_ item: FileItem) {
+        NSLog("FLYPREVIEW showPreview name=\(item.name) path=\(item.path.pathString)")
         PreviewWindowController.show(item: item)
     }
 
@@ -156,6 +157,7 @@ final class MainViewController: NSViewController {
     }
 
     private func beginSearch(in root: TCPath) {
+        NSLog("FLYSEARCH beginSearch root=\(root.pathString)")
         searchWindow.onOperation = { [weak self] state in self?.workspace.operationState(state) }
         searchWindow.present(root: root) { [weak self] hit in
             guard let self else { return }
