@@ -42,12 +42,12 @@ enum KeyDispatcher {
         case 117: return DispatchResult(command: .rename, moveMode: .simple)   // Fn+Delete
         case 49: return DispatchResult(command: .toggleMark, moveMode: .simple) // Space
         case 53: return DispatchResult(command: .clearMarks, moveMode: .simple) // Esc
-        case 96: return DispatchResult(command: .copy, moveMode: .simple)       // F5
-        case 97: return DispatchResult(command: .move, moveMode: .simple)       // F6
-        case 98: return DispatchResult(command: .makeDirectory, moveMode: .simple) // F7
-        case 99: return DispatchResult(command: .delete, moveMode: .simple)     // F8
-        case 94: return DispatchResult(command: .viewFile, moveMode: .simple)   // F3
-        case 95: return DispatchResult(command: .editFile, moveMode: .simple)   // F4
+        case 96: return DispatchResult(command: .copy, moveMode: .simple)        // F5 (kVK_F5=0x60)
+        case 97: return DispatchResult(command: .move, moveMode: .simple)        // F6 (kVK_F6=0x61)
+        case 98: return DispatchResult(command: .makeDirectory, moveMode: .simple) // F7 (kVK_F7=0x62)
+        case 99: return DispatchResult(command: .viewFile, moveMode: .simple)    // F3 (kVK_F3=0x63)
+        case 100: return DispatchResult(command: .delete, moveMode: .simple)     // F8 (kVK_F8=0x64)
+        case 118: return DispatchResult(command: .editFile, moveMode: .simple)   // F4 (kVK_F4=0x76)
         case 3: // F
             return has(.command) ? DispatchResult(command: .search, moveMode: .simple) : nil
         case 12: // Q

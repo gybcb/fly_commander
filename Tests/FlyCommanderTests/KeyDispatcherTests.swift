@@ -25,14 +25,29 @@ final class KeyDispatcherTests: XCTestCase {
     func testLeftIsParent() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 123, modifiers: []))?.command, .parent)
     }
+    func testF3View() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 99, modifiers: []))?.command, .viewFile)
+    }
+    func testF4Edit() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 118, modifiers: []))?.command, .editFile)
+    }
     func testF5Copy() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 96, modifiers: []))?.command, .copy)
     }
     func testF6Move() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 97, modifiers: []))?.command, .move)
     }
+    func testF7MakeDirectory() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 98, modifiers: []))?.command, .makeDirectory)
+    }
     func testF8Delete() {
-        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 99, modifiers: []))?.command, .delete)
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 100, modifiers: []))?.command, .delete)
+    }
+    func testCmdFSearch() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 3, modifiers: [.command]))?.command, .search)
+    }
+    func testBareFIsUnbound() {
+        XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 3, modifiers: [])))
     }
     func testCmdASelectAll() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 0, modifiers: [.command]))?.command, .selectAll)
