@@ -104,4 +104,14 @@ final class SelectionModelTests: XCTestCase {
         XCTAssertEqual(s.focusID, "a")
         XCTAssertEqual(s.markedIDs, ["a"])
     }
+
+    func testStickyMovesFocusWithoutTouchingMarks() {
+        var s = SelectionModel()
+        s.reload(with: ["a", "b", "c"])
+        s.moveFocus(to: 1, mode: .simple)           // focus b
+        s.toggleMark()                              // mark b
+        s.moveFocusBy(delta: 1, mode: .sticky)      // focus c, marks unchanged
+        XCTAssertEqual(s.focusID, "c")
+        XCTAssertEqual(s.markedIDs, ["b"])
+    }
 }

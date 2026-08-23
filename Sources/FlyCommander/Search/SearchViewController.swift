@@ -160,6 +160,10 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         newSearchButton.isHidden = true
         formContainer.isHidden = false
         resultContainer.isHidden = true
+    }
+
+    /// 聚焦模式输入框。窗口须已就位（window 为 nil 时 makeFirstResponder 无效）。
+    func focusPatternField() {
         view.window?.makeFirstResponder(patternField)
     }
 

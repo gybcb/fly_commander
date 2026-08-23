@@ -1,7 +1,12 @@
 import Foundation
 
 public struct SelectionModel: Equatable {
-    public enum MoveMode: Equatable { case simple, additive, range }
+    public enum MoveMode: Equatable {
+        case simple    // 移动焦点并清空标记
+        case sticky    // 移动焦点，标记集不变（TC 粘性语义）
+        case additive  // 移动焦点并把目标加入标记集
+        case range     // 移动焦点并把 anchor→目标 区间加入标记集
+    }
 
     private(set) public var items: [String] = []
     private(set) public var focusIndex: Int = 0
@@ -46,6 +51,8 @@ public struct SelectionModel: Equatable {
             focusIndex = clamped
             marked = []
             anchor = nil
+        case .sticky:
+            focusIndex = clamped
         case .additive:
             marked.insert(items[clamped])
             focusIndex = clamped

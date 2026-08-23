@@ -21,21 +21,22 @@ enum KeyDispatcher {
         case 126: // Up
             if has(.control) { return DispatchResult(command: .up, moveMode: .additive) }
             if has(.shift) { return DispatchResult(command: .up, moveMode: .range) }
-            return DispatchResult(command: .up, moveMode: .simple)
+            // TC 粘性标记：plain 方向键移焦点但标记集不变（core .sticky）
+            return DispatchResult(command: .up, moveMode: .sticky)
         case 125: // Down
             if has(.control) { return DispatchResult(command: .down, moveMode: .additive) }
             if has(.shift) { return DispatchResult(command: .down, moveMode: .range) }
-            return DispatchResult(command: .down, moveMode: .simple)
+            return DispatchResult(command: .down, moveMode: .sticky)
         case 123: // Left
             return has(.control) ? DispatchResult(command: .switchPane, moveMode: .simple)
                                  : DispatchResult(command: .parent, moveMode: .simple)
         case 124: // Right
             return has(.control) ? DispatchResult(command: .switchPane, moveMode: .simple)
                                  : DispatchResult(command: .enter, moveMode: .simple)
-        case 116: return DispatchResult(command: .pageUp, moveMode: .simple)
-        case 121: return DispatchResult(command: .pageDown, moveMode: .simple)
-        case 115: return DispatchResult(command: .home, moveMode: .simple)
-        case 119: return DispatchResult(command: .end, moveMode: .simple)
+        case 116: return DispatchResult(command: .pageUp, moveMode: .sticky)
+        case 121: return DispatchResult(command: .pageDown, moveMode: .sticky)
+        case 115: return DispatchResult(command: .home, moveMode: .sticky)
+        case 119: return DispatchResult(command: .end, moveMode: .sticky)
         case 36, 76: return DispatchResult(command: .enter, moveMode: .simple) // Return / numpad Enter
         case 48: return DispatchResult(command: .switchPane, moveMode: .simple) // Tab
         case 51: return DispatchResult(command: .parent, moveMode: .simple)    // Backspace/Delete
@@ -48,12 +49,8 @@ enum KeyDispatcher {
         case 99: return DispatchResult(command: .viewFile, moveMode: .simple)    // F3 (kVK_F3=0x63)
         case 100: return DispatchResult(command: .delete, moveMode: .simple)     // F8 (kVK_F8=0x64)
         case 118: return DispatchResult(command: .editFile, moveMode: .simple)   // F4 (kVK_F4=0x76)
-        case 3: // F
-            return has(.command) ? DispatchResult(command: .search, moveMode: .simple) : nil
         case 12: // Q
             return has(.option) ? DispatchResult(command: .toggleMark, moveMode: .simple) : nil
-        case 0: // A
-            return has(.command) ? DispatchResult(command: .selectAll, moveMode: .simple) : nil
         default: return nil
         }
     }

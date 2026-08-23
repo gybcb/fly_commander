@@ -1,28 +1,37 @@
 import AppKit
 import TCCore
 
-final class MainViewController: NSViewController {
-    // Minimal compile fix: this toolchain forbids assigning `let` stored
-    // properties inside loadView(); declare them implicitly unwrapped instead.
+final class MainViewController: NSViewController, NSSplitViewDelegate {
+    // 隐式解包：本工具链禁止在 loadView 里直接给 `let` 存储属性赋值
     private var workspace: Workspace!
     private var router: CommandRouter!
-    private var leftPaneView: PaneView!
-    private var rightPaneView: PaneView!
-    private var commandBar: CommandBar!
-    private var statusBar: StatusBar!
+    private var leftPaneView: PaneTableView!
+    private var rightPaneView: PaneTableView!
+    private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
 
-    // Minimal compile fix: the reduced SDK (Xcode 26.6) does not expose an
-    // inherited no-argument initializer on NSViewController, so provide one.
     init() {
         super.init(nibName: nil, bundle: nil)
+    }
+
+    /// 启动目录：`--start-dir <路径>` 参数或 FLY_START_DIR 环境变量优先（供 UI 测试
+    /// 指向已知夹具目录），缺省为用户主目录。
+    static var startPath: TCPath {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--start-dir"), i + 1 < args.count {
+            return TCPath(args[i + 1])
+        }
+        if let dir = ProcessInfo.processInfo.environment["FLY_START_DIR"] {
+            return TCPath(dir)
+        }
+        return TCPath("~")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override func loadView() {
-        let home = TCPath("~")
+        let home = Self.startPath
         let source = LocalFileSource()
         let left = FilePane(id: .left, source: source, startPath: home)
         let right = FilePane(id: .right, source: source, startPath: home)
@@ -42,42 +51,33 @@ final class MainViewController: NSViewController {
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 680))
 
-        commandBar = CommandBar(frame: .zero)
-        statusBar = StatusBar(frame: .zero)
-        leftPaneView = PaneView(pane: left, workspace: workspace, router: router, id: .left)
-        rightPaneView = PaneView(pane: right, workspace: workspace, router: router, id: .right)
-        // Minimal compile fix: IUO values become plain optionals inside an
-        // array literal on this toolchain, so unwrap explicitly.
-        for v in [leftPaneView!, rightPaneView!, commandBar!, statusBar!] { v.translatesAutoresizingMaskIntoConstraints = false }
+        leftPaneView = PaneTableView(pane: left, workspace: workspace, router: router, id: .left)
+        rightPaneView = PaneTableView(pane: right, workspace: workspace, router: router, id: .right)
 
-        root.addSubview(leftPaneView)
-        root.addSubview(rightPaneView)
-        root.addSubview(commandBar)
-        root.addSubview(statusBar)
+        let splitView = NSSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.addArrangedSubview(leftPaneView!)
+        splitView.addArrangedSubview(rightPaneView!)
 
+        root.addSubview(splitView)
         NSLayoutConstraint.activate([
-            leftPaneView.topAnchor.constraint(equalTo: root.topAnchor),
-            leftPaneView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            leftPaneView.bottomAnchor.constraint(equalTo: commandBar.topAnchor),
-            leftPaneView.trailingAnchor.constraint(equalTo: root.centerXAnchor, constant: -0.5),
-
-            rightPaneView.topAnchor.constraint(equalTo: root.topAnchor),
-            rightPaneView.leadingAnchor.constraint(equalTo: root.centerXAnchor, constant: 0.5),
-            rightPaneView.bottomAnchor.constraint(equalTo: commandBar.topAnchor),
-            rightPaneView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-
-            commandBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            commandBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            commandBar.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -4),
-            commandBar.heightAnchor.constraint(equalToConstant: 26),
-
-            statusBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            statusBar.heightAnchor.constraint(equalToConstant: 20),
+            splitView.topAnchor.constraint(equalTo: root.topAnchor),
+            splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
 
         self.view = root
+        split = splitView
+        split.delegate = self
+        // loadView 时机下 split 未布局，setPosition 会把邻接窗格折叠（SDK 文档
+        // 明示 undefined）；延迟到布局完成后再设 50/50。
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.split.bounds.width > 0 else { return }
+            self.split.setPosition(self.split.bounds.width / 2, ofDividerAt: 0)
+        }
 
         leftPaneView.setActive(true)
         rightPaneView.setActive(false)
@@ -86,12 +86,13 @@ final class MainViewController: NSViewController {
         updateBars()
     }
 
+    /// 窗口的初始第一响应者：左窗格（键盘事件落点），供 window.initialFirstResponder 使用。
+    var initialKeyView: NSView { leftPaneView }
+
     // MARK: - Core callbacks
 
     private func refresh(_ pane: FilePane) {
-        // Minimal compile fix: IUO values become plain optionals inside a
-        // ternary on this toolchain, so unwrap explicitly.
-        let pv: PaneView = pane.id == .left ? leftPaneView! : rightPaneView!
+        let pv: PaneTableView = pane.id == .left ? leftPaneView! : rightPaneView!
         pv.reload()
         updateBars()
     }
@@ -99,29 +100,84 @@ final class MainViewController: NSViewController {
     private func panesDidBecomeActive() {
         leftPaneView.setActive(workspace.active == .left)
         rightPaneView.setActive(workspace.active == .right)
+        // 活动窗格 = 键盘目标：core 的 active 变化须同步到 AppKit 第一响应者，
+        // 否则 Tab 切窗格后方向键仍落在旧窗格视图上。
+        let activeView: NSView = workspace.active == .left ? leftPaneView! : rightPaneView!
+        view.window?.makeFirstResponder(activeView)
+        updateBars()
     }
 
     private func operationStateChanged(_ s: OperationState) {
         switch s {
-        case .running(let label, let progress): commandBar.setStatus("\(label) \(Int(progress * 100))%")
-        case .done(let m): commandBar.setStatus(m)
-        case .failed(let m): commandBar.setStatus("错误：\(m)")
-        case .idle: commandBar.setStatus("")
+        case .running(let label, let progress): setStatus("\(label) \(Int(progress * 100))%")
+        case .done(let m): setStatus(m)
+        case .failed(let m): setStatus("错误：\(m)")
+        case .idle: setStatus("")
         }
+    }
+
+    /// 工具栏右侧的状态文本（操作进度/结果/已选 N 项）。
+    private var statusLabel: NSTextField?
+
+    func setStatus(_ text: String) {
+        statusLabel?.stringValue = text
     }
 
     private func updateBars() {
         let a = workspace.activePane
+        view.window?.title = a.path.displayString()
         let op = a.selection.operationIDs.count
-        commandBar.setPath(a.path.displayString(), selected: op)
-        let total = a.operationTargets.reduce(Int64(0)) { $0 + $1.size }
-        statusBar.show(diskFree: Self.diskFree(), selected: op, totalBytes: total)
+        statusLabel?.stringValue = op > 0 ? "已选 \(op) 项" : ""
     }
 
-    private static func diskFree() -> Int64 {
-        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: FileManager.default.homeDirectoryForCurrentUser.path)
-        return (attrs?[.systemFreeSize] as? Int64) ?? 0
+    // MARK: - Toolbar wiring
+
+    func attachStatusLabel(_ label: NSTextField) {
+        statusLabel = label
+        updateBars()
     }
+
+    // MARK: - NSSplitViewDelegate（任一窗格至少 160pt，拖拽/缩放都不会消失）
+
+    func splitView(_ splitView: NSSplitView,
+                   constrainSplitPosition proposedPosition: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        let width = splitView.bounds.width
+        guard width > 320 else { return proposedPosition }
+        return min(max(proposedPosition, 160), width - 160)
+    }
+
+    // MARK: - Menu actions（Cmd 组合快捷键的落点）
+
+    @objc func menuNewDirectory(_ sender: Any?) { promptMakeDirectory() }
+
+    @objc func menuRename(_ sender: Any?) { promptRename() }
+
+    @objc func menuTrashDelete(_ sender: Any?) {
+        let a = workspace.activePane
+        let targets = a.operationTargets
+        if !targets.isEmpty { doTrashDelete(pane: a, targets: targets) }
+    }
+
+    @objc func menuCopyToOtherPane(_ sender: Any?) { router.execute(.copy) }
+
+    @objc func menuMoveToOtherPane(_ sender: Any?) { router.execute(.move) }
+
+    @objc func menuSearch(_ sender: Any?) { router.execute(.search) }
+
+    @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
+
+    @objc func menuPreview(_ sender: Any?) {
+        if let item = workspace.activePane.focusedItem, !item.isDirectory { showPreview(item) }
+    }
+
+    @objc func menuEdit(_ sender: Any?) {
+        if let item = workspace.activePane.focusedItem, !item.isDirectory { openForEdit(item) }
+    }
+
+    @objc func menuSwitchPane(_ sender: Any?) { router.execute(.switchPane) }
+
+    @objc func menuGoToParent(_ sender: Any?) { router.execute(.parent) }
 
     // MARK: - AppKit-provided operations
 
@@ -132,7 +188,6 @@ final class MainViewController: NSViewController {
     ]
 
     private func showPreview(_ item: FileItem) {
-        NSLog("FLYPREVIEW showPreview name=\(item.name) path=\(item.path.pathString)")
         PreviewWindowController.show(item: item)
     }
 
@@ -144,20 +199,19 @@ final class MainViewController: NSViewController {
                 if error != nil {
                     DispatchQueue.main.async {
                         if let self, !NSWorkspace.shared.open(url) {
-                            self.commandBar.setStatus("无法打开文件")
+                            self.setStatus("无法打开文件")
                         }
                     }
                 }
             }
         } else {
             if !NSWorkspace.shared.open(url) {
-                commandBar.setStatus("无法打开文件")
+                setStatus("无法打开文件")
             }
         }
     }
 
     private func beginSearch(in root: TCPath) {
-        NSLog("FLYSEARCH beginSearch root=\(root.pathString)")
         searchWindow.onOperation = { [weak self] state in self?.workspace.operationState(state) }
         searchWindow.present(root: root) { [weak self] hit in
             guard let self else { return }
@@ -171,6 +225,32 @@ final class MainViewController: NSViewController {
         }
     }
 
+    private func promptRename() {
+        guard let item = workspace.activePane.focusedItem else { return }
+        let alert = NSAlert()
+        alert.messageText = "重命名"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = item.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
+            router.rename(to: field.stringValue)
+        }
+    }
+
+    private func promptMakeDirectory() {
+        let alert = NSAlert()
+        alert.messageText = "新建目录"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
+            router.makeDirectory(named: field.stringValue)
+        }
+    }
+
     private func promptConflict(_ src: TCPath, _ dst: TCPath) -> ConflictChoice {
         let alert = NSAlert()
         alert.messageText = "目标已存在"
@@ -180,9 +260,6 @@ final class MainViewController: NSViewController {
         alert.addButton(withTitle: "全部覆盖")
         alert.addButton(withTitle: "全部跳过")
         alert.addButton(withTitle: "取消")
-        // Minimal compile fix: this reduced SDK's NSApplication.ModalResponse only
-        // names the first three alert buttons; per NSAlert.h, the Nth button
-        // (N > 3) returns NSAlertThirdButtonReturn + (N - 3), i.e. 1003 for button 4.
         switch alert.runModal() {
         case .alertFirstButtonReturn: return .overwrite
         case .alertSecondButtonReturn: return .skip

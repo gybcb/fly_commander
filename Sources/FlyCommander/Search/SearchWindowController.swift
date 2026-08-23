@@ -26,6 +26,7 @@ final class SearchWindowController: NSWindowController {
         window?.center()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        NSLog("FLYSEARCH present: window=\(String(describing: window)) visible=\(window?.isVisible ?? false) keyWindow=\(NSApp.keyWindow === window)")
+        // 聚焦须等窗口就位（prepare 里 view.window 尚为 nil，makeFirstResponder 无效）
+        searchVC.focusPatternField()
     }
 }

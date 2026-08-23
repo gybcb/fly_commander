@@ -3,10 +3,11 @@ import AppKit
 @testable import FlyCommander
 
 final class KeyDispatcherTests: XCTestCase {
-    func testUpSimple() {
+    func testUpSticky() {
+        // TC 粘性标记：plain 方向键移焦点但标记集不变
         let r = KeyDispatcher.dispatch(KeyInput(keyCode: 126, modifiers: []))
         XCTAssertEqual(r?.command, .up)
-        XCTAssertEqual(r?.moveMode, .simple)
+        XCTAssertEqual(r?.moveMode, .sticky)
     }
     func testDownCtrlAdditive() {
         let r = KeyDispatcher.dispatch(KeyInput(keyCode: 125, modifiers: [.control]))
@@ -44,13 +45,15 @@ final class KeyDispatcherTests: XCTestCase {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 100, modifiers: []))?.command, .delete)
     }
     func testCmdFSearch() {
-        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 3, modifiers: [.command]))?.command, .search)
+        // Cmd+F 由菜单 keyEquivalent 接管，不再经 dispatcher
+        XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 3, modifiers: [.command])))
     }
     func testBareFIsUnbound() {
         XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 3, modifiers: [])))
     }
     func testCmdASelectAll() {
-        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 0, modifiers: [.command]))?.command, .selectAll)
+        // Cmd+A 由菜单 keyEquivalent 接管，不再经 dispatcher
+        XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 0, modifiers: [.command])))
     }
     func testOptionQToggle() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 12, modifiers: [.option]))?.command, .toggleMark)

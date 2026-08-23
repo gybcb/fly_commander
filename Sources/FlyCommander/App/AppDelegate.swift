@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let wc = MainWindowController()
         windowController = wc
+        if let vc = wc.window?.contentViewController as? MainViewController {
+            NSApp.mainMenu = MainMenu.build(target: vc)
+        }
         wc.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
