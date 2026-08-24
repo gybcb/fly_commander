@@ -107,10 +107,11 @@ final class PaneTableViewTests: XCTestCase {
     }
 
     func testMarkedRowUsesAccentColor() {
+        ThemeStore.shared.update(Theme.default)   // 主题驱动：标记底色 = accent 25% 透明
         pane.toggleMark(at: 1)                       // 标记 b.dat（非焦点）
         paneView.reload()
         XCTAssertEqual(cell(atColumn: 0, row: 1)?.layer?.backgroundColor,
-                       NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor)
+                       ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor)
     }
 
     func testFocusWinsOverMark() {
@@ -182,8 +183,9 @@ final class PaneTableViewTests: XCTestCase {
     }
 
     func testSetActiveBorder() {
+        ThemeStore.shared.update(Theme.default)   // 主题驱动：活动边框 = accent
         paneView.setActive(true)
-        XCTAssertEqual(paneView.layer?.borderColor, NSColor.systemBlue.cgColor)
+        XCTAssertEqual(paneView.layer?.borderColor, ThemeStore.shared.accentColor.cgColor)
         paneView.setActive(false)
         XCTAssertEqual(paneView.layer?.borderColor, NSColor.separatorColor.cgColor)
     }

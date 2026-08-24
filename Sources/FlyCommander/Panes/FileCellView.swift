@@ -77,11 +77,11 @@ final class FileCellView: NSTableCellView {
             nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
             layer?.backgroundColor = NSColor.selectedContentBackgroundColor.cgColor
         } else if marked {
-            nameLabel.textColor = .labelColor
+            nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
             nameLabel.font = .systemFont(ofSize: 12)
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
+            layer?.backgroundColor = ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor
         } else {
-            nameLabel.textColor = .labelColor
+            nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
             nameLabel.font = .systemFont(ofSize: 12)
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }

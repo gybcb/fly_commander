@@ -96,7 +96,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     func setActive(_ active: Bool) {
         isActive = active
-        layer?.borderColor = (active ? NSColor.systemBlue.cgColor : NSColor.separatorColor.cgColor)
+        layer?.borderColor = (active ? ThemeStore.shared.accentColor.cgColor : NSColor.separatorColor.cgColor)
         layer?.borderWidth = active ? 1 : 0.5
     }
 
