@@ -49,7 +49,7 @@ public final class CommandRouter {
         guard let item = workspace.activePane.focusedItem else { return }
         workspace.operationState(.running(label: "重命名", progress: 0))
         do {
-            try engine.performRename(item, to: newName)
+            try engine.performRename(item, to: newName, source: workspace.activePane.source)
             workspace.activePane.load()
             workspace.operationState(.done("已重命名"))
         } catch {
@@ -62,7 +62,7 @@ public final class CommandRouter {
         let a = workspace.activePane
         workspace.operationState(.running(label: "新建目录", progress: 0))
         do {
-            _ = try engine.performMakeDirectory(name, in: a.path)
+            _ = try engine.performMakeDirectory(name, in: a.path, source: a.source)
             a.load()
             workspace.operationState(.done("已新建目录"))
         } catch {
@@ -79,20 +79,28 @@ public final class CommandRouter {
         let label = (isCopy ? "复制" : "移动") + " \(targets.count) 个文件"
         let ws = workspace
         let eng = engine
+        let src = a.source
+        let dst = t.source
+        var warnings: [String] = []
         ws.operationState(.running(label: label, progress: 0))
         do {
             if isCopy {
-                try eng.performCopy(targets, to: t.path, prompt: conflictPrompt) { d, c in
+                try eng.performCopy(targets, to: t.path, srcSource: src, dstSource: dst,
+                                    prompt: conflictPrompt) { d, c in
                     ws.operationState(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c)))
                 }
             } else {
-                try eng.performMove(targets, to: t.path, prompt: conflictPrompt) { d, c in
+                try eng.performMove(targets, to: t.path, srcSource: src, dstSource: dst,
+                                    prompt: conflictPrompt,
+                                    progress: { d, c in
                     ws.operationState(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c)))
-                }
+                },
+                                    onWarning: { warnings.append($0) })
             }
             a.load()
             t.load()
-            workspace.operationState(.done("\(label) 完成"))
+            let note = warnings.isEmpty ? "" : "　⚠ \(warnings.joined(separator: "；"))"
+            workspace.operationState(.done("\(label) 完成\(note)"))
         } catch let e as TCError {
             a.load()
             t.load()

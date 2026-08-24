@@ -11,6 +11,7 @@ public struct LocalFileSource: FileSource {
 
     public var isRemote: Bool { false }
     public var supportsTransfer: Bool { true }
+    public var sourceID: String { "local" }
 
     // MARK: - 浏览 / 元信息
 

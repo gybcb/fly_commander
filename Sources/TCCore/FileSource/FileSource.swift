@@ -7,6 +7,9 @@ public typealias ReadHandle = (Int) throws -> Data?
 /// 跨源传输 = `源.openReader` 泵入 `目标.streamWrite`（64KB 块），
 /// 同源 copy/move 由各实现走最快路径（本地 fm / SFTP 服务端 rename）。
 public protocol FileSource {
+    /// 数据源唯一标识（同源判定）。同一底层文件系统同 id：
+    /// 本地恒 "local"；SFTP 形如 "sftp://host:port"。
+    var sourceID: String { get }
     /// 是否远端源（SFTP 等）。远端预览/编辑/搜索走降级提示。
     var isRemote: Bool { get }
     /// 是否可参与跨源流式传输（读+写全能力）。
