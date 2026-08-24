@@ -8,6 +8,10 @@ public final class CommandRouter {
     public var onView: ((FileItem) -> Void)?
     public var onEdit: ((FileItem) -> Void)?
     public var onSearch: ((TCPath) -> Void)?
+    /// 远端传输委托（app 层注入）：复制/移动任一端是远端源且注入了此钩子时，
+    /// 交给它后台执行（主线程不阻塞）。未注入或双端皆本地 → 走本地快路径（同步）。
+    /// 参数：(isCopy, 活动窗格=源, 另一窗格=目标)。
+    public var onRemoteTransfer: ((_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) -> Void)?
 
     public init(workspace: Workspace, engine: OperationEngine = OperationEngine()) {
         self.workspace = workspace
@@ -29,8 +33,8 @@ public final class CommandRouter {
         case .toggleMark: a.toggleMark()
         case .selectAll: a.selectAll()
         case .clearMarks, .cancel: a.clearMarks()
-        case .copy: runTransfer(isCopy: true)
-        case .move: runTransfer(isCopy: false)
+        case .copy: handleTransfer(isCopy: true)
+        case .move: handleTransfer(isCopy: false)
         case .delete:
             let targets = a.operationTargets
             if !targets.isEmpty { onDelete?(a, targets) }
@@ -68,6 +72,18 @@ public final class CommandRouter {
         } catch {
             a.load()
             workspace.operationState(.failed(asTCError(error).message))
+        }
+    }
+
+    /// 复制/移动入口：远端参与且注入了委托 → 交给 app 层后台执行；
+    /// 否则走本地快路径（runTransfer，同步，core 测试语义不变）。
+    private func handleTransfer(isCopy: Bool) {
+        let a = workspace.activePane
+        let t = workspace.inactivePane
+        if let remote = onRemoteTransfer, a.source.isRemote || t.source.isRemote {
+            remote(isCopy, a, t)
+        } else {
+            runTransfer(isCopy: isCopy)
         }
     }
 

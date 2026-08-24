@@ -15,6 +15,7 @@ private final class FakeSource: FileSource {
     var statTable: [String: FileItem] = [:]
     var readerChunks: [Data] = []
     var removeError: TCError?
+    var removeFailWhen: String? = nil   // path.pathString 匹配时 remove 抛 removeError
     var copyError: TCError?
     var moveError: TCError?
     var moveFailWhenFrom: String? = nil   // from.pathString 匹配时 move 抛 moveError
@@ -59,7 +60,8 @@ private final class FakeSource: FileSource {
     }
     func removeItem(at: TCPath) throws {
         removeCalls.append(at.pathString)
-        if let e = removeError { throw e }
+        if let fail = removeFailWhen, at.pathString == fail, let e = removeError { throw e }
+        else if removeFailWhen == nil, let e = removeError { throw e }
     }
     func openReader(_ path: TCPath) throws -> ReadHandle {
         openReaders.append(path.pathString)
@@ -212,5 +214,24 @@ final class OperationEngineRoutingTests: XCTestCase {
         let p = try engine.performMakeDirectory("nd", in: TCPath("/s"), source: b)
         XCTAssertEqual(b.mkdirCalls, ["/s/nd"])
         XCTAssertEqual(p.pathString, "/s/nd")
+    }
+
+    // MARK: - 直接删除（远端无废纸篓路径）
+
+    func testDeleteGoesToSourceRecursive() throws {
+        let items = [fakeItem("a.txt", in: "/s"), fakeItem("d1", in: "/s")]
+        try engine.performDelete(items, source: b)
+        XCTAssertEqual(b.removeCalls, ["/s/a.txt", "/s/d1"])
+    }
+
+    func testDeleteSingleFailureStillDeletesRestThenThrows() throws {
+        // 第二项失败：第一项仍被删，最后抛首个错误（尽力删完语义）。
+        b.removeError = TCError.permissionDenied("locked")
+        b.removeFailWhen = "/s/locked.txt"
+        let items = [fakeItem("ok.txt", in: "/s"), fakeItem("locked.txt", in: "/s")]
+        XCTAssertThrowsError(try engine.performDelete(items, source: b)) {
+            XCTAssertEqual($0 as? TCError, .permissionDenied("locked"))
+        }
+        XCTAssertEqual(b.removeCalls, ["/s/ok.txt", "/s/locked.txt"])   // 两项都尝试删
     }
 }

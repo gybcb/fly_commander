@@ -88,6 +88,20 @@ public final class OperationEngine {
         return newDir
     }
 
+    /// 直接删除（**不进废纸篓**）：远端无回收站，目录由 source.removeItem 递归删除。
+    /// 逐个删、单项失败不中断整批（尽力删完），最后抛首个错误。
+    public func performDelete(_ items: [FileItem], source: FileSource) throws {
+        var firstError: TCError?
+        for item in items {
+            do {
+                try source.removeItem(at: item.path)
+            } catch {
+                firstError = firstError ?? asTCError(error)
+            }
+        }
+        if let firstError { throw firstError }
+    }
+
     // MARK: - 私有
 
     /// 冲突判定。返回 true 表示本项被跳过（skip/skipAll）。

@@ -10,6 +10,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
+    private var transferEngine: TransferEngine!
+    /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
+    private let engine = OperationEngine()
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -38,12 +41,26 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         let right = FilePane(id: .right, source: source, startPath: home)
         workspace = Workspace(left: left, right: right, active: .left)
 
-        router = CommandRouter(workspace: workspace, engine: OperationEngine())
+        router = CommandRouter(workspace: workspace, engine: engine)
         router.conflictPrompt = { [weak self] src, dst in self?.promptConflict(src, dst) ?? .overwrite }
         router.onDelete = { [weak self] pane, targets in self?.doTrashDelete(pane: pane, targets: targets) }
         router.onView = { [weak self] item in self?.showPreview(item) }
         router.onEdit = { [weak self] item in self?.openForEdit(item) }
         router.onSearch = { [weak self] root in self?.beginSearch(in: root) }
+
+        // 远端传输：router 检测到任一端 isRemote 时委托后台执行器（主线程不冻结）。
+        transferEngine = TransferEngine(engine: engine)
+        transferEngine.state = { [weak self] s in self?.workspace.operationState(s) }
+        transferEngine.onFinished = { [weak self] srcPane, dstPane in
+            guard let self else { return }
+            srcPane.load()
+            dstPane.load()
+            self.updateBars()
+        }
+        router.onRemoteTransfer = { [weak self] isCopy, src, dst in
+            self?.transferEngine.prompt = { s, d in self?.promptConflict(s, d) ?? .overwrite }
+            self?.transferEngine.run(isCopy, src, dst)
+        }
 
         left.onReload = { [weak self] p in self?.refresh(p) }
         right.onReload = { [weak self] p in self?.refresh(p) }
@@ -284,6 +301,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     }
 
     private func doTrashDelete(pane: FilePane, targets: [FileItem]) {
+        // 远端无废纸篓：确认后直接删（后台执行，主线程不阻塞）。
+        if pane.source.isRemote {
+            doRemoteDelete(pane: pane, targets: targets)
+            return
+        }
         if targets.count > 1 {
             let alert = NSAlert()
             alert.alertStyle = .warning
@@ -297,6 +319,37 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             DispatchQueue.main.async {
                 pane.load()
                 self?.workspace.operationState(.done("已删除 \(targets.count) 个文件"))
+            }
+        }
+    }
+
+    /// 远端删除：确认（"无法恢复"）→ 后台 performDelete（引擎 source.removeItem 递归）。
+    private func doRemoteDelete(pane: FilePane, targets: [FileItem]) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "从服务器删除 \(targets.count) 个文件？"
+        alert.informativeText = "远端没有废纸篓，删除后无法恢复。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() != .alertFirstButtonReturn { return }
+
+        let source = pane.source
+        let engine = self.engine
+        let state = { [weak self] s in self?.workspace.operationState(s) }
+        state(.running(label: "删除 \(targets.count) 个文件", progress: 0))
+        // 系统预建全局队列执行（不新建 DispatchQueue——SDK 约束）。
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result: Result<Void, Error>
+            do { try engine.performDelete(targets, source: source); result = .success(()) }
+            catch { result = .failure(error) }
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    state(.done("已删除 \(targets.count) 个文件"))
+                case .failure(let error):
+                    state(.failed((error as? TCError)?.message ?? error.localizedDescription))
+                }
+                pane.load()
             }
         }
     }
