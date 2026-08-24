@@ -4,3 +4,6 @@ DerivedData/
 xcuserdata/
 *.xcodeproj
 .DS_Store
+
+# local git worktrees (SDD)
+.worktrees/
