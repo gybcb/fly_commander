@@ -200,7 +200,7 @@ final class FlyCommanderUITests: XCTestCase {
     }
 
     func testToolbarButtonsPresent() {
-        for name in ["复制", "移动", "新建目录", "删除", "重命名", "查找"] {
+        for name in ["复制", "移动", "新建目录", "删除", "重命名", "查找", "连接"] {
             XCTAssertTrue(toolbarButton(name).exists, "工具栏按钮缺失：\(name)")
         }
     }
@@ -236,6 +236,26 @@ final class FlyCommanderUITests: XCTestCase {
         XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '开始搜索'")).firstMatch.exists)
         XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.exists)
         search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+    }
+
+    // MARK: - SFTP 连接窗（只验窗口与控件出现，不真连——
+    // 真实连接由 SPM 侧 ConnectionStoreE2ETests 对本地 sshd 覆盖）
+
+    func testConnectWindowShowsFields() {
+        toolbarButton("连接").click()
+        let conn = app.windows.matching(NSPredicate(format: "title == 'SFTP 连接'")).firstMatch
+        XCTAssertTrue(conn.waitForExistence(timeout: 5), "SFTP 连接窗未弹出")
+        // 按钮
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == '连接'")).firstMatch.exists)
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.exists)
+        // 表单字段：AX 里单选是 RadioButton、复选是 CheckBox（不在 .buttons 里）
+        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == '密码'")).firstMatch.exists)
+        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == '密钥文件'")).firstMatch.exists)
+        XCTAssertTrue(conn.checkBoxes.matching(NSPredicate(format: "title == '记住密码'")).firstMatch.exists)
+        // 主机输入框（无最近连接时应为空）
+        let hostField = conn.textFields.matching(NSPredicate(format: "identifier == 'hostField'")).firstMatch
+        XCTAssertTrue(hostField.exists, "主机输入框缺失")
+        conn.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
     }
 
     // MARK: - 搜索（通配符匹配语义由 core 单测 FileSearcherTests 覆盖）
@@ -367,3 +387,5 @@ final class FlyCommanderUITests: XCTestCase {
                       "Tab 切右栏后 Down 应移动右栏焦点（文件行），预览应弹出；未弹出说明方向键仍落在左窗格")
     }
 }
+
+

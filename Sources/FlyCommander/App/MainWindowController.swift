@@ -7,6 +7,7 @@ extension NSToolbarItem.Identifier {
     static let delete = NSToolbarItem.Identifier("delete")
     static let rename = NSToolbarItem.Identifier("rename")
     static let search = NSToolbarItem.Identifier("search")
+    static let connect = NSToolbarItem.Identifier("connect")
     static let selectionStatus = NSToolbarItem.Identifier("selectionStatus")
 }
 
@@ -72,6 +73,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         case .search:
             return item(id: .search, label: "查找", symbol: "magnifyingglass",
                         action: #selector(MainViewController.menuSearch(_:)))
+        case .connect:
+            return item(id: .connect, label: "连接", symbol: "network",
+                        action: #selector(MainViewController.menuConnect(_:)))
         case .selectionStatus:
             let label = NSTextField(labelWithString: "")
             label.font = .systemFont(ofSize: 11)
@@ -89,12 +93,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.copy, .move, .makeDirectory, .delete, .rename, .search,
+        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect,
          .space, .selectionStatus]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.copy, .move, .makeDirectory, .delete, .rename, .search,
+        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect,
          .selectionStatus, .space]
     }
 }

@@ -6,9 +6,9 @@ import Traversio
 /// 惰性建连：首次操作时连接并复用；断开由调用方显式 closeConnection。
 public final class SFTPSource: FileSource {
     public let config: SFTPConnectionConfig
-    public let homeDirectory: String
+    public internal(set) var homeDirectory: String
     private let store: SFTPHostKeyStore
-    private var connection: SFTPConnection?
+    internal private(set) var _connection: SFTPConnection?
 
     init(config: SFTPConnectionConfig,
          homeDirectory: String = "/",
@@ -25,16 +25,22 @@ public final class SFTPSource: FileSource {
     // MARK: - 连接
 
     private func conn() throws -> SFTPConnection {
-        if let c = connection { return c }
+        if let c = _connection { return c }
         let c = try SFTPConnection(config: config, store: store)
-        connection = c
+        _connection = c
         return c
     }
 
     /// 主动断开（关闭后下次操作会重连）。
     public func closeConnection() {
-        connection?.close()
-        connection = nil
+        _connection?.close()
+        _connection = nil
+    }
+
+    /// 连接并解析远端 home 目录（SFTP REALPATH "."），失败抛 TCError。
+    /// 连接成功后连接保持复用；供连接窗取起始路径。
+    public func resolveHome() throws -> String {
+        try map { try conn().performSync { try await $0.realPath(".") } }.filename
     }
 
     // MARK: - 错误映射（所有出口统一过这里）

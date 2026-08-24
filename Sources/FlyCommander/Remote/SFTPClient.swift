@@ -2,9 +2,10 @@ import Foundation
 import TCCore
 import Traversio
 
-/// SFTP 连接配置。认证支持密码与 OpenSSH 私钥文件（可带 passphrase）两种。
-public struct SFTPConnectionConfig {
-    public enum Auth {
+/// SFTP 连接配置（运行时，含凭据）。认证支持密码与 OpenSSH 私钥文件（可带 passphrase）。
+/// **不可持久化**：密码/passphrase 只存在于内存；持久化走 SFTPConnectionRecord（不含密钥）。
+public struct SFTPConnectionConfig: Equatable {
+    public enum Auth: Equatable {
         case password(String)
         case keyFile(path: String, passphrase: String? = nil)
     }
@@ -27,6 +28,9 @@ public struct SFTPConnectionConfig {
         if port != 22 { s += ":\(port)" }
         return s
     }
+
+    /// 凭据账号（Keychain 键）：host:port:username。
+    public var credentialAccount: String { "\(host):\(port):\(username)" }
 }
 
 /// 主机密钥 TOFU 存储（自管 UserDefaults，与系统 known_hosts 无关）。

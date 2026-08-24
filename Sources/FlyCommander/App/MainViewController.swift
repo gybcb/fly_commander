@@ -9,6 +9,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private var rightPaneView: PaneTableView!
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
+    private let connectionWindow = ConnectionWindowController()
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -165,6 +166,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     @objc func menuSearch(_ sender: Any?) { router.execute(.search) }
 
+    @objc func menuConnect(_ sender: Any?) { beginConnection() }
+
     @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
 
     @objc func menuPreview(_ sender: Any?) {
@@ -223,6 +226,17 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             }
             pane.revealItem(id: hit.path.pathString)
         }
+    }
+
+    /// 打开 SFTP 连接窗；成功后把活动窗格接到远端源（远端 home 目录）。
+    private func beginConnection() {
+        connectionWindow.onConnected = { [weak self] source, home in
+            guard let self else { return }
+            let pane = self.workspace.activePane
+            pane.setSource(source, andPath: TCPath("sftp://\(source.config.host):\(source.config.port)\(home)"))
+            self.panesDidBecomeActive()
+        }
+        connectionWindow.present()
     }
 
     private func promptRename() {

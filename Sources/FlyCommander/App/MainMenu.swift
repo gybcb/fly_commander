@@ -29,6 +29,8 @@ enum MainMenu {
         add(fileMenu, "移到废纸篓", #selector(MainViewController.menuTrashDelete(_:)), "\u{8}", target, .command)
         add(fileMenu, "复制到另一窗格", #selector(MainViewController.menuCopyToOtherPane(_:)), "", target)
         add(fileMenu, "移动到另一窗格", #selector(MainViewController.menuMoveToOtherPane(_:)), "", target)
+        fileMenu.addItem(.separator())
+        add(fileMenu, "SFTP 连接…", #selector(MainViewController.menuConnect(_:)), "", target)
 
         // 编辑菜单
         let editMenuItem = NSMenuItem()
