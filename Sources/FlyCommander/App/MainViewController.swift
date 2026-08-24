@@ -11,6 +11,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
     private var transferEngine: TransferEngine!
+    private var commandBar: CommandLineBar!
+    private var commandExecutor: InternalCommandExecutor!
     /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
     private let engine = OperationEngine()
 
@@ -62,6 +64,18 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self?.transferEngine.run(isCopy, src, dst)
         }
 
+        // 命令栏执行器（T7）：copy/move 复用 router 的传输路径（远端自动走后台）。
+        commandExecutor = InternalCommandExecutor(workspace: workspace, engine: engine)
+        commandExecutor.onDelete = { [weak self] req in self?.doTrashDelete(pane: req.pane, targets: req.targets) }
+        commandExecutor.onConnectSFTP = { [weak self] host, port in
+            self?.connectionWindow.setPendingHost(host, port: port)
+            self?.beginConnection()
+        }
+        workspace.onCommandTransfer = { [weak self] id in self?.router.execute(id) }
+        workspace.onCommandStatus = { [weak self] s in self?.setStatus(s) }
+        workspace.onCommandView = { [weak self] item in self?.showPreview(item) }
+        workspace.onCommandEdit = { [weak self] item in self?.openForEdit(item) }
+
         left.onReload = { [weak self] p in self?.refresh(p) }
         right.onReload = { [weak self] p in self?.refresh(p) }
         workspace.onActiveChange = { [weak self] _ in self?.panesDidBecomeActive() }
@@ -79,13 +93,28 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         splitView.addArrangedSubview(leftPaneView!)
         splitView.addArrangedSubview(rightPaneView!)
 
+        // 底部命令栏（T7）：两窗格共享，split 上移让位。
+        let bar = CommandLineBar()
+        bar.onExecute = { [weak self] line in
+            guard let self else { return }
+            self.commandBar.showOutput(self.commandExecutor.execute(line: line))
+        }
+        commandBar = bar
+
         root.addSubview(splitView)
+        root.addSubview(bar)
         NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             splitView.topAnchor.constraint(equalTo: root.topAnchor),
             splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            splitView.bottomAnchor.constraint(equalTo: bar.topAnchor),
         ])
+
+        leftPaneView.commandBar = commandBar
+        rightPaneView.commandBar = commandBar
 
         self.view = root
         split = splitView

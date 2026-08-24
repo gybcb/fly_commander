@@ -11,6 +11,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let workspace: Workspace
     private let router: CommandRouter
     let id: PaneID
+    /// 底部命令栏（两窗格共享同一实例）：无修饰字符键/Return/Backspace/Esc 经拦截送入。
+    var commandBar: CommandLineBar?
 
     var tableView: ClickForwardingTableView!
     private var scrollView: NSScrollView!
@@ -162,11 +164,13 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     // MARK: - Key handling（KeyDispatcher 的落点）
 
     override func keyDown(with event: NSEvent) {
-        let isFirstResponder = (window?.firstResponder === self)
+        guard window?.firstResponder === self else { super.keyDown(with: event); return }
+        // 命令栏拦截：无修饰的可打印字符键无条件接管（输入即进命令模式）；
+        // 空格/Return/Backspace/Esc 仅当命令栏已有内容时接管（空时保留 TC 原行为：
+        // 空格=标记、Return=进入目录、Backspace=上级、Esc=清除选择）。Cmd/Ctrl/Option 不接管。
+        if commandBarIntercept(event) { return }
         let input = KeyInput(keyCode: event.keyCode, modifiers: event.modifierFlags)
-        let result = KeyDispatcher.dispatch(input)
-        guard isFirstResponder else { super.keyDown(with: event); return }
-        guard let result else { super.keyDown(with: event); return }
+        guard let result = KeyDispatcher.dispatch(input) else { super.keyDown(with: event); return }
         switch result.command {
         case .up: navigate(delta: -1, mode: result.moveMode)
         case .down: navigate(delta: 1, mode: result.moveMode)
@@ -179,6 +183,45 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         case .delete: router.execute(.delete, moveMode: result.moveMode)
         default: router.execute(result.command, moveMode: result.moveMode)
         }
+    }
+
+    /// 命令栏键入拦截。返回 true 表示已消费（不再走 KeyDispatcher）。
+    private func commandBarIntercept(_ event: NSEvent) -> Bool {
+        guard let bar = commandBar else { return false }
+        // 修饰键（Cmd/Ctrl/Option）→ 交给菜单/系统/现有派发；
+        // Shift 不排除（Shift+字母 = 命令栏输入大写）。
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        else { return false }
+
+        switch event.keyCode {
+        case 36, 76:                       // Return / 小键盘 Return
+            if bar.buffer.isEmpty { return false }
+            bar.executeBuffered()
+            return true
+        case 51:                            // Backspace / Delete
+            if bar.buffer.isEmpty { return false }
+            bar.deleteBackward()
+            return true
+        case 53:                            // Esc
+            if bar.buffer.isEmpty { return false }
+            bar.clearAll()
+            bar.onClear?()
+            return true
+        default:
+            break
+        }
+
+        // 可打印字符（含中文/符号）才进命令栏；方向键/F 键/Home/End 等在 macOS
+        // 上的 charactersIgnoringModifiers 落在私有区 0xE000–0xF8FF（如 Down=0xF702），
+        // 必须排除，否则方向键被吞、无法移动焦点。
+        guard let chars = event.charactersIgnoringModifiers,
+              !chars.isEmpty,
+              let scalar = chars.unicodeScalars.first,
+              scalar.value >= 0x20, scalar.value != 0x7f,
+              (scalar.value < 0xE000 || scalar.value > 0xF8FF) else { return false }
+        if chars == " ", bar.buffer.isEmpty { return false }
+        bar.append(chars)
+        return true
     }
 
     /// 键盘方向移动：按**显示顺序**相邻（乱序列头后仍落在可见的下一/上一行，而非

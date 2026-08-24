@@ -14,6 +14,13 @@ public final class Workspace {
 
     public var onActiveChange: ((Workspace) -> Void)?
     public var onOperationState: ((OperationState) -> Void)?
+    /// 命令栏 copy/move（等价 F5/F6）：app 层接 CommandRouter 的传输路径（远端走后台）。
+    public var onCommandTransfer: ((CommandID) -> Void)?
+    /// 命令栏需要状态栏提示时的文本落点（不经过 OperationState 通道）。
+    public var onCommandStatus: ((String) -> Void)?
+    /// 命令栏 view/edit 的 app 层入口（复用菜单同款行为）。
+    public var onCommandView: ((FileItem) -> Void)?
+    public var onCommandEdit: ((FileItem) -> Void)?
 
     public init(left: FilePane, right: FilePane, active: PaneID = .left) {
         self.left = left

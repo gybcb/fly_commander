@@ -121,6 +121,10 @@ final class ConnectionViewController: NSViewController {
 
     // MARK: - Public
 
+    /// 命令栏 `sftp host[:port]` 预填（prepare 之后调用，覆盖最近连接回填）。
+    func prefillHost(_ host: String) { hostField.stringValue = host }
+    func prefillPort(_ port: UInt16) { portField.stringValue = String(port) }
+
     /// 重置表单并预填最近连接（若有记住的凭据则回填并勾选"记住"）。
     /// 使在途连接结果失效（token++）。
     func prepare() {

@@ -386,6 +386,42 @@ final class FlyCommanderUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 5),
                       "Tab 切右栏后 Down 应移动右栏焦点（文件行），预览应弹出；未弹出说明方向键仍落在左窗格")
     }
+
+    // MARK: - 底部命令栏（T7：键入经窗格 keyDown 拦截 → 命令栏 buffer → Return 执行）
+
+    /// 启动后键盘第一响应者是左窗格表格；无修饰可打印字符键被拦截进命令栏。
+    private var cmdBarOutput: XCUIElement {
+        app.windows.element(boundBy: 0).staticTexts
+            .matching(NSPredicate(format: "identifier == 'cmdBarOutput'")).firstMatch
+    }
+
+    func testCommandLineLsEchoesItemCount() {
+        for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        XCTAssertTrue(cmdBarOutput.waitForExistence(timeout: 2), "命令栏输出行缺失")
+        let text = (cmdBarOutput.value as? String) ?? ""
+        XCTAssertTrue(text.contains("8 个条目"), "ls 应回显夹具 8 项，实际：\(text)")
+    }
+
+    func testCommandLineHelpListsCommands() {
+        for ch in Array("help") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        let text = (cmdBarOutput.value as? String) ?? ""
+        XCTAssertTrue(text.contains("可用命令"), "help 应回显命令清单，实际：\(text)")
+        XCTAssertTrue(text.contains("mkdir") && text.contains("sftp"), "清单应含 mkdir/sftp：\(text)")
+    }
+
+    func testCommandLineEscClearsBufferAndOutput() {
+        for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("8 个条目"), "前置：ls 已回显")
+        // Esc 清输入+输出（buffer 非空才接管；此处先放一个字符再 Esc）
+        app.typeKey(XCUIKeyboardKey(rawValue: "x"), modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        let text = (cmdBarOutput.value as? String) ?? ""
+        XCTAssertTrue(text.isEmpty, "Esc 后输出行应清空，实际：\(text)")
+    }
 }
 
 
