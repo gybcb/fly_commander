@@ -33,7 +33,8 @@ public protocol FileSource {
     func openReader(_ path: TCPath) throws -> ReadHandle
     /// 流式写：反复调用 write 闭包拉取数据，闭包返回空 Data 即结束。
     /// 目标已存在则先截断重建。totalBytes 供引擎层算进度（实现可不使用）。
-    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: () throws -> Data) throws
+    func streamWrite(_ path: TCPath, totalBytes: Int64?,
+                     write: @escaping () throws -> Data) throws
 }
 
 public extension FileSource {

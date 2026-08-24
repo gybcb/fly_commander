@@ -7,6 +7,10 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     GENERATE_INFOPLIST_FILE: "YES"
+packages:
+  Traversio:
+    github: "GitSwiftHQ/Traversio"
+    majorVersion: "1.0.7"
 targets:
   TCCore:
     type: framework
@@ -20,6 +24,8 @@ targets:
       - path: Sources/FlyCommander
     dependencies:
       - target: TCCore
+      - package: Traversio
+        product: Traversio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flycommander.app
