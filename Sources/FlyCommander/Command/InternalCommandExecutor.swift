@@ -43,6 +43,8 @@ final class InternalCommandExecutor {
         "  view                 预览焦点文件（远程暂不支持）",
         "  edit                 用外部编辑器打开焦点文件（远程暂不支持）",
         "  sftp [host[:port]]   打开 SFTP 连接窗（可预填主机/端口）",
+        "  tab new            新建标签（活动侧；缺省 tab 同义）",
+        "  tab close          关闭活动标签（每侧保底 1 个，最后一个不可关）",
         "  theme                打开主题窗（外观/强调色/文件类型配色）",
         "  help                 显示本帮助",
     ].joined(separator: "\n")
@@ -69,6 +71,7 @@ final class InternalCommandExecutor {
         case "view": return doView()
         case "edit": return doEdit()
         case "sftp": return doSFTP(cmd.args)
+        case "tab": return doTab(cmd.args)
         case "theme": onOpenTheme?(); return "已打开主题窗"
         case "help": return Self.helpText
         default: return "未知命令：\(cmd.name)（输入 help 查看命令清单）"
@@ -205,5 +208,18 @@ final class InternalCommandExecutor {
         }
         onConnectSFTP?(host, port)
         return host != nil ? "已打开连接窗（主机：\(host!)）" : "已打开 SFTP 连接窗"
+    }
+
+    private func doTab(_ args: [String]) -> String? {
+        switch args.first?.lowercased() {
+        case "new", nil:
+            onNewTab?()
+            return "已新建标签"
+        case "close":
+            if let closed = onCloseTab?(), closed { return "已关闭标签" }
+            return "无法关闭：每侧至少保留 1 个标签"
+        default:
+            return "用法：tab new | tab close"
+        }
     }
 }

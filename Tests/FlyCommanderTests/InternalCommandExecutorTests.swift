@@ -52,6 +52,8 @@ private final class Harness {
     var viewItem: FileItem?
     var editItem: FileItem?
     var themeOpened = 0
+    var newTab = 0
+    var closeTab = true
 
     init(local: StubSource, remote: StubSource, activeRemote: Bool) {
         let left = FilePane(id: .left, source: local, startPath: TCPath("/L"))
@@ -68,6 +70,8 @@ private final class Harness {
         ws.onCommandView = { [weak self] i in self?.viewItem = i }
         ws.onCommandEdit = { [weak self] i in self?.editItem = i }
         exec.onOpenTheme = { [weak self] in self?.themeOpened += 1 }
+        exec.onNewTab = { [weak self] in self?.newTab += 1 }
+        exec.onCloseTab = { [weak self] in self?.closeTab ?? true }
     }
 
     /// 在本地源里放文件 a.txt/b.txt 并让活动窗格聚焦第一个。
@@ -310,5 +314,47 @@ final class InternalCommandExecutorTests: XCTestCase {
         let out = h.executor.execute(line: "theme")
         XCTAssertEqual(h.themeOpened, 1)
         XCTAssertEqual(out, "已打开主题窗")
+    }
+
+    // MARK: - tab（多标签入口）
+
+    func testTabNewOpensTab() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "tab new")
+        XCTAssertEqual(h.newTab, 1, "tab new 应触发一次 onNewTab")
+        XCTAssertEqual(out, "已新建标签")
+    }
+
+    func testTabBareDefaultsToNew() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "tab")
+        XCTAssertEqual(h.newTab, 1, "裸 tab 默认新建")
+    }
+
+    func testTabCloseSucceeds() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        h.closeTab = true
+        let out = h.executor.execute(line: "tab close")
+        XCTAssertEqual(h.newTab, 0, "close 不新建")
+        XCTAssertEqual(out, "已关闭标签")
+    }
+
+    func testTabCloseRefusedOnLastTab() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        h.closeTab = false
+        let out = h.executor.execute(line: "tab close")
+        XCTAssertEqual(h.newTab, 0)
+        XCTAssertEqual(out, "无法关闭：每侧至少保留 1 个标签")
+    }
+
+    func testTabUnknownArgUsage() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "tab foo")
+        XCTAssertEqual(out, "用法：tab new | tab close")
     }
 }

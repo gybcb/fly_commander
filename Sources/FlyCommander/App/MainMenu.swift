@@ -24,6 +24,9 @@ enum MainMenu {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "文件")
         fileMenuItem.submenu = fileMenu
+        add(fileMenu, "新建标签页", #selector(MainViewController.menuNewTab(_:)), "t", target)
+        add(fileMenu, "关闭标签页", #selector(MainViewController.menuCloseTab(_:)), "w", target)
+        fileMenu.addItem(.separator())
         add(fileMenu, "新建目录", #selector(MainViewController.menuNewDirectory(_:)), "n", target)
         add(fileMenu, "重命名", #selector(MainViewController.menuRename(_:)), "r", target)
         add(fileMenu, "移到废纸篓", #selector(MainViewController.menuTrashDelete(_:)), "\u{8}", target, .command)
