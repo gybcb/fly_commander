@@ -21,8 +21,8 @@ final class SearchWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func present(root: TCPath, select: @escaping (SearchHit) -> Void) {
-        searchVC.prepare(root: root, onSelect: select)
+    func present(root: TCPath, source: FileSource, select: @escaping (SearchHit) -> Void) {
+        searchVC.prepare(root: root, source: source, onSelect: select)
         window?.center()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

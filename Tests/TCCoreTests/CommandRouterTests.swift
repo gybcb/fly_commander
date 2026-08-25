@@ -121,9 +121,12 @@ final class CommandRouterTests: XCTestCase {
 
     func testSearchDelegatesToOnSearch() {
         var got: TCPath?
-        router.onSearch = { got = $0 }
+        var gotSource: FileSource?
+        router.onSearch = { path, source in got = path; gotSource = source }
         router.execute(.search)
         XCTAssertEqual(got, TCPath(url: leftDir))
+        // 活动窗格的 source 一并透传（本地窗格 = LocalFileSource，sourceID "local"）
+        XCTAssertEqual(gotSource?.sourceID, "local")
     }
 
     func testViewFileIgnoresDirectory() {

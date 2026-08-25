@@ -36,39 +36,36 @@ public struct NamePattern {
 }
 
 public struct FileSearcher {
-    private let fm = FileManager.default
-    private let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey]
-
     public init() {}
 
+    /// 通用过 `FileSource.listDirectory` 递归搜索（本地/远端同一套逻辑）。
+    /// 默认 `LocalFileSource()`，既有本地调用零改动；远端传对应 source。
     @discardableResult
     public func search(root: TCPath,
                        pattern: NamePattern,
                        limit: Int = 1000,
+                       source: FileSource = LocalFileSource(),
                        progress: ((Int) -> Void)? = nil,
                        isCancelled: () -> Bool = { false }) -> [SearchHit] {
         var hits: [SearchHit] = []
         var visited = 0
-        guard let enumerator = fm.enumerator(
-            at: root.url,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
-            return []
-        }
-        for case let url as URL in enumerator {
-            if isCancelled() { break }
-            visited += 1
-            if visited % 10 == 0 { progress?(visited) }
-            let values = (try? url.resourceValues(forKeys: keys)) ?? URLResourceValues()
-            let isDir = values.isDirectory ?? false
-            let name = url.lastPathComponent
-            if pattern.matches(name) {
-                hits.append(SearchHit(
-                    path: TCPath(url: url),
-                    name: name,
-                    isDirectory: isDir,
-                    size: isDir ? 0 : Int64(values.fileSize ?? 0)))
-                if hits.count >= limit { break }
+        // DFS 迭代（栈）。目录项的 path 是"可直接再 list 的源内绝对路径"，
+        // 故 stack.append(item.path) 天然成立（本地 file URL / sftp URL 皆然）。
+        var stack: [TCPath] = [root]
+        while !stack.isEmpty {
+            if isCancelled() || hits.count >= limit { break }
+            let dir = stack.removeLast()
+            guard let items = try? source.listDirectory(dir) else { continue }
+            for item in items {
+                visited += 1
+                if visited % 10 == 0 { progress?(visited) }
+                if item.isHidden { continue }            // 跳过隐藏（含不下潜进隐藏目录）
+                if pattern.matches(item.name) {
+                    hits.append(SearchHit(path: item.path, name: item.name,
+                                          isDirectory: item.isDirectory, size: item.size))
+                    if hits.count >= limit { break }
+                }
+                if item.isDirectory { stack.append(item.path) }
             }
         }
         hits.sort { a, b in

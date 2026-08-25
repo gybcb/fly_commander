@@ -97,4 +97,59 @@ final class FileSearcherTests: XCTestCase {
                                   progress: { reports.append($0) })
         XCTAssertFalse(reports.isEmpty)
     }
+
+    // MARK: - 通用过 FileSource（远端式源）
+
+    func testSearchOverStubSourceRecursiveAndSkipsHidden() {
+        let s = StubSource()
+        let root = TCPath("sftp://h/")
+        let hits = FileSearcher().search(root: root, pattern: NamePattern("*.txt"), source: s)
+        XCTAssertEqual(Set(hits.map { $0.path.pathString }),
+                       ["/a.txt", "/docs/a.txt"], "递归应找到两枚 a.txt 且跳过 .hidden/")
+    }
+}
+
+/// 内存式远端源：`listDirectory` 按 pathString 字典返回，其余方法最小占位。
+/// 用于验证 `FileSearcher.search` 已通用过 `FileSource`（不绑死本地 FileManager）。
+private final class StubSource: FileSource {
+    // 键 = TCPath.pathString（stub://h/x 的 pathString 即 "/x"）。
+    var dirs: [String: [FileItem]] = [
+        "/": [
+            StubSource.item("/docs", dir: true),
+            StubSource.item("/.hidden", dir: true, hidden: true),
+            StubSource.item("/a.txt"),
+            StubSource.item("/b"),           // 无扩展名，不匹配 *.txt
+            StubSource.item("/c.md"),
+        ],
+        "/docs": [
+            StubSource.item("/docs/a.txt"),
+        ],
+        // .hidden 不下潜（hidden 目录不进栈），故无需其内容。
+    ]
+
+    var sourceID: String { "sftp://h" }
+    var isRemote: Bool { true }
+    var supportsTransfer: Bool { false }
+
+    func listDirectory(_ path: TCPath) throws -> [FileItem] {
+        dirs[path.pathString] ?? []
+    }
+    func isDirectory(_ path: TCPath) -> Bool { false }
+    func stat(_ path: TCPath) throws -> FileItem? { nil }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at: TCPath) throws {}
+    func removeItem(at: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle {
+        return { _ in Data() }
+    }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+
+    private static func item(_ p: String, dir: Bool = false, hidden: Bool = false) -> FileItem {
+        let name = p.split(separator: "/").last.map { String($0) } ?? p
+        return FileItem(id: p, path: TCPath("sftp://h\(p)"), name: name,
+                        isDirectory: dir, size: dir ? 0 : 10, modificationDate: .distantPast,
+                        isHidden: hidden, isReadOnly: false, isExecutable: dir)
+    }
 }

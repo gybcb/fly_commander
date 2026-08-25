@@ -7,7 +7,7 @@ public final class CommandRouter {
     public var onDelete: ((FilePane, [FileItem]) -> Void)?
     public var onView: ((FileItem) -> Void)?
     public var onEdit: ((FileItem) -> Void)?
-    public var onSearch: ((TCPath) -> Void)?
+    public var onSearch: ((TCPath, FileSource) -> Void)?
     /// 远端传输委托（app 层注入）：复制/移动任一端是远端源且注入了此钩子时，
     /// 交给它后台执行（主线程不阻塞）。未注入或双端皆本地 → 走本地快路径（同步）。
     /// 参数：(isCopy, 活动窗格=源, 另一窗格=目标)。
@@ -47,7 +47,7 @@ public final class CommandRouter {
         case .editFile:
             if let item = a.focusedItem, !item.isDirectory { onEdit?(item) }
         case .search:
-            onSearch?(a.path)
+            onSearch?(a.path, a.source)
         case .activateCommandLine:
             // 焦点移到命令栏是视图层职责（router 无 UI）；PaneTableView 直接调
             // commandBar.activate()。此分支仅为穷举 CommandID，不应经 router 触发。

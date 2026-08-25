@@ -29,6 +29,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
     // MARK: - State
 
     private var root: TCPath = TCPath("~")
+    private var source: FileSource = LocalFileSource()
     private var onSelect: ((SearchHit) -> Void)?
     private var hits: [SearchHit] = []
     private var isSearching = false
@@ -155,8 +156,9 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
 
     // MARK: - Public
 
-    func prepare(root: TCPath, onSelect: @escaping (SearchHit) -> Void) {
+    func prepare(root: TCPath, source: FileSource, onSelect: @escaping (SearchHit) -> Void) {
         self.root = root
+        self.source = source
         self.onSelect = onSelect
         hits = []
         isSearching = false
@@ -189,12 +191,14 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         table.deselectAll(nil)
 
         let rootPath = root
+        let searchSource = source
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             var visited = 0
             let found = FileSearcher().search(
                 root: rootPath,
                 pattern: NamePattern(pattern),
+                source: searchSource,
                 progress: { n in
                     visited = n
                     DispatchQueue.main.async {

@@ -51,7 +51,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         router.onDelete = { [weak self] pane, targets in self?.doTrashDelete(pane: pane, targets: targets) }
         router.onView = { [weak self] item in self?.showPreview(item) }
         router.onEdit = { [weak self] item in self?.openForEdit(item) }
-        router.onSearch = { [weak self] root in self?.beginSearch(in: root) }
+        router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
 
         // 远端传输：router 检测到任一端 isRemote 时委托后台执行器（主线程不冻结）。
         transferEngine = TransferEngine(engine: engine)
@@ -347,9 +347,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         }
     }
 
-    private func beginSearch(in root: TCPath) {
+    private func beginSearch(in root: TCPath, source: FileSource) {
         searchWindow.onOperation = { [weak self] state in self?.workspace.operationState(state) }
-        searchWindow.present(root: root) { [weak self] hit in
+        searchWindow.present(root: root, source: source) { [weak self] hit in
             guard let self else { return }
             let pane = self.workspace.activePane
             if hit.isDirectory {
