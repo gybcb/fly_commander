@@ -134,7 +134,7 @@ final class ThemeViewController: NSViewController {
                                       blue: rule.color.blue, alpha: rule.color.alpha)
         row.onExtensionChange = { [weak self] in self?.ruleChanged() }
         row.onColorChange = { [weak self] in self?.ruleChanged() }
-        row.onDelete = { [weak self] in self?.deleteRuleRow(row) }
+        row.onDelete = { [weak self, weak row] in guard let row else { return }; self?.deleteRuleRow(row) }
         return row
     }
 
