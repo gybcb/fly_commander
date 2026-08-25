@@ -416,13 +416,21 @@ final class FlyCommanderUITests: XCTestCase {
 
     // MARK: - 底部命令栏（T7：键入经窗格 keyDown 拦截 → 命令栏 buffer → Return 执行）
 
-    /// 启动后键盘第一响应者是左窗格表格；无修饰可打印字符键被拦截进命令栏。
+    /// 启动后键盘第一响应者是左窗格表格；按右箭头激活命令栏（TC 行为）后，
+    /// 键入交给命令栏字段编辑，Return 执行。
     private var cmdBarOutput: XCUIElement {
         app.windows.element(boundBy: 0).staticTexts
             .matching(NSPredicate(format: "identifier == 'cmdBarOutput'")).firstMatch
     }
 
+    /// 从窗格按右箭头激活命令栏（焦点移到输入框）。每用例 app 全新启动、焦点在窗格，
+    /// 故只需一次。
+    private func activateCommandBar() {
+        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: [])
+    }
+
     func testCommandLineLsEchoesItemCount() {
+        activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         XCTAssertTrue(cmdBarOutput.waitForExistence(timeout: 2), "命令栏输出行缺失")
@@ -431,6 +439,7 @@ final class FlyCommanderUITests: XCTestCase {
     }
 
     func testCommandLineHelpListsCommands() {
+        activateCommandBar()
         for ch in Array("help") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         let text = (cmdBarOutput.value as? String) ?? ""
@@ -439,10 +448,12 @@ final class FlyCommanderUITests: XCTestCase {
     }
 
     func testCommandLineEscClearsBufferAndOutput() {
+        activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("8 个条目"), "前置：ls 已回显")
-        // Esc 清输入+输出（buffer 非空才接管；此处先放一个字符再 Esc）
+        // Esc 清输入+输出：再激活命令栏放一个字符，Esc 后应清空输出并回到窗格
+        activateCommandBar()
         app.typeKey(XCUIKeyboardKey(rawValue: "x"), modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
@@ -496,6 +507,7 @@ final class FlyCommanderUITests: XCTestCase {
 
     /// 问题 1：导航（cd 进子目录）后，标签条文字须同步为新目录名（不只刷表格/窗口标题）。
     func testTabTitleUpdatesOnNavigation() {
+        activateCommandBar()
         for ch in Array("cd sub") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         // 命令栏回显确认真的导航了（否则下方标签断言失败会误导成"标签没更新"）
@@ -517,6 +529,7 @@ final class FlyCommanderUITests: XCTestCase {
             .matching(NSPredicate(format: "title == '新建标签页'")).firstMatch.click()
         Thread.sleep(forTimeInterval: 0.5)
         // 当前活动标签 cd 进 sub → 活动窗格目录=sub → 窗口标题 …/sub
+        activateCommandBar()
         for ch in Array("cd sub") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)

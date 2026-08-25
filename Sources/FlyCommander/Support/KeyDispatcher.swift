@@ -30,9 +30,9 @@ enum KeyDispatcher {
         case 123: // Left
             return has(.control) ? DispatchResult(command: .switchPane, moveMode: .simple)
                                  : DispatchResult(command: .parent, moveMode: .simple)
-        case 124: // Right
+        case 124: // Right：无修饰=激活命令栏（TC 行为）；Ctrl=切窗格
             return has(.control) ? DispatchResult(command: .switchPane, moveMode: .simple)
-                                 : DispatchResult(command: .enter, moveMode: .simple)
+                                 : DispatchResult(command: .activateCommandLine, moveMode: .simple)
         case 116: return DispatchResult(command: .pageUp, moveMode: .sticky)
         case 121: return DispatchResult(command: .pageDown, moveMode: .sticky)
         case 115: return DispatchResult(command: .home, moveMode: .sticky)

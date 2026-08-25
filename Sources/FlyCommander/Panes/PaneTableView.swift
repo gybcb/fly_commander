@@ -23,6 +23,10 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var sortDirection: SortDirection = .ascending
     private(set) var isActive = false
 
+    /// type-ahead 前缀缓冲（pane 模式下累积字母，1 秒无输入自动清空）。
+    private var typeAheadBuffer = ""
+    private var typeAheadReset: DispatchWorkItem?
+
     init(pane: FilePane, workspace: Workspace, router: CommandRouter, id: PaneID) {
         self.pane = pane
         self.workspace = workspace
@@ -165,12 +169,21 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     override func keyDown(with event: NSEvent) {
         guard window?.firstResponder === self else { super.keyDown(with: event); return }
-        // 命令栏拦截：无修饰的可打印字符键无条件接管（输入即进命令模式）；
-        // 空格/Return/Backspace/Esc 仅当命令栏已有内容时接管（空时保留 TC 原行为：
-        // 空格=标记、Return=进入目录、Backspace=上级、Esc=清除选择）。Cmd/Ctrl/Option 不接管。
-        if commandBarIntercept(event) { return }
         let input = KeyInput(keyCode: event.keyCode, modifiers: event.modifierFlags)
-        guard let result = KeyDispatcher.dispatch(input) else { super.keyDown(with: event); return }
+        // 1) KeyDispatcher 认领的键（方向/F 键/Return/Backspace/Space/Tab/Esc…）走 TC 原路径；
+        //    处理前先清 type-ahead 前缀（任何"别的"键都中断字母累积）。
+        if let result = KeyDispatcher.dispatch(input) {
+            typeAheadBuffer = ""
+            typeAheadReset?.cancel()
+            handleDispatched(result)
+            return
+        }
+        // 2) 未被认领的键：无修饰可打印字符 → type-ahead（字母导航，TC 行为）。
+        if typeAheadChar(event) { return }
+        super.keyDown(with: event)
+    }
+
+    private func handleDispatched(_ result: DispatchResult) {
         switch result.command {
         case .up: navigate(delta: -1, mode: result.moveMode)
         case .down: navigate(delta: 1, mode: result.moveMode)
@@ -181,47 +194,46 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         case .rename: promptRename()
         case .makeDirectory: promptMakeDirectory()
         case .delete: router.execute(.delete, moveMode: result.moveMode)
+        case .activateCommandLine: activateCommandLineBar()
         default: router.execute(result.command, moveMode: result.moveMode)
         }
     }
 
-    /// 命令栏键入拦截。返回 true 表示已消费（不再走 KeyDispatcher）。
-    private func commandBarIntercept(_ event: NSEvent) -> Bool {
-        guard let bar = commandBar else { return false }
-        // 修饰键（Cmd/Ctrl/Option）→ 交给菜单/系统/现有派发；
-        // Shift 不排除（Shift+字母 = 命令栏输入大写）。
+    /// 右箭头激活命令栏：焦点移到输入框（其自身接管后续键入；Enter/Esc 会 focus 回窗格）。
+    private func activateCommandLineBar() {
+        commandBar?.activate()
+    }
+
+    /// type-ahead：累积无修饰可打印字符为前缀，1 秒内连续字母扩展、超时自动清空；
+    /// 命中后从焦点下一行环形找第一个 name 前缀匹配的项。返回 true 表示已消费。
+    private func typeAheadChar(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty
         else { return false }
-
-        switch event.keyCode {
-        case 36, 76:                       // Return / 小键盘 Return
-            if bar.buffer.isEmpty { return false }
-            bar.executeBuffered()
-            return true
-        case 51:                            // Backspace / Delete
-            if bar.buffer.isEmpty { return false }
-            bar.deleteBackward()
-            return true
-        case 53:                            // Esc
-            if bar.buffer.isEmpty { return false }
-            bar.clearAll()
-            bar.onClear?()
-            return true
-        default:
-            break
-        }
-
-        // 可打印字符（含中文/符号）才进命令栏；方向键/F 键/Home/End 等在 macOS
-        // 上的 charactersIgnoringModifiers 落在私有区 0xE000–0xF8FF（如 Down=0xF702），
-        // 必须排除，否则方向键被吞、无法移动焦点。
+        // 可打印字符（含中文/符号）；方向键/F 键/Home/End 等在 macOS 上
+        // charactersIgnoringModifiers 落在私有区 0xE000–0xF8FF，须排除。
         guard let chars = event.charactersIgnoringModifiers,
               !chars.isEmpty,
               let scalar = chars.unicodeScalars.first,
               scalar.value >= 0x20, scalar.value != 0x7f,
               (scalar.value < 0xE000 || scalar.value > 0xF8FF) else { return false }
-        if chars == " ", bar.buffer.isEmpty { return false }
-        bar.append(chars)
+        typeAheadReset?.cancel()
+        let reset = DispatchWorkItem { [weak self] in self?.typeAheadBuffer = "" }
+        typeAheadReset = reset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: reset)
+        typeAheadBuffer.append(chars)
+        performTypeAhead(prefix: typeAheadBuffer)
         return true
+    }
+
+    private func performTypeAhead(prefix: String) {
+        guard let target = PaneTableView.typeAheadSelectionIndex(
+            displayIDs: displayIDs,
+            itemByID: pane.itemByID,
+            selectionItems: pane.selection.items,
+            focusID: pane.selection.focusID,
+            prefix: prefix) else { return }
+        // .sticky：移焦点但保留标记集（与方向键一致的 TC 粘性语义）。
+        pane.moveFocus(to: target, mode: .sticky)
     }
 
     /// 键盘方向移动：按**显示顺序**相邻（乱序列头后仍落在可见的下一/上一行，而非
@@ -325,6 +337,35 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         guard !displayIDs.isEmpty else { return 0 }
         let target = (edge == .home) ? 0 : displayIDs.count - 1
         return items.firstIndex(of: displayIDs[target]) ?? 0
+    }
+
+    /// type-ahead 纯函数：从焦点**下一行**环形遍历 display 顺序，返回第一个 name
+    /// 前缀匹配（忽略大小写）项的 selection 索引；无匹配返回 nil（焦点不动，TC 行为）。
+    /// 从焦点后开始使"再按当前项首字母"跳到下一同名项。displayIDs=显示序，
+    /// selectionItems=存储序（pane.selection.items），focusID 定位起点。
+    static func typeAheadSelectionIndex(displayIDs: [String],
+                                        itemByID: [String: FileItem],
+                                        selectionItems: [String],
+                                        focusID: String?,
+                                        prefix: String) -> Int? {
+        guard !displayIDs.isEmpty, !prefix.isEmpty else { return nil }
+        let lowered = prefix.lowercased()
+        let startRow: Int
+        if let fid = focusID, let r = displayIDs.firstIndex(of: fid) {
+            startRow = (r + 1) % displayIDs.count
+        } else {
+            startRow = 0
+        }
+        let n = displayIDs.count
+        for offset in 0..<n {
+            let row = (startRow + offset) % n
+            let id = displayIDs[row]
+            guard let item = itemByID[id] else { continue }
+            if item.name.lowercased().hasPrefix(lowered) {
+                return selectionItems.firstIndex(of: id)
+            }
+        }
+        return nil
     }
 }
 

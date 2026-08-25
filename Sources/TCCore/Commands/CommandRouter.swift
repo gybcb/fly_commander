@@ -48,6 +48,10 @@ public final class CommandRouter {
             if let item = a.focusedItem, !item.isDirectory { onEdit?(item) }
         case .search:
             onSearch?(a.path)
+        case .activateCommandLine:
+            // 焦点移到命令栏是视图层职责（router 无 UI）；PaneTableView 直接调
+            // commandBar.activate()。此分支仅为穷举 CommandID，不应经 router 触发。
+            break
         }
     }
 

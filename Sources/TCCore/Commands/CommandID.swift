@@ -9,4 +9,6 @@ public enum CommandID: Hashable {
     case copy, move, delete, rename, makeDirectory
     case viewFile, editFile, search
     case cancel
+    /// 激活底部命令栏（焦点移到输入框；右箭头触发）。
+    case activateCommandLine
 }

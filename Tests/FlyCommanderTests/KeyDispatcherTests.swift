@@ -29,6 +29,10 @@ final class KeyDispatcherTests: XCTestCase {
     func testCtrlRightSwitchesPane() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 124, modifiers: [.control]))?.command, .switchPane)
     }
+    func testRightActivatesCommandLine() {
+        // 无修饰右箭头 = 激活命令栏（TC 行为）；进入目录只剩 Return/双击
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 124, modifiers: []))?.command, .activateCommandLine)
+    }
     func testLeftIsParent() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 123, modifiers: []))?.command, .parent)
     }

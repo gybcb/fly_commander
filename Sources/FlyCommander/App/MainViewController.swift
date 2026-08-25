@@ -119,6 +119,13 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             guard let self else { return }
             self.commandBar.showOutput(self.commandExecutor.execute(line: line))
         }
+        // 命令栏 Enter（执行后）/ Esc（清空后）：焦点交回活动窗格（TC 行为）。
+        commandBar.onReturnToPane = { [weak self] in
+            guard let self else { return }
+            if let av = self.viewOfPane(self.workspace.activePane) {
+                self.view.window?.makeFirstResponder(av)
+            }
+        }
 
         root.addSubview(splitView)
         root.addSubview(commandBar!)

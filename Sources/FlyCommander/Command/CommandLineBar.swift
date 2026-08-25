@@ -8,16 +8,16 @@ import TCCore
 /// 调用 append/deleteBackward/execute/clear；鼠标点进输入框打字也走 NSTextField
 /// 自己的编辑，controlTextDidChange 反向同步 buffer——两条路径最终一致。
 final class CommandLineBar: NSView {
-    private let input = NSTextField()
+    private let input = CommandBarInputField()
     private let output = NSTextField(labelWithString: "")
     private let prompt = NSTextField(labelWithString: "命令:")
 
-    /// 输入缓冲（首响应者在窗格时经 keyDown 拦截更新）。
+    /// 输入缓冲（焦点在字段时经 controlTextDidChange 同步；focus 在窗格时不再使用）。
     private(set) var buffer = "" { didSet { if input.stringValue != buffer { input.stringValue = buffer } } }
     /// Return 时触发（带当前 buffer 快照；本方法不自动清空，由执行方决定）。
     var onExecute: ((String) -> Void)?
-    /// Esc 时触发（清空输入 + 输出由 MainViewController 决定）。
-    var onClear: (() -> Void)?
+    /// Enter（执行后）或 Esc（清空后）触发：把第一响应者交回活动窗格。
+    var onReturnToPane: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -35,6 +35,7 @@ final class CommandLineBar: NSView {
         input.target = self
         input.action = #selector(fieldReturn)
         input.delegate = self
+        input.onEscape = { [weak self] in self?.handleEscape() }
         output.font = .systemFont(ofSize: 11)
         output.textColor = .secondaryLabelColor
         output.lineBreakMode = .byTruncatingTail
@@ -62,16 +63,22 @@ final class CommandLineBar: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    // MARK: - 键入拦截入口（PaneTableView.keyDown 调用）
+    // MARK: - 焦点切换（PaneTableView 右箭头 → 激活；Enter/Esc → 返回窗格）
 
-    func append(_ text: String) {
-        buffer.append(text)
+    /// 让输入框成为第一响应者并把光标移到末尾（右箭头激活时用）。
+    func activate() {
+        guard let win = window else { return }
+        win.makeFirstResponder(input)
+        focusFieldToEnd()
     }
 
-    func deleteBackward() {
-        guard !buffer.isEmpty else { return }
-        buffer.removeLast()
+    /// 光标移到文本末尾（焦点刚进字段、准备续输入时）。
+    func focusFieldToEnd() {
+        let editor = input.currentEditor()
+        editor?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
     }
+
+    // MARK: - 键入（字段获得焦点后由原生编辑驱动；controlTextDidChange 反向同步 buffer）
 
     func executeBuffered() {
         let line = buffer
@@ -91,6 +98,13 @@ final class CommandLineBar: NSView {
 
     @objc private func fieldReturn() {
         executeBuffered()
+        onReturnToPane?()
+    }
+
+    /// Esc：清空输入 + 输出，焦点返回窗格（TC 行为）。
+    private func handleEscape() {
+        clearAll()
+        onReturnToPane?()
     }
 
     private func syncFromField() {
@@ -107,8 +121,15 @@ extension CommandLineBar: NSTextFieldDelegate {
                 doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(insertNewline(_:)) {
             executeBuffered()
+            onReturnToPane?()
             return true
         }
         return false
     }
+}
+
+/// 命令栏输入框：Esc 走 cancelOperation（原生 NSTextField 不处理 Esc，需覆写）。
+final class CommandBarInputField: NSTextField {
+    var onEscape: (() -> Void)?
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
 }
