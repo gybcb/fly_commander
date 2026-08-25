@@ -270,6 +270,33 @@ final class FlyCommanderUITests: XCTestCase {
         search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
     }
 
+    // MARK: - 主题窗（持久化由 SPM ThemeStoreTests 覆盖；此处只验窗口与控件）
+
+    private func themeWindow() -> XCUIElement {
+        app.windows.matching(NSPredicate(format: "title == '主题'")).firstMatch
+    }
+
+    func testThemeWindowOpensViaMenu() {
+        menuBar("查看").click()
+        menuBar("查看").menuItems
+            .matching(NSPredicate(format: "title == '主题…'")).firstMatch.click()
+        let win = themeWindow()
+        XCTAssertTrue(win.waitForExistence(timeout: 5), "主题窗未弹出")
+        // 关键控件：外观 segmented（3 段）、强调色取色器、规则行、添加/恢复按钮
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '添加规则'")).firstMatch.exists, "缺 添加规则")
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '恢复默认'")).firstMatch.exists, "缺 恢复默认")
+        // 默认主题带 5 条预置规则 → 至少 5 个扩展名输入框（textFields 已验证）；
+        // 不取色器断言（colorWells 在缩减版 XCUITest SDK 未验证）。
+        XCTAssertGreaterThanOrEqual(win.textFields.count, 5, "缺 文件类型规则行")
+    }
+
+    func testThemeWindowOpensViaToolbar() {
+        toolbarButton("主题").click()
+        let win = themeWindow()
+        XCTAssertTrue(win.waitForExistence(timeout: 5), "工具栏 主题 未弹出主题窗")
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '添加规则'")).firstMatch.exists, "缺 添加规则")
+    }
+
     // MARK: - 预览（查看 → 预览；须先点中一个文件行——预览要求焦点项非目录，
     // 而启动时焦点项不确定（可能落在目录上））
 
