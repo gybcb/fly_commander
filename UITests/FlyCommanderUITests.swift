@@ -1,4 +1,5 @@
 import XCTest
+import Carbon
 
 /// 真机 UI 回归（xcodebuild test 驱动，在本机 GUI 会话弹真实窗口）。
 ///
@@ -23,6 +24,7 @@ final class FlyCommanderUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        switchToEnglishInputSource()   // 键入类断言须英文输入法（见下）
         fixture = makeFixture()
         app = XCUIApplication()
         app.terminate()   // 清掉上一用例可能残留的进程
@@ -35,6 +37,22 @@ final class FlyCommanderUITests: XCTestCase {
     override func tearDownWithError() throws {
         app.terminate()
         try? FileManager.default.removeItem(at: fixture)
+    }
+
+    /// 把输入源切到英文 ABC（若可用）。中文输入法激活时，XCUITest 的 typeKey 字母会
+    /// 进 IME 组合层、提交不出预期 ASCII——命令栏 ls/help/cd、搜索框等键入类断言会
+    /// flaky（曾致 testCommandLineHelpListsCommands / testTabTitleUpdatesOnNavigation
+    /// 假失败）。跑前切英文，保证键入稳定；只影响 UI 测试会话，不动 app 代码。
+    private func switchToEnglishInputSource() {
+        guard let cf = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] else { return }
+        for s in cf {
+            guard let p = TISGetInputSourceProperty(s, kTISPropertyInputSourceID) else { continue }
+            let id = Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+            if id == "com.apple.keylayout.ABC" {
+                TISSelectInputSource(s)
+                return
+            }
+        }
     }
 
     /// 8 项夹具：alpha_small.txt(1B) alpha_big.txt(100B) large.bin(5000B) sub/ sub/inner.txt gamma.txt(1B) big.log(1.5MB 多行) longline.txt(1.3MB 单行) sample.torrent(小 bencode+哈希)。
