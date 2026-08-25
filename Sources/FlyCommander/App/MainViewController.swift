@@ -164,6 +164,13 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private func refresh(_ pane: FilePane) {
         guard let pv = viewOfPane(pane) else { return }
         pv.reload()
+        // 导航改了 pane.path → 该侧标签条标题须同步（show 依 pane.path 重建标签按钮）；
+        // 切侧/切标签/增删走 applyActiveState 时也会 show，此处补上"原地导航"这条路径。
+        if pane.id == .left {
+            leftContainer.show(tabGroup: workspace.leftTabs, isActiveSide: workspace.active == .left)
+        } else {
+            rightContainer.show(tabGroup: workspace.rightTabs, isActiveSide: workspace.active == .right)
+        }
         updateBars()
     }
 

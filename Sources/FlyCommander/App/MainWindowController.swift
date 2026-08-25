@@ -12,16 +12,39 @@ extension NSToolbarItem.Identifier {
     static let selectionStatus = NSToolbarItem.Identifier("selectionStatus")
 }
 
+/// 主窗口：拦下 Ctrl+Tab / Ctrl+Shift+Tab（keyCode 48 + .control），转发给第一响应者的
+/// keyDown 并消费掉，避免 macOS 原生 window tabbing 在 sendEvent 层吞掉它。
+///
+/// 背景（诊断实证，详见项目记忆 reduced-sdk）：本 app 的 Ctrl+Tab 用于 TC 式标签切换
+/// （PaneTableView.keyDown → .nextTab/.prevTab）。但 macOS 把 ⌃⇥/⌃⇧⇥ 占作原生
+/// "显示下一/上一个窗口标签页"，在 NSWindow.sendEvent 层、firstResponder.keyDown 之前
+/// 拦截。且 `tabbingMode = .disallowed` 与 `NSWindow.allowsAutomaticWindowTabbing = false`
+/// 在本 SDK（Xcode 26.6 / macOS 26）下均**拦不住**该 key binding（已 probe 实证：两者都
+/// 设置后 ⌃⇥ 仍到不了 keyDown）。同修饰的 ⌃Q 能进 keyDown、纯 Tab（切窗格）也能进，
+/// 唯独 ⌃⇥ 被吞——故只能在此手动抢在 super.sendEvent 之前把键喂给第一响应者。
+final class FlyWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 48,
+           event.modifierFlags.contains(.control) {
+            firstResponder?.keyDown(with: event)   // PaneTableView 处理 .nextTab/.prevTab
+            return                                  // 消费掉，不交给 super（原生 tabbing 会吞）
+        }
+        super.sendEvent(event)
+    }
+}
+
 final class MainWindowController: NSWindowController, NSToolbarDelegate {
     private var statusLabel: NSTextField?
     private weak var mainVC: MainViewController?
 
     convenience init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 680),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                              backing: .buffered, defer: false)
+        let window = FlyWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 680),
+                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                               backing: .buffered, defer: false)
         window.title = "FlyCommander"
         window.contentMinSize = NSSize(width: 760, height: 480)
+        // 一并关掉原生 window tabbing（双保险；真正生效的是 FlyWindow.sendEvent 拦截）。
+        window.tabbingMode = .disallowed
         let vc = MainViewController()
         window.contentViewController = vc
         self.init(window: window)

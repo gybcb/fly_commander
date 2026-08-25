@@ -57,11 +57,16 @@ final class TabBarView: NSView {
 
             let close = NSButton(title: "×", target: self, action: #selector(closeClicked(_:)))
             close.tag = i
-            close.bezelStyle = .recessed
-            close.font = .systemFont(ofSize: 11, weight: .bold)
+            close.isBordered = false              // Chrome 式：无边框紧凑小 ×（弃 .recessed 圆角盒，省空间）
+            close.font = .systemFont(ofSize: 10, weight: .medium)
             close.toolTip = "关闭标签"
             close.isHidden = titles.count <= 1   // 唯一标签不显示 ×（保底 1）
+            close.translatesAutoresizingMaskIntoConstraints = false
             stack.addArrangedSubview(close)
+            NSLayoutConstraint.activate([
+                close.widthAnchor.constraint(equalToConstant: 16),
+                close.heightAnchor.constraint(equalToConstant: 16),
+            ])
         }
         let plus = NSButton(title: "+", target: self, action: #selector(plusClicked(_:)))
         plus.bezelStyle = .recessed

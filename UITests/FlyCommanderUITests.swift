@@ -491,6 +491,43 @@ final class FlyCommanderUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(closeTabButtonCount(), 0, "保底：每侧最后 1 标签不可再关")
     }
+
+    // MARK: - 多标签：导航更新标签文字 + Ctrl+Tab 切换（问题 1/2 回归）
+
+    /// 问题 1：导航（cd 进子目录）后，标签条文字须同步为新目录名（不只刷表格/窗口标题）。
+    func testTabTitleUpdatesOnNavigation() {
+        for ch in Array("cd sub") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        // 命令栏回显确认真的导航了（否则下方标签断言失败会误导成"标签没更新"）
+        let text = (cmdBarOutput.value as? String) ?? ""
+        XCTAssertTrue(text.contains("sub"), "cd sub 应回显进入子目录，实际：\(text)")
+        // 导航前标签是启动目录名；导航进 sub 后标签按钮 title 应变成 sub
+        Thread.sleep(forTimeInterval: 0.5)
+        let subTab = app.buttons.matching(NSPredicate(format: "title == 'sub'")).firstMatch
+        XCTAssertTrue(subTab.exists, "导航进 sub 后标签文字应更新为 sub")
+    }
+
+    /// 问题 2：活动侧多标签时 Ctrl+Tab 应切到下一标签。窗口标题随活动窗格目录变，
+    /// 故作切换锚点：切前活动标签在 sub（标题 …/sub），Ctrl+Tab 后活动窗格换回启动
+    /// 目录（另一标签），标题应不再是 sub；若标题仍是 sub 说明 Ctrl+Tab 没生效。
+    func testCtrlTabSwitchesTab() {
+        // ⌘T 新建标签（活动侧=左，新标签成为活动），左侧 2 标签
+        menuBar("文件").click()
+        menuBar("文件").menuItems
+            .matching(NSPredicate(format: "title == '新建标签页'")).firstMatch.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        // 当前活动标签 cd 进 sub → 活动窗格目录=sub → 窗口标题 …/sub
+        for ch in Array("cd sub") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        let title = { [self] in app.windows.element(boundBy: 0).title }
+        XCTAssertTrue(title().hasSuffix("sub"), "前置：活动标签应已 cd 进 sub，标题实际：\(title())")
+        // Ctrl+Tab 切到另一标签（还在启动目录）→ 活动窗格目录回到启动目录 → 标题不再是 sub
+        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: .control)
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(title().hasSuffix("sub"),
+                       "Ctrl+Tab 切标签后活动窗格应换回启动目录，标题仍为 sub：\(title())")
+    }
 }
 
 
