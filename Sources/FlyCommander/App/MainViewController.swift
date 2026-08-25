@@ -126,6 +126,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
                 self.view.window?.makeFirstResponder(av)
             }
         }
+        // cd 下拉补全数据源 = 活动窗格当前目录条目（目录优先由 CdCompletion 排序）。
+        commandBar.suggestionProvider = { [weak self] in
+            self?.workspace.activePane.itemByID.values.map { $0 } ?? []
+        }
 
         root.addSubview(splitView)
         root.addSubview(commandBar!)
