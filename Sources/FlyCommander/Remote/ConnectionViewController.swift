@@ -248,7 +248,7 @@ final class ConnectionViewController: NSViewController {
                 self.connecting = false
                 self.connectButton.isEnabled = true
                 switch result {
-                case .success(let source, let home):
+                case .success((let source, let home)):
                     self.view.window?.close()
                     onConnected?(source, home)
                 case .failure(let error):
