@@ -92,8 +92,8 @@ final class CommandRouterRemoteTransferTests: XCTestCase {
         router.execute(.copy)
         XCTAssertEqual(calls.count, 1)
         XCTAssertTrue(calls[0].isCopy)
-        XCTAssertTrue(calls[0].src === ws.left, "源应是活动窗格（左=远端）")
-        XCTAssertTrue(calls[0].dst === ws.right, "目标是另一窗格")
+        XCTAssertTrue(calls[0].src === ws.leftTabs.panes[0], "源应是活动窗格（左=远端）")
+        XCTAssertTrue(calls[0].dst === ws.rightTabs.panes[0], "目标是另一窗格")
     }
 
     func testMoveDelegatesToRemoteHookWithIsCopyFalse() {
@@ -103,8 +103,8 @@ final class CommandRouterRemoteTransferTests: XCTestCase {
         router.execute(.move)
         XCTAssertEqual(calls.count, 1)
         XCTAssertFalse(calls[0].isCopy)
-        XCTAssertTrue(calls[0].src === ws.left)
-        XCTAssertTrue(calls[0].dst === ws.right)
+        XCTAssertTrue(calls[0].src === ws.leftTabs.panes[0])
+        XCTAssertTrue(calls[0].dst === ws.rightTabs.panes[0])
     }
 
     /// 委托被调用时不得再走本地快路径（否则会重复传输/写错目标）。

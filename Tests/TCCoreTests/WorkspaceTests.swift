@@ -33,10 +33,51 @@ final class WorkspaceTests: XCTestCase {
 
     func testActiveAndInactivePaneTrackActive() {
         let ws = Workspace(left: pane(.left), right: pane(.right), active: .left)
-        XCTAssertTrue(ws.activePane === ws.left)
-        XCTAssertTrue(ws.inactivePane === ws.right)
+        XCTAssertTrue(ws.activePane === ws.leftTabs.panes[0])
+        XCTAssertTrue(ws.inactivePane === ws.rightTabs.panes[0])
         ws.switchActive()
-        XCTAssertTrue(ws.activePane === ws.right)
-        XCTAssertTrue(ws.inactivePane === ws.left)
+        XCTAssertTrue(ws.activePane === ws.rightTabs.panes[0])
+        XCTAssertTrue(ws.inactivePane === ws.leftTabs.panes[0])
+    }
+
+    private func tabGroup(_ side: PaneID, _ n: Int) -> TabGroup {
+        let panes = (0..<n).map { _ in FilePane(id: side, source: LocalFileSource(), startPath: TCPath("~")) }
+        return TabGroup(side: side, panes: panes)
+    }
+
+    func testActivePaneReflectsActiveTab() {
+        let lt = tabGroup(.left, 3)
+        let rt = tabGroup(.right, 1)
+        let ws = Workspace(left: lt, right: rt, active: .left)
+        XCTAssertTrue(ws.activePane === lt.panes[0])
+        ws.nextTab()
+        XCTAssertTrue(ws.activePane === lt.panes[1])
+        ws.prevTab()   // 1 → 0
+        XCTAssertTrue(ws.activePane === lt.panes[0])
+    }
+
+    func testNextTabFiresActiveChangeOncePerRealChange() {
+        let lt = tabGroup(.left, 3)
+        let ws = Workspace(left: lt, right: tabGroup(.right, 1), active: .left)
+        var fired = 0
+        ws.onActiveChange = { _ in fired += 1 }
+        ws.nextTab()   // 0→1
+        XCTAssertEqual(fired, 1)
+        ws.nextTab()   // 1→2
+        XCTAssertEqual(fired, 2)
+    }
+
+    func testNextTabSingleSideNoFire() {
+        let ws = Workspace(left: tabGroup(.left, 1), right: tabGroup(.right, 1), active: .left)
+        var fired = 0
+        ws.onActiveChange = { _ in fired += 1 }
+        ws.nextTab()   // 单标签 no-op
+        XCTAssertEqual(fired, 0, "单标签 nextTab 不触发回调")
+    }
+
+    func testTabSwitchDoesNotChangeActiveSide() {
+        let ws = Workspace(left: tabGroup(.left, 3), right: tabGroup(.right, 2), active: .left)
+        ws.nextTab()
+        XCTAssertEqual(ws.active, .left, "切标签只改标签，不改左右侧重")
     }
 }
