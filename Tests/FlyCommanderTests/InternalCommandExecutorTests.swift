@@ -51,6 +51,7 @@ private final class Harness {
     var transfers: [CommandID] = []
     var viewItem: FileItem?
     var editItem: FileItem?
+    var themeOpened = 0
 
     init(local: StubSource, remote: StubSource, activeRemote: Bool) {
         let left = FilePane(id: .left, source: local, startPath: TCPath("/L"))
@@ -66,6 +67,7 @@ private final class Harness {
         ws.onCommandTransfer = { [weak self] c in self?.transfers.append(c) }
         ws.onCommandView = { [weak self] i in self?.viewItem = i }
         ws.onCommandEdit = { [weak self] i in self?.editItem = i }
+        exec.onOpenTheme = { [weak self] in self?.themeOpened += 1 }
     }
 
     /// 在本地源里放文件 a.txt/b.txt 并让活动窗格聚焦第一个。
@@ -102,7 +104,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "help")
-        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "help"] {
+        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "theme", "help"] {
             XCTAssertTrue(out?.contains(kw) ?? false, "help 应含 \(kw)：\(out ?? "nil")")
         }
     }
@@ -300,5 +302,13 @@ final class InternalCommandExecutorTests: XCTestCase {
         h.seedLocal(["a.txt"])
         _ = h.executor.execute(line: "move")
         XCTAssertEqual(h.transfers, [.move])
+    }
+
+    func testThemeCommandOpensWindow() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "theme")
+        XCTAssertEqual(h.themeOpened, 1)
+        XCTAssertEqual(out, "已打开主题窗")
     }
 }

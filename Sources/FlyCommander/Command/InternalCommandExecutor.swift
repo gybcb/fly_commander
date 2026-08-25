@@ -18,6 +18,8 @@ final class InternalCommandExecutor {
     var onDelete: ((_ request: InternalDeleteRequest) -> Void)?
     /// sftp 命令入口（弹连接窗；host/port 可预填，nil=不预填）。
     var onConnectSFTP: ((_ host: String?, _ port: UInt16?) -> Void)?
+    /// theme 命令入口（弹主题窗）。
+    var onOpenTheme: (() -> Void)?
 
     init(workspace: Workspace, engine: OperationEngine) {
         self.workspace = workspace
@@ -37,6 +39,7 @@ final class InternalCommandExecutor {
         "  view                 预览焦点文件（远程暂不支持）",
         "  edit                 用外部编辑器打开焦点文件（远程暂不支持）",
         "  sftp [host[:port]]   打开 SFTP 连接窗（可预填主机/端口）",
+        "  theme                打开主题窗（外观/强调色/文件类型配色）",
         "  help                 显示本帮助",
     ].joined(separator: "\n")
 
@@ -62,6 +65,7 @@ final class InternalCommandExecutor {
         case "view": return doView()
         case "edit": return doEdit()
         case "sftp": return doSFTP(cmd.args)
+        case "theme": onOpenTheme?(); return "已打开主题窗"
         case "help": return Self.helpText
         default: return "未知命令：\(cmd.name)（输入 help 查看命令清单）"
         }

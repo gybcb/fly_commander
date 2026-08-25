@@ -10,6 +10,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
+    private let themeWindow = ThemeWindowController()
     private var transferEngine: TransferEngine!
     private var commandBar: CommandLineBar!
     private var commandExecutor: InternalCommandExecutor!
@@ -70,6 +71,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         commandExecutor.onConnectSFTP = { [weak self] host, port in
             self?.connectionWindow.setPendingHost(host, port: port)
             self?.beginConnection()
+        }
+        commandExecutor.onOpenTheme = { [weak self] in self?.themeWindow.present() }
+        ThemeStore.shared.didChange = { [weak self] in
+            self?.leftPaneView.reload(); self?.rightPaneView.reload()
         }
         workspace.onCommandTransfer = { [weak self] id in self?.router.execute(id) }
         workspace.onCommandStatus = { [weak self] s in self?.setStatus(s) }
@@ -213,6 +218,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     @objc func menuSearch(_ sender: Any?) { router.execute(.search) }
 
     @objc func menuConnect(_ sender: Any?) { beginConnection() }
+
+    @objc func menuTheme(_ sender: Any?) { themeWindow.present() }
 
     @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
 

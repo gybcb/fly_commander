@@ -49,6 +49,7 @@ enum MainMenu {
         add(viewMenu, "编辑", #selector(MainViewController.menuEdit(_:)), "", target)
         add(viewMenu, "切换窗格", #selector(MainViewController.menuSwitchPane(_:)), "", target)
         add(viewMenu, "上级目录", #selector(MainViewController.menuGoToParent(_:)), "", target)
+        add(viewMenu, "主题…", #selector(MainViewController.menuTheme(_:)), "", target)
 
         return mainMenu
     }
