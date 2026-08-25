@@ -1,5 +1,6 @@
 import AppKit
 import TCCore
+import UniformTypeIdentifiers
 
 /// 原生表格行单元：16pt 系统图标 + 名称/大小/日期 标签，两级系统色高亮。
 final class FileCellView: NSTableCellView {
@@ -87,10 +88,22 @@ final class FileCellView: NSTableCellView {
         }
     }
 
+    /// 远端图标类型推导（纯函数，可单测）：目录→folder；文件按扩展名→UTType；无扩展名→data。
+    static func iconType(for item: FileItem) -> UTType {
+        if item.isDirectory { return .folder }
+        let ext = (item.name as NSString).pathExtension
+        return ext.isEmpty ? .data : (UTType(filenameExtension: ext) ?? .data)
+    }
+
     private static func cachedIcon(for item: FileItem) -> NSImage {
         let key = item.path.pathString as NSString
         if let cached = iconCache.object(forKey: key) { return cached }
-        let image = NSWorkspace.shared.icon(forFile: item.path.url.path)
+        let image: NSImage
+        if item.path.isRemote {
+            image = NSWorkspace.shared.icon(for: iconType(for: item))   // 远端无本地文件，按类型取
+        } else {
+            image = NSWorkspace.shared.icon(forFile: item.path.url.path) // 本地：真实 Finder 图标
+        }
         image.size = NSSize(width: 16, height: 16)
         iconCache.setObject(image, forKey: key)
         return image
