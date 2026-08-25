@@ -45,12 +45,20 @@ public final class FilePane {
         return true
     }
 
-    public func load(preserveFocus: Bool = true) {
-        let keep = preserveFocus ? selection.focusID : nil
+    public func load(preserveFocus: Bool = true, focusID: String? = nil) {
         do {
             let items = try source.listDirectory(path)
+            let ids = items.map { $0.id }
             self.page = DirectoryPage(path: path, items: items)
-            selection.reload(with: items.map { $0.id }, previousFocusID: keep)
+            if let target = focusID {
+                // 跨目录导航（回退/搜索）：清空标记，再按 id/name 定位到目标项。
+                selection.reload(with: ids)
+                applyExplicitFocus(target, items: items)
+            } else {
+                // 原地刷新（如 F5/F6 后）：reload(previousFocusID:) 保留焦点与标记集。
+                selection.reload(with: ids,
+                                 previousFocusID: preserveFocus ? selection.focusID : nil)
+            }
             lastError = nil
         } catch let tc as TCError {
             self.page = DirectoryPage(path: path, items: [])
@@ -64,10 +72,22 @@ public final class FilePane {
         onReload?(self)
     }
 
+    /// 跨目录导航后的显式定位：按 id、再按 name（lastPathComponent）兜底——同目录
+    /// 名字唯一，本地/远端皆成立。找不到时落回首项。此时标记集已随 reload 清空。
+    private func applyExplicitFocus(_ target: String, items: [FileItem]) {
+        guard !items.isEmpty else { return }
+        if let idx = items.firstIndex(where: { $0.id == target
+                    || $0.name == (target as NSString).lastPathComponent }) {
+            selection.setFocus(to: idx)
+        } else {
+            selection.setFocus(to: 0)
+        }
+    }
+
     /// 后台加载（远端源专用）：listDirectory 在专用队列执行，
     /// 结果回主线程更新 page/selection/onReload；token 防旧结果覆盖新导航。
-    public func loadAsync(preserveFocus: Bool = true) {
-        let keep = preserveFocus ? selection.focusID : nil
+    public func loadAsync(preserveFocus: Bool = true, focusID: String? = nil) {
+        let previousFocusID = selection.focusID
         let token = { loadToken &+= 1; return loadToken }()
         let capturedPath = path
         loadQueue.async { [source] in
@@ -78,8 +98,17 @@ public final class FilePane {
                 guard token == self.loadToken else { return }   // 已有更新的加载
                 switch result {
                 case .success(let items):
+                    let ids = items.map { $0.id }
                     self.page = DirectoryPage(path: capturedPath, items: items)
-                    self.selection.reload(with: items.map { $0.id }, previousFocusID: keep)
+                    if let target = focusID {
+                        // 跨目录导航（回退/搜索）：清空标记，再按 id/name 定位到目标项。
+                        self.selection.reload(with: ids)
+                        self.applyExplicitFocus(target, items: items)
+                    } else {
+                        // 原地刷新：reload(previousFocusID:) 保留焦点与标记集。
+                        self.selection.reload(with: ids,
+                                              previousFocusID: preserveFocus ? previousFocusID : nil)
+                    }
                     self.lastError = nil
                 case .failure(let error):
                     self.page = DirectoryPage(path: capturedPath, items: [])
@@ -107,13 +136,13 @@ public final class FilePane {
         }
     }
 
-    public func navigate(to newPath: TCPath) {
+    public func navigate(to newPath: TCPath, focusID: String? = nil) {
         guard newPath.isRoot || (try? source.stat(newPath))?.isDirectory == true else { return }
         path = newPath
         if source.isRemote {
-            loadAsync(preserveFocus: false)
+            loadAsync(preserveFocus: false, focusID: focusID)
         } else {
-            load(preserveFocus: false)
+            load(preserveFocus: false, focusID: focusID)
         }
     }
 
@@ -121,8 +150,12 @@ public final class FilePane {
         if let item = focusedItem, item.isDirectory { navigate(to: item.path) }
     }
 
+    /// 回退到父目录并**定位到刚离开的子目录**（TC 行为）。当前 path 即父列表里那个
+    /// 子目录，其 id 恰为 path.pathString（本地 FileItem.id == url.path == pathString；
+    /// 远端同理，id 来自路径）。focusID 不存在时 navigate 落回首项。
     public func gotoParent() {
-        if let p = path.parent { navigate(to: p) }
+        let leftID = path.pathString
+        if let p = path.parent { navigate(to: p, focusID: leftID) }
     }
 
     public func moveFocus(to index: Int, mode: SelectionModel.MoveMode) {
