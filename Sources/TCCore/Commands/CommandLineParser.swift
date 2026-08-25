@@ -73,4 +73,18 @@ public enum CommandLineParser {
         guard let name = tokens.first, !name.isEmpty else { throw CommandLineError.empty }
         return ParsedCommand(name: name, args: Array(tokens.dropFirst()))
     }
+
+    /// 把一个任意字符串编码为**单个 token**：经 `parse` 分词后能原样还原为该字符串。
+    /// 仅当字符串含会破坏分词/引号语义的字符（空白、双引号、反斜杠）或为空时才加
+    /// 双引号包裹（引号内 `\` 与 `"` 转义），否则原样返回（简洁）。
+    /// 用途：把文件系统名写回命令栏而不被空格拆成多个参数（`cd My Documents` →
+    /// `cd "My Documents"`）。这是把"文本缓冲"表示与"单项"语义对齐的唯一可靠方式。
+    public static func encodeToken(_ s: String) -> String {
+        let needsQuoting = s.isEmpty
+            || s.contains(where: { $0.isWhitespace || $0 == "\"" || $0 == "\\" })
+        guard needsQuoting else { return s }
+        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+                       .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
 }

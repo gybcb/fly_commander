@@ -112,4 +112,42 @@ final class CommandLineParserTests: XCTestCase {
         let c = try CommandLineParser.parse("cd sftp://10.0.0.1:2222/home/bob")
         XCTAssertEqual(c.args, ["sftp://10.0.0.1:2222/home/bob"])
     }
+
+    // MARK: - encodeToken（cd 补全把文件名写回命令栏，须 round-trip 成单个 token）
+
+    func testEncodePlainUnchanged() {
+        XCTAssertEqual(CommandLineParser.encodeToken("Down"), "Down")
+        XCTAssertEqual(CommandLineParser.encodeToken("a.txt"), "a.txt")
+        XCTAssertEqual(CommandLineParser.encodeToken("sftp://h:22/x"), "sftp://h:22/x")
+    }
+
+    func testEncodeSpaceQuoted() {
+        XCTAssertEqual(CommandLineParser.encodeToken("My Documents"), "\"My Documents\"")
+    }
+
+    func testEncodeQuotesAndBackslash() {
+        XCTAssertEqual(CommandLineParser.encodeToken("a\"b"), "\"a\\\"b\"")
+        XCTAssertEqual(CommandLineParser.encodeToken("a\\b"), "\"a\\\\b\"")
+    }
+
+    func testEncodeEmptyQuoted() {
+        // 空串须加引号，否则 "cd " 解析为无参（doCd 回 home）而非空目标
+        XCTAssertEqual(CommandLineParser.encodeToken(""), "\"\"")
+    }
+
+    /// 关键契约：编码后的字符串经 parse 必须还原为**单个**、且等于原串的参数。
+    /// 覆盖含空格/引号/反斜杠/中文/混合的文件名。
+    func testEncodeTokenRoundTripsThroughParse() throws {
+        let names = [
+            "My Documents", "a\"b", "a\\b", "中文 目录", "文档/照片 2026",
+            "weird\\\"mix", "tab\there", "spaces   around", "quote\" and \\ backslash",
+        ]
+        for name in names {
+            let line = "cd " + CommandLineParser.encodeToken(name)
+            let c = try CommandLineParser.parse(line)
+            XCTAssertEqual(c.name, "cd")
+            XCTAssertEqual(c.args.count, 1, "「\(name)」应解析成 1 个参数，实际 \(c.args)")
+            XCTAssertEqual(c.args[0], name, "「\(name)」round-trip 失败：\(c.args)")
+        }
+    }
 }

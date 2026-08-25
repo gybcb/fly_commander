@@ -187,11 +187,11 @@ final class CommandLineBar: NSView {
         return true
     }
 
-    /// 把 cd 参数替换为给定文本（"cd <text>"；text 为空时保留原前缀不动）。
+    /// 把 cd 参数替换为给定文本（"cd <text>"）。text 经 encodeToken 编码为**单个
+    /// token**——含空格/引号/反斜杠的文件名（如 "My Documents"）写回后仍被解析成
+    /// 一个完整参数，而非被空格拆成多个导致 doCd 只取到 "My"。
     private func writeCdArgument(_ text: String) {
-        let line = "cd \(text)"
-        buffer = line
-        // buffer.didSet 会同步 input.stringValue；此处再确保光标在末尾由调用方 focusFieldToEnd 做。
+        buffer = "cd " + CommandLineParser.encodeToken(text)
     }
 
     // MARK: - 键入（字段获得焦点后由原生编辑驱动；controlTextDidChange 反向同步 buffer）
