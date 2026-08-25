@@ -147,4 +147,23 @@ final class CommandRouterTests: XCTestCase {
             XCTFail("expected .done, got \(String(describing: last))")
         }
     }
+
+    func testNextTabCommandSwitchesActivePane() {
+        // 左侧重建两个标签：L 与 L2（不同目录），验证切标签后 activePane 变化。
+        let l2 = leftDir.deletingLastPathComponent().appendingPathComponent("L2")
+        try? FileManager.default.createDirectory(at: l2, withIntermediateDirectories: true)
+        let src = LocalFileSource()
+        let p0 = FilePane(id: .left, source: src, startPath: TCPath(url: leftDir))
+        let p1 = FilePane(id: .left, source: src, startPath: TCPath(url: l2))
+        let lt = TabGroup(side: .left, panes: [p0, p1])
+        let ws = Workspace(left: lt, right: tabGroupRight(), active: .left)
+        let r = CommandRouter(workspace: ws, engine: OperationEngine())
+        XCTAssertNotIdentical(ws.activePane, p1)
+        r.execute(.nextTab)
+        XCTAssertTrue(ws.activePane === p1, "nextTab 后活动窗格应为第二标签")
+    }
+
+    private func tabGroupRight() -> TabGroup {
+        TabGroup(side: .right, panes: [FilePane(id: .right, source: LocalFileSource(), startPath: TCPath(url: rightDir))])
+    }
 }

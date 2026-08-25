@@ -30,6 +30,8 @@ public final class CommandRouter {
         case .enter: a.enterFocusedDirectory()
         case .parent: a.gotoParent()
         case .switchPane: workspace.switchActive()
+        case .nextTab: workspace.nextTab()
+        case .prevTab: workspace.prevTab()
         case .toggleMark: a.toggleMark()
         case .selectAll: a.selectAll()
         case .clearMarks, .cancel: a.clearMarks()

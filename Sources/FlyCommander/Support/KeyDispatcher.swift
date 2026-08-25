@@ -38,7 +38,12 @@ enum KeyDispatcher {
         case 115: return DispatchResult(command: .home, moveMode: .sticky)
         case 119: return DispatchResult(command: .end, moveMode: .sticky)
         case 36, 76: return DispatchResult(command: .enter, moveMode: .simple) // Return / numpad Enter
-        case 48: return DispatchResult(command: .switchPane, moveMode: .simple) // Tab
+        case 48: // Tab：无修饰=切左右窗格（TC 原行为）；Ctrl=切本侧标签
+            if has(.control) {
+                return has(.shift) ? DispatchResult(command: .prevTab, moveMode: .simple)
+                                   : DispatchResult(command: .nextTab, moveMode: .simple)
+            }
+            return DispatchResult(command: .switchPane, moveMode: .simple)
         case 51: return DispatchResult(command: .parent, moveMode: .simple)    // Backspace/Delete
         case 117: return DispatchResult(command: .rename, moveMode: .simple)   // Fn+Delete
         case 49: return DispatchResult(command: .toggleMark, moveMode: .simple) // Space

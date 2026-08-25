@@ -20,6 +20,12 @@ final class KeyDispatcherTests: XCTestCase {
     func testTabSwitchesPane() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 48, modifiers: []))?.command, .switchPane)
     }
+    func testCtrlTabNextTab() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 48, modifiers: [.control]))?.command, .nextTab)
+    }
+    func testCtrlShiftTabPrevTab() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 48, modifiers: [.control, .shift]))?.command, .prevTab)
+    }
     func testCtrlRightSwitchesPane() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 124, modifiers: [.control]))?.command, .switchPane)
     }
