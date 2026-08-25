@@ -449,6 +449,48 @@ final class FlyCommanderUITests: XCTestCase {
         let text = (cmdBarOutput.value as? String) ?? ""
         XCTAssertTrue(text.isEmpty, "Esc 后输出行应清空，实际：\(text)")
     }
+
+    // MARK: - 多标签（P5：标签条可见 / ⌘T 增 / ⌘W 减 / 每侧保底 1）
+    // × 与 + 均为 TabBarView 的 NSButton（title 即 AX title），全 app 无其它同 title 按钮。
+    // × 计数 = 各侧"标签数≥2 时的标签数"之和：单标签的 × 隐藏（保底 1）。
+
+    private func closeTabButtonCount() -> Int {
+        app.buttons.matching(NSPredicate(format: "title == '×'")).count
+    }
+
+    /// 启动左右各 1 标签：单标签的 × 隐藏 → 0 个 ×；每侧 1 个 + → 2 个 +。
+    func testTabBarVisibleOnLaunch() {
+        XCTAssertEqual(closeTabButtonCount(), 0, "启动每侧单标签，× 应隐藏，实际：\(closeTabButtonCount())")
+        let plus = app.buttons.matching(NSPredicate(format: "title == '+'"))
+        XCTAssertEqual(plus.count, 2, "应左右各 1 个 + 新建按钮，实际：\(plus.count)")
+    }
+
+    /// ⌘T 增标签、⌘W 减标签、每侧保底 1（× 计数锚点：左 1/右 1→0；左 2/右 1→2；
+    /// 左回 1→0；保底再 ⌘W 仍 0）。
+    func testNewAndCloseTabCount() {
+        XCTAssertEqual(closeTabButtonCount(), 0, "前置：启动每侧 1 标签（× 隐藏）")
+
+        // ⌘T 新建（默认活动侧=左）→ 左 2 标签 → 2 个 ×
+        menuBar("文件").click()
+        menuBar("文件").menuItems
+            .matching(NSPredicate(format: "title == '新建标签页'")).firstMatch.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertEqual(closeTabButtonCount(), 2, "⌘T 后左侧 2 标签应有 2 个 ×")
+
+        // ⌘W 关活动标签（左）→ 左回 1 标签 → × 消失
+        menuBar("文件").click()
+        menuBar("文件").menuItems
+            .matching(NSPredicate(format: "title == '关闭标签页'")).firstMatch.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertEqual(closeTabButtonCount(), 0, "⌘W 后左侧回 1 标签，× 应消失")
+
+        // 保底：左侧已 1 标签，再 ⌘W 应不减少（该侧无法再关）
+        menuBar("文件").click()
+        menuBar("文件").menuItems
+            .matching(NSPredicate(format: "title == '关闭标签页'")).firstMatch.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertEqual(closeTabButtonCount(), 0, "保底：每侧最后 1 标签不可再关")
+    }
 }
 
 
