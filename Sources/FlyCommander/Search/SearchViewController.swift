@@ -57,6 +57,11 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 420))
         buildForm()
         buildResult()
+        // 两个顶层容器铺满窗口：reduced-SDK 下 NSView() 默认 0x0 frame，若漏设
+        // translates=false，其约束与 frame autoresizing 冲突会把 content 压到 0 宽
+        // （窗口塌成 0×标题栏高，视觉上"搜索窗出不来"）。对齐 PreviewViewController。
+        formContainer.translatesAutoresizingMaskIntoConstraints = false
+        resultContainer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(formContainer)
         container.addSubview(resultContainer)
         NSLayoutConstraint.activate([
@@ -92,6 +97,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
 
         let buttonRow = NSStackView(views: [startButton, cancelButton])
         buttonRow.spacing = 8
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [rootLabel, patternField, hintLabel, buttonRow])
         stack.orientation = .vertical
@@ -132,6 +138,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         newSearchButton.action = #selector(newSearchTapped)
         let buttonRow = NSStackView(views: [statusLabel, newSearchButton, stopButton])
         buttonRow.spacing = 10
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
         resultContainer.addSubview(scroll)
         resultContainer.addSubview(buttonRow)

@@ -251,6 +251,11 @@ final class FlyCommanderUITests: XCTestCase {
         app.typeKey("f", modifierFlags: .command)
         let search = app.windows.matching(NSPredicate(format: "title == '搜索文件'")).firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Cmd+F 搜索窗未弹出")
+        // 回归：窗口须真正铺开（非 0 宽）。曾漏设 translates=false 致 content 塌成 0 宽，
+        // 窗口存在但看不见（"搜索窗出不来"）——旧断言只查按钮存在，0 宽时也绿。
+        Thread.sleep(forTimeInterval: 0.3)
+        let w = search.frame.width
+        XCTAssertGreaterThan(w, 100, "搜索窗应铺开可见（宽>100），实际：\(Int(w))（疑似 0 宽塌陷）")
         XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '开始搜索'")).firstMatch.exists)
         XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.exists)
         search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
