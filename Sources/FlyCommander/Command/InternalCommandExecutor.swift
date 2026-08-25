@@ -20,6 +20,10 @@ final class InternalCommandExecutor {
     var onConnectSFTP: ((_ host: String?, _ port: UInt16?) -> Void)?
     /// theme 命令入口（弹主题窗）。
     var onOpenTheme: (() -> Void)?
+    /// tab new 命令入口（app 侧建标签）。
+    var onNewTab: (() -> Void)?
+    /// tab close 命令入口（app 侧关活动标签）；返回 false=最后一个标签无法关。
+    var onCloseTab: (() -> Bool)?
 
     init(workspace: Workspace, engine: OperationEngine) {
         self.workspace = workspace

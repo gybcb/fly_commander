@@ -36,7 +36,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tv.rowHeight = 20
         tv.autoresizingMask = [.width]
         tv.autosaveTableColumns = true
-        tv.autosaveName = "FlyCommanderPane\((id == .left) ? "Left" : "Right")"
+        tv.autosaveName = "FlyCommanderPane\((id == .left) ? "L" : "R")\(ObjectIdentifier(pane).hashValue)"
 
         let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         name.title = "名称"

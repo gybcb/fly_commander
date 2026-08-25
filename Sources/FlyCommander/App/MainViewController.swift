@@ -5,8 +5,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     // 隐式解包：本工具链禁止在 loadView 里直接给 `let` 存储属性赋值
     private var workspace: Workspace!
     private var router: CommandRouter!
-    private var leftPaneView: PaneTableView!
-    private var rightPaneView: PaneTableView!
+    private var leftContainer: SidePaneContainer!
+    private var rightContainer: SidePaneContainer!
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
@@ -40,9 +40,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     override func loadView() {
         let home = Self.startPath
         let source = LocalFileSource()
-        let left = FilePane(id: .left, source: source, startPath: home)
-        let right = FilePane(id: .right, source: source, startPath: home)
-        workspace = Workspace(left: left, right: right, active: .left)
+        let leftPane = FilePane(id: .left, source: source, startPath: home)
+        let rightPane = FilePane(id: .right, source: source, startPath: home)
+        workspace = Workspace(left: TabGroup(side: .left, panes: [leftPane]),
+                              right: TabGroup(side: .right, panes: [rightPane]),
+                              active: .left)
 
         router = CommandRouter(workspace: workspace, engine: engine)
         router.conflictPrompt = { [weak self] src, dst in self?.promptConflict(src, dst) ?? .overwrite }
@@ -65,6 +67,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self?.transferEngine.run(isCopy, src, dst)
         }
 
+        // 底部命令栏先建（PaneTableView/SidePaneContainer 需要 commandBar 引用）。
+        commandBar = CommandLineBar()
+
         // 命令栏执行器（T7）：copy/move 复用 router 的传输路径（远端自动走后台）。
         commandExecutor = InternalCommandExecutor(workspace: workspace, engine: engine)
         commandExecutor.onDelete = { [weak self] req in self?.doTrashDelete(pane: req.pane, targets: req.targets) }
@@ -73,90 +78,144 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self?.beginConnection()
         }
         commandExecutor.onOpenTheme = { [weak self] in self?.themeWindow.present() }
+        commandExecutor.onNewTab = { [weak self] in self?.newTab() }
+        commandExecutor.onCloseTab = { [weak self] in
+            guard let self else { return false }
+            return closeActiveTab()
+        }
         ThemeStore.shared.didChange = { [weak self] in
-            self?.leftPaneView.reload(); self?.rightPaneView.reload()
+            guard let self else { return }
+            self.leftContainer.allPaneViews.forEach { $0.reload() }
+            self.rightContainer.allPaneViews.forEach { $0.reload() }
         }
         workspace.onCommandTransfer = { [weak self] id in self?.router.execute(id) }
         workspace.onCommandStatus = { [weak self] s in self?.setStatus(s) }
         workspace.onCommandView = { [weak self] item in self?.showPreview(item) }
         workspace.onCommandEdit = { [weak self] item in self?.openForEdit(item) }
-
-        left.onReload = { [weak self] p in self?.refresh(p) }
-        right.onReload = { [weak self] p in self?.refresh(p) }
-        workspace.onActiveChange = { [weak self] _ in self?.panesDidBecomeActive() }
+        workspace.onActiveChange = { [weak self] _ in self?.applyActiveState() }
         workspace.onOperationState = { [weak self] s in self?.operationStateChanged(s) }
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 680))
 
-        leftPaneView = PaneTableView(pane: left, workspace: workspace, router: router, id: .left)
-        rightPaneView = PaneTableView(pane: right, workspace: workspace, router: router, id: .right)
+        leftContainer = SidePaneContainer(side: .left)
+        rightContainer = SidePaneContainer(side: .right)
+        leftContainer.commandBar = commandBar
+        rightContainer.commandBar = commandBar
+        leftPane.onReload = { [weak self] p in self?.refresh(p) }
+        rightPane.onReload = { [weak self] p in self?.refresh(p) }
+        leftContainer.addTab(pane: leftPane, workspace: workspace, router: router)
+        rightContainer.addTab(pane: rightPane, workspace: workspace, router: router)
+        wireTabBar(leftContainer)
+        wireTabBar(rightContainer)
 
         let splitView = NSSplitView()
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.addArrangedSubview(leftPaneView!)
-        splitView.addArrangedSubview(rightPaneView!)
+        splitView.addArrangedSubview(leftContainer!)
+        splitView.addArrangedSubview(rightContainer!)
 
-        // 底部命令栏（T7）：两窗格共享，split 上移让位。
-        let bar = CommandLineBar()
-        bar.onExecute = { [weak self] line in
+        commandBar.onExecute = { [weak self] line in
             guard let self else { return }
             self.commandBar.showOutput(self.commandExecutor.execute(line: line))
         }
-        commandBar = bar
 
         root.addSubview(splitView)
-        root.addSubview(bar)
+        root.addSubview(commandBar!)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            commandBar!.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            commandBar!.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            commandBar!.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             splitView.topAnchor.constraint(equalTo: root.topAnchor),
             splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: bar.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: commandBar!.topAnchor),
         ])
-
-        leftPaneView.commandBar = commandBar
-        rightPaneView.commandBar = commandBar
 
         self.view = root
         split = splitView
         split.delegate = self
-        // loadView 时机下 split 未布局，setPosition 会把邻接窗格折叠（SDK 文档
-        // 明示 undefined）；延迟到布局完成后再设 50/50。
+        // loadView 时机 setPosition 会折叠，延迟到布局后设 50/50（reduced-SDK）。
         DispatchQueue.main.async { [weak self] in
             guard let self, self.split.bounds.width > 0 else { return }
             self.split.setPosition(self.split.bounds.width / 2, ofDividerAt: 0)
         }
 
-        leftPaneView.setActive(true)
-        rightPaneView.setActive(false)
-        left.load()
-        right.load()
+        leftPane.load()
+        rightPane.load()
+        applyActiveState()
         updateBars()
     }
 
+    private func wireTabBar(_ container: SidePaneContainer) {
+        let side = container.side
+        container.tabBar.onSwitchTab = { [weak self] i in self?.switchTab(in: side, to: i) }
+        container.tabBar.onNewTab = { [weak self] in self?.newTab(in: side) }
+        container.tabBar.onCloseTab = { [weak self] i in _ = self?.closeTab(in: side, at: i) }
+    }
+
     /// 窗口的初始第一响应者：左窗格（键盘事件落点），供 window.initialFirstResponder 使用。
-    var initialKeyView: NSView { leftPaneView }
+    var initialKeyView: NSView {
+        leftContainer.activePaneView ?? leftContainer.allPaneViews.first!
+    }
 
     // MARK: - Core callbacks
 
     private func refresh(_ pane: FilePane) {
-        let pv: PaneTableView = pane.id == .left ? leftPaneView! : rightPaneView!
+        guard let pv = viewOfPane(pane) else { return }
         pv.reload()
         updateBars()
     }
 
-    private func panesDidBecomeActive() {
-        leftPaneView.setActive(workspace.active == .left)
-        rightPaneView.setActive(workspace.active == .right)
-        // 活动窗格 = 键盘目标：core 的 active 变化须同步到 AppKit 第一响应者，
-        // 否则 Tab 切窗格后方向键仍落在旧窗格视图上。
-        let activeView: NSView = workspace.active == .left ? leftPaneView! : rightPaneView!
-        view.window?.makeFirstResponder(activeView)
+    private func viewOfPane(_ pane: FilePane) -> PaneTableView? {
+        leftContainer.paneView(pane) ?? rightContainer.paneView(pane)
+    }
+
+    private func applyActiveState() {
+        let activeSide = workspace.active
+        leftContainer.show(tabGroup: workspace.leftTabs, isActiveSide: activeSide == .left)
+        rightContainer.show(tabGroup: workspace.rightTabs, isActiveSide: activeSide == .right)
+        // 活动窗格 = 键盘目标：core active 变化须同步 AppKit 第一响应者。
+        if let av = viewOfPane(workspace.activePane) {
+            view.window?.makeFirstResponder(av)
+        }
         updateBars()
+    }
+
+    // MARK: - Tab 增删 / 切换
+
+    private func newTab(in side: PaneID? = nil) {
+        let s = side ?? workspace.active
+        let tab = (s == .left) ? workspace.leftTabs : workspace.rightTabs
+        let container = (s == .left) ? leftContainer! : rightContainer!
+        let pane = FilePane(id: s, source: LocalFileSource(), startPath: Self.startPath)
+        tab.add(pane)                                   // core：追加并激活
+        pane.onReload = { [weak self] p in self?.refresh(p) }
+        container.addTab(pane: pane, workspace: workspace, router: router)
+        pane.load()                                     // 本地源同步加载
+        applyActiveState()
+    }
+
+    @discardableResult
+    private func closeTab(in side: PaneID, at index: Int) -> Bool {
+        let tab = (side == .left) ? workspace.leftTabs : workspace.rightTabs
+        let container = (side == .left) ? leftContainer! : rightContainer!
+        guard let removed = tab.close(at: index) else { return false }  // 最后一个标签
+        container.removeTab(pane: removed)
+        applyActiveState()
+        return true
+    }
+
+    @discardableResult
+    private func closeActiveTab() -> Bool {
+        let s = workspace.active
+        return closeTab(in: s, at: workspace.activeTab.activeIndex)
+    }
+
+    private func switchTab(in side: PaneID, to index: Int) {
+        let tab = (side == .left) ? workspace.leftTabs : workspace.rightTabs
+        tab.activate(index: index)
+        applyActiveState()
     }
 
     private func operationStateChanged(_ s: OperationState) {
@@ -235,6 +294,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     @objc func menuGoToParent(_ sender: Any?) { router.execute(.parent) }
 
+    @objc func menuNewTab(_ sender: Any?) { newTab() }
+    @objc func menuCloseTab(_ sender: Any?) { _ = closeActiveTab() }
+
     // MARK: - AppKit-provided operations
 
     private static let textExtensions: Set<String> = [
@@ -281,13 +343,21 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         }
     }
 
-    /// 打开 SFTP 连接窗；成功后把活动窗格接到远端源（远端 home 目录）。
+    /// 打开 SFTP 连接窗；成功后在活动侧开新标签接到远端源（远端 home 目录），
+    /// 不覆盖当前活动标签。
     private func beginConnection() {
         connectionWindow.onConnected = { [weak self] source, home in
             guard let self else { return }
-            let pane = self.workspace.activePane
-            pane.setSource(source, andPath: TCPath("sftp://\(source.config.host):\(source.config.port)\(home)"))
-            self.panesDidBecomeActive()
+            let side = self.workspace.active
+            let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
+            let container = (side == .left) ? self.leftContainer! : self.rightContainer!
+            let path = TCPath("sftp://\(source.config.host):\(source.config.port)\(home)")
+            let pane = FilePane(id: side, source: source, startPath: path)
+            tab.add(pane)                                   // 新标签（保留当前活动标签）
+            pane.onReload = { [weak self] p in self?.refresh(p) }
+            container.addTab(pane: pane, workspace: self.workspace, router: self.router)
+            pane.loadAsync()                                // 远端后台加载
+            self.applyActiveState()
         }
         connectionWindow.present()
     }
