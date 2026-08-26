@@ -310,6 +310,24 @@ final class InternalCommandExecutorTests: XCTestCase {
         XCTAssertNil(h.smbConnect?.2)
     }
 
+    /// 回归：首参全为分隔符时 split 返回 []，不得越界崩溃，应按空参开窗。
+    func testSMBCommandSeparatorOnlyOpensBare() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "smb /")
+        XCTAssertNil(h.smbConnect?.0)
+        XCTAssertNil(h.smbConnect?.1)
+        XCTAssertNil(h.smbConnect?.2)
+    }
+
+    func testSMBCommandTooManyArgs() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "smb a b c")
+        XCTAssertNil(h.smbConnect, "参数过多时不应触发连接钩子")
+        XCTAssertTrue(out?.contains("用法") ?? false, "got: \(out ?? "nil")")
+    }
+
     // MARK: - copy/move 走 workspace 钩子
 
     func testCopyDelegatesToWorkspaceHook() {

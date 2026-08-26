@@ -89,7 +89,7 @@ final class InternalCommandExecutor {
         let target: TCPath
         if args.isEmpty {
             if pane.source.isRemote {
-                // 回远端 home（仅 SFTPSource 记录 homeDirectory）
+                // 回远端 home（SFTPSource 用 homeDirectory；SMBSource 用 homePath）
                 if let sftp = pane.source as? SFTPSource {
                     target = TCPath("sftp://\(hostOf(pane.path))\(sftp.homeDirectory)")
                 } else if let smb = pane.source as? SMBSource {
@@ -221,8 +221,11 @@ final class InternalCommandExecutor {
         var server: String?, share: String?, user: String?
         if let first = args.first, !first.isEmpty {
             let seg = first.split(separator: "/", maxSplits: 1)
-            server = String(seg[0])
-            if seg.count == 2 { share = String(seg[1]) }
+            // split 对全空段（"/"、"//"）返回 []，须先取 first 再取值，防越界崩溃。
+            if let s0 = seg.first {
+                server = String(s0)
+                if seg.count == 2 { share = String(seg[1]) }
+            }
         }
         if args.count == 2, !args[1].isEmpty { user = args[1] }
         onConnectSMB?(server, share, user)
