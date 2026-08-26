@@ -116,4 +116,35 @@ final class TCPathTests: XCTestCase {
         XCTAssertEqual(p.pathString, "/a/c")
         XCTAssertFalse(p.isRemote)
     }
+
+    // MARK: - 远端 URL 解析失败回落本地（防强解包崩溃）
+
+    func testRemoteSchemeWithUnencodableCharDoesNotCrash() {
+        // 服务器名（host 部分）含空格是非法 URL 字符——本机 SDK 实测 URL(string:) 返回 nil，
+        // 旧实现 `URL(string:)!` 强解包直接 trap 崩 app。修复后回落本地路径分支：不崩、
+        // isRemote == false、按本地路径语义保留原串（会被 LocalFileSource 当不存在路径处理）。
+        let smb = TCPath("smb://bad host/x")
+        XCTAssertFalse(smb.isRemote, "smb:// 解析失败应回落本地，不崩")
+        XCTAssertTrue(smb.pathString.contains("bad host"), "回落本地后保留原串")
+        let sftp = TCPath("sftp://bad host:22/x")
+        XCTAssertFalse(sftp.isRemote, "sftp:// 解析失败应回落本地，不崩")
+        XCTAssertTrue(sftp.pathString.contains("bad host"), "回落本地后保留原串")
+    }
+
+    func testValidRemotePathsStillRemote() {
+        // 回归锚：合法远端路径不得被误降级。
+        let smb = TCPath("smb://truenas._smb._tcp.local/downloads")
+        XCTAssertTrue(smb.isRemote, "合法 smb:// 仍是远端")
+        XCTAssertEqual(smb.pathString, "/downloads")
+        // 实测结论（本机 SDK，swift 探针跑过）：URL(string:) 只拒绝 host 部分含空格
+        // （→ nil）；path 部分含空格会被**自动百分号编码**，解析成功——
+        // "sftp://h:22/a b" -> absoluteString "sftp://h:22/a%20b"，path 解码回 "/a b"。
+        // 故此处不回落，仍为远端（与 host 含空格的行为形成对照）。
+        let sftp = TCPath("sftp://h:22/a b")
+        XCTAssertTrue(sftp.isRemote, "path 含空格实测自动编码，解析成功，仍为远端")
+        XCTAssertEqual(sftp.pathString, "/a b")
+        XCTAssertEqual(sftp.url.host, "h")
+        XCTAssertEqual(sftp.url.port, 22)
+        XCTAssertEqual(sftp.url.absoluteString, "sftp://h:22/a%20b")
+    }
 }

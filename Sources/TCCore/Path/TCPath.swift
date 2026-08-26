@@ -15,8 +15,13 @@ public struct TCPath: Hashable, Equatable {
 
     public init(_ string: String) {
         if string.hasPrefix("sftp://") || string.hasPrefix("smb://") {
-            self.url = URL(string: string)!
-            return
+            if let url = URL(string: string) {
+                self.url = url
+                return
+            }
+            // 远端 URL 解析失败（如服务器名含未编码空格——URL(string:) 对非法字符返回 nil）。
+            // 回落本地路径分支，不崩：有意的降级——宁可当本地不存在的路径报"路径不存在"
+            // （该值会被 LocalFileSource 按不存在的路径处理，错误可被上层捕获），也不 trap。
         }
         var s = string
         let home = FileManager.default.homeDirectoryForCurrentUser.path

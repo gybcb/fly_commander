@@ -11,6 +11,7 @@ final class RemoteSMBE2ETests: XCTestCase {
     private var user: String!
     private var pass: String!
     private var domain: String?
+    private var keychain: FakeKeychain!
     private var store: SMBConnectionStore!
 
     override func setUpWithError() throws {
@@ -25,8 +26,14 @@ final class RemoteSMBE2ETests: XCTestCase {
         }
         // 独立 defaults，不污染真实最近连接
         let d = UserDefaults(suiteName: "smb_e2e_\(UUID().uuidString)")!
+        // 预置凭据：若被测共享正是用户 Finder 已挂载的共享，connect 走外部复用，
+        // tearDown 的 disconnectAll → putBackMount 需 loadSecret 拿到密码才能重挂；
+        // 空 FakeKeychain 会拿 nil → 匿名重挂密码保护共享失败 → 卸掉用户 /Volumes/<share>。
+        keychain = FakeKeychain()
+        let cfg = SMBConnectionConfig(server: server, share: share, domain: domain, username: user)
+        try keychain.set(pass, account: cfg.credentialAccount)
         store = SMBConnectionStore(mountManager: SMBMountManager(),
-                                    credentials: SMBCredentialsStore(keychain: FakeKeychain()),
+                                    credentials: SMBCredentialsStore(keychain: keychain),
                                     defaults: d)
     }
     override func tearDown() {
