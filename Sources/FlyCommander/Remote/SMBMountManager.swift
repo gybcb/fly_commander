@@ -51,10 +51,22 @@ final class SMBMountManager {
         }
     }
 
+    /// 从工具输出里抹掉凭据，防 mount_smbfs 把含密码的 URL 回显进错误信息。
+    /// `replacingOccurrences(of:)` 是字面量匹配（非正则），无需转义。
+    static func redact(_ text: String, url: String, secret: String?) -> String {
+        var out = text
+        out = out.replacingOccurrences(of: url, with: "[REDACTED]")   // 完整挂载 URL（含密码）
+        if let s = secret, !s.isEmpty {
+            out = out.replacingOccurrences(of: encodeCredential(s), with: "***") // percent-encoded 密码
+            out = out.replacingOccurrences(of: s, with: "***")            // 原始密码（万一被解码后回显）
+        }
+        return out
+    }
+
     // MARK: - 真实挂载（e2e 验证）。每个动作注一个 [String]->(exit,stderr)，args[0]=可执行路径。
 
-    private let runMount: ([String]) -> (Int32, String)     // (exit, stderr)
-    private let runUnmount: ([String]) -> (Int32, String)
+    private let runMount: ([String]) -> (Int32, String)     // (exit, output)
+    private let runUnmount: ([String]) -> (Int32, String)   // (exit, output)
     private let runList: () -> String                        // `mount` 全文
 
     init(runMount: @escaping ([String]) -> (Int32, String) = SMBMountManager.exec,
@@ -73,9 +85,12 @@ final class SMBMountManager {
         if isMounted(URL(fileURLWithPath: mp)) {
             return URL(fileURLWithPath: mp)   // 复用
         }
-        let (code, stderr) = runMount(Self.mountArgs(config: config, secret: secret))
+        let args = Self.mountArgs(config: config, secret: secret)
+        let url = args[2]   // mountArgs[2] 是 //…@server/share 挂载 URL（含密码）
+        let (code, stderr) = runMount(args)
         guard code == 0, isMounted(URL(fileURLWithPath: mp)) else {
-            throw TCError.unknown("SMB 挂载失败（exit \(code)）：\(stderr.prefix(200))")
+            let diag = Self.redact(stderr, url: url, secret: secret)
+            throw TCError.unknown("SMB 挂载失败（exit \(code)）：\(diag.prefix(200))")
         }
         return URL(fileURLWithPath: mp)
     }

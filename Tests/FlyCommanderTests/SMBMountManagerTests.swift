@@ -44,6 +44,31 @@ final class SMBMountManagerTests: XCTestCase {
         XCTAssertEqual(args2[2], "//a$b-c.d!e:p@truenas/downloads")
     }
 
+    func testRedactRemovesMountURLEcho() {
+        let url = "//shaogaoyang:s3cret@truenas/downloads"
+        let stderr = "mount_smbfs: //shaogaoyang:s3cret@truenas/downloads: Access denied"
+        let out = SMBMountManager.redact(stderr, url: url, secret: "s3cret")
+        XCTAssertEqual(out, "mount_smbfs: [REDACTED]: Access denied")
+        XCTAssertFalse(out.contains("s3cret"), "错误信息里不得残留密码")
+    }
+
+    func testRedactRemovesPercentEncodedAndRawPassword() {
+        // mount_smbfs 若只回显密码片段（未带完整 URL），encoded 与 raw 形态都要抹掉
+        let stderr = "password p%20a%40ss rejected (tried raw: p a@ss)"
+        let out = SMBMountManager.redact(stderr, url: "//u@truenas/downloads", secret: "p a@ss")
+        XCTAssertEqual(out, "password *** rejected (tried raw: ***)")
+        XCTAssertFalse(out.contains("a@ss"))
+    }
+
+    func testRedactNilOrEmptySecretOnlyRemovesURL() {
+        let url = "//shaogaoyang@truenas/downloads"
+        let stderr = "connect failed for \(url)"
+        XCTAssertEqual(SMBMountManager.redact(stderr, url: url, secret: nil),
+                       "connect failed for [REDACTED]")
+        XCTAssertEqual(SMBMountManager.redact(stderr, url: url, secret: ""),
+                       "connect failed for [REDACTED]")
+    }
+
     func testStaleMountsOnlyOwnRoot() {
         let out = """
         devfs on /dev (nfs, local)
