@@ -86,3 +86,20 @@ final class CredentialsStore {
         try keychain.delete(account: config.credentialAccount)
     }
 }
+
+/// SMB 凭据门面：Keychain service 独立为 "FlyCommander.smb"（与 SFTP 不串）。
+final class SMBCredentialsStore {
+    let keychain: KeychainLike   // internal：单测断言默认 service 用
+    init(keychain: KeychainLike = KeychainCredentialsStore(service: "FlyCommander.smb")) {
+        self.keychain = keychain
+    }
+    func save(_ secret: String, for config: SMBConnectionConfig) throws {
+        try keychain.set(secret, account: config.credentialAccount)
+    }
+    func load(for config: SMBConnectionConfig) throws -> String? {
+        try keychain.get(account: config.credentialAccount)
+    }
+    func forget(for config: SMBConnectionConfig) throws {
+        try keychain.delete(account: config.credentialAccount)
+    }
+}
