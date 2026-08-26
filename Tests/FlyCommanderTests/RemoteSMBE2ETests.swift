@@ -35,6 +35,10 @@ final class RemoteSMBE2ETests: XCTestCase {
     }
 
     func testMountListWriteDeleteUnmount() throws {
+        let server = self.server!
+        let share = self.share!
+        let user = self.user!
+        let pass = self.pass!
         // 挂载 + 浏览
         let req = SMBConnectionRequest(server: server, share: share, domain: domain,
                                        username: user, secret: pass)
