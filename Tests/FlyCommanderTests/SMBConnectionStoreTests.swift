@@ -125,6 +125,21 @@ final class SMBConnectionStoreTests: XCTestCase {
         XCTAssertEqual(store.recentConnections[9].server, "h5")
     }
 
+    func testRecentKeepsSameShareDifferentUsers() throws {
+        let d = fakeDefaults()
+        let store = SMBConnectionStore(mountManager: FakeMountManager(),
+                                       credentials: SMBCredentialsStore(keychain: FakeKeychain()),
+                                       defaults: d)
+        let alice = SMBConnectionRecord(server: "h", share: "s", domain: nil, username: "alice")
+        let bob = SMBConnectionRecord(server: "h", share: "s", domain: nil, username: "bob")
+        store.touchRecent(alice)
+        store.touchRecent(bob)
+        // 同 server/share 但不同用户名 → credentialAccount 不同 → 各留一条（表单按人预填）
+        XCTAssertEqual(store.recentConnections.count, 2)
+        XCTAssertEqual(store.recentConnections[0].username, "bob")
+        XCTAssertEqual(store.recentConnections[1].username, "alice")
+    }
+
     func testLoadSecretRoundTrip() throws {
         let kc = FakeKeychain()
         let store = SMBConnectionStore(mountManager: FakeMountManager(),

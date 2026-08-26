@@ -82,9 +82,10 @@ final class SMBConnectionStore {
         }
     }
 
-    /// 最近连接置顶去重（同 sourceID 只留一条），最多 10 条。
+    /// 最近连接置顶去重（同 credentialAccount 只留一条——键与 Keychain 凭据一致，
+    /// 同一共享不同用户名不合并，供表单按人预填），最多 10 条。
     func touchRecent(_ record: SMBConnectionRecord) {
-        recent.removeAll { $0.sourceID == record.sourceID }
+        recent.removeAll { $0.credentialAccount == record.credentialAccount }
         recent.insert(record, at: 0)
         if recent.count > 10 { recent.removeLast(recent.count - 10) }
         persistRecent()
