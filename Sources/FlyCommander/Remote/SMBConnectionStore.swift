@@ -58,7 +58,7 @@ final class SMBConnectionStore {
         }
     }
 
-    func disconnectAll() { for id in sources.keys { disconnect(id) } }
+    func disconnectAll() { for id in Array(sources.keys) { disconnect(id) } }
 
     var recentConnections: [SMBConnectionRecord] { recent }
 

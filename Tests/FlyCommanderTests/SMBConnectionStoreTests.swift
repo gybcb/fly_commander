@@ -6,7 +6,9 @@ import TCCore
 final class FakeMountManager: SMBMountManagerLike {
     var mounted: [String: URL] = [:]
     var unmounted: [String] = []
+    var mountCalls = 0
     func mount(_ config: SMBConnectionConfig, secret: String?) throws -> URL {
+        mountCalls += 1
         if let u = mounted[config.sourceID] { return u }
         let u = FileManager.default.temporaryDirectory
             .appendingPathComponent("fake_smb_\(UUID().uuidString)")
@@ -32,6 +34,7 @@ final class SMBConnectionStoreTests: XCTestCase {
         let (a, _) = try store.connect(req)
         let (b, _) = try store.connect(req)
         XCTAssertTrue(a === b, "同 sourceID 复用同一 source 实例")
+        XCTAssertEqual(mm.mountCalls, 1, "mount 只被调用一次（独立于 memoized fake）")
         XCTAssertEqual(mm.mounted.count, 1, "只挂一次")
     }
 
