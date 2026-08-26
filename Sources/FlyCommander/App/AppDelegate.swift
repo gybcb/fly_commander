@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         wc.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // 回收上次残留的 /Volumes/FlyCommander/* 挂载（后台跑，不阻塞启动窗；
+        // 读取 mount 表→逐个静默 umount，无残留时 no-op）。
+        DispatchQueue.global(qos: .utility).async { SMBMountManager().reclaimStale() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
