@@ -10,6 +10,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
+    private let smbConnectionWindow = SMBConnectionWindowController()
     private let themeWindow = ThemeWindowController()
     private var transferEngine: TransferEngine!
     private var commandBar: CommandLineBar!
@@ -76,6 +77,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         commandExecutor.onConnectSFTP = { [weak self] host, port in
             self?.connectionWindow.setPendingHost(host, port: port)
             self?.beginConnection()
+        }
+        commandExecutor.onConnectSMB = { [weak self] server, share, user in
+            self?.smbConnectionWindow.setPending(server: server, share: share, user: user)
+            self?.beginSMBConnection()
         }
         commandExecutor.onOpenTheme = { [weak self] in self?.themeWindow.present() }
         commandExecutor.onNewTab = { [weak self] in self?.newTab() }
@@ -296,6 +301,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     @objc func menuConnect(_ sender: Any?) { beginConnection() }
 
+    @objc func menuSMBConnect(_ sender: Any?) { beginSMBConnection() }
+
     @objc func menuTheme(_ sender: Any?) { themeWindow.present() }
 
     @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
@@ -378,6 +385,23 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self.applyActiveState()
         }
         connectionWindow.present()
+    }
+
+    /// 打开 SMB 连接窗；成功后在活动侧开新标签接到 SMB 源（share 根）。
+    private func beginSMBConnection() {
+        smbConnectionWindow.onConnected = { [weak self] source, home in
+            guard let self else { return }
+            let side = self.workspace.active
+            let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
+            let container = (side == .left) ? self.leftContainer! : self.rightContainer!
+            let pane = FilePane(id: side, source: source, startPath: home)
+            tab.add(pane)                                   // 新标签（保留当前活动标签）
+            pane.onReload = { [weak self] p in self?.refresh(p) }
+            container.addTab(pane: pane, workspace: self.workspace, router: self.router)
+            pane.loadAsync()                                // 远端后台加载
+            self.applyActiveState()
+        }
+        smbConnectionWindow.present()
     }
 
     private func promptRename() {

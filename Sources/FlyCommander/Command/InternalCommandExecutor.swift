@@ -18,6 +18,8 @@ final class InternalCommandExecutor {
     var onDelete: ((_ request: InternalDeleteRequest) -> Void)?
     /// sftp 命令入口（弹连接窗；host/port 可预填，nil=不预填）。
     var onConnectSFTP: ((_ host: String?, _ port: UInt16?) -> Void)?
+    /// smb 命令入口（弹连接窗；server/share/user 可预填，nil=不预填）。
+    var onConnectSMB: ((_ server: String?, _ share: String?, _ user: String?) -> Void)?
     /// theme 命令入口（弹主题窗）。
     var onOpenTheme: (() -> Void)?
     /// tab new 命令入口（app 侧建标签）。
@@ -43,6 +45,7 @@ final class InternalCommandExecutor {
         "  view                 预览焦点文件（远程暂不支持）",
         "  edit                 用外部编辑器打开焦点文件（远程暂不支持）",
         "  sftp [host[:port]]   打开 SFTP 连接窗（可预填主机/端口）",
+        "  smb [server[/share]] [user]  打开 SMB 连接窗（可预填服务器/共享/用户）",
         "  tab new            新建标签（活动侧；缺省 tab 同义）",
         "  tab close          关闭活动标签（每侧保底 1 个，最后一个不可关）",
         "  theme                打开主题窗（外观/强调色/文件类型配色）",
@@ -71,6 +74,7 @@ final class InternalCommandExecutor {
         case "view": return doView()
         case "edit": return doEdit()
         case "sftp": return doSFTP(cmd.args)
+        case "smb": return doSMB(cmd.args)
         case "tab": return doTab(cmd.args)
         case "theme": onOpenTheme?(); return "已打开主题窗"
         case "help": return Self.helpText
@@ -88,6 +92,8 @@ final class InternalCommandExecutor {
                 // 回远端 home（仅 SFTPSource 记录 homeDirectory）
                 if let sftp = pane.source as? SFTPSource {
                     target = TCPath("sftp://\(hostOf(pane.path))\(sftp.homeDirectory)")
+                } else if let smb = pane.source as? SMBSource {
+                    target = smb.homePath
                 } else {
                     target = TCPath("sftp://\(hostOf(pane.path))/")
                 }
@@ -208,6 +214,19 @@ final class InternalCommandExecutor {
         }
         onConnectSFTP?(host, port)
         return host != nil ? "已打开连接窗（主机：\(host!)）" : "已打开 SFTP 连接窗"
+    }
+
+    private func doSMB(_ args: [String]) -> String? {
+        guard args.count <= 2 else { return "用法：smb [server[/share]] [user]" }
+        var server: String?, share: String?, user: String?
+        if let first = args.first, !first.isEmpty {
+            let seg = first.split(separator: "/", maxSplits: 1)
+            server = String(seg[0])
+            if seg.count == 2 { share = String(seg[1]) }
+        }
+        if args.count == 2, !args[1].isEmpty { user = args[1] }
+        onConnectSMB?(server, share, user)
+        return server != nil ? "已打开连接窗（服务器：\(server!)）" : "已打开 SMB 连接窗"
     }
 
     private func doTab(_ args: [String]) -> String? {

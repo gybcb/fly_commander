@@ -48,6 +48,7 @@ private final class Harness {
     let executor: InternalCommandExecutor
     var deleted: InternalDeleteRequest?
     var connect: (host: String?, port: UInt16?)?
+    var smbConnect: (server: String?, share: String?, user: String?)?
     var transfers: [CommandID] = []
     var viewItem: FileItem?
     var editItem: FileItem?
@@ -66,6 +67,7 @@ private final class Harness {
         executor = exec
         exec.onDelete = { [weak self] r in self?.deleted = r }
         exec.onConnectSFTP = { [weak self] h, p in self?.connect = (h, p) }
+        exec.onConnectSMB = { [weak self] s, sh, u in self?.smbConnect = (s, sh, u) }
         ws.onCommandTransfer = { [weak self] c in self?.transfers.append(c) }
         ws.onCommandView = { [weak self] i in self?.viewItem = i }
         ws.onCommandEdit = { [weak self] i in self?.editItem = i }
@@ -286,6 +288,26 @@ final class InternalCommandExecutorTests: XCTestCase {
         _ = h.executor.execute(line: "sftp example.com")
         XCTAssertEqual(h.connect?.0, "example.com")
         XCTAssertNil(h.connect?.1)
+    }
+
+    // MARK: - smb 参数
+
+    func testSMBCommandParsesServerShareUser() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "smb truenas/downloads shaogaoyang")
+        XCTAssertEqual(h.smbConnect?.0, "truenas")
+        XCTAssertEqual(h.smbConnect?.1, "downloads")
+        XCTAssertEqual(h.smbConnect?.2, "shaogaoyang")
+    }
+
+    func testSMBCommandBareServer() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "smb truenas")
+        XCTAssertEqual(h.smbConnect?.0, "truenas")
+        XCTAssertNil(h.smbConnect?.1)
+        XCTAssertNil(h.smbConnect?.2)
     }
 
     // MARK: - copy/move 走 workspace 钩子

@@ -34,6 +34,7 @@ enum MainMenu {
         add(fileMenu, "移动到另一窗格", #selector(MainViewController.menuMoveToOtherPane(_:)), "", target)
         fileMenu.addItem(.separator())
         add(fileMenu, "SFTP 连接…", #selector(MainViewController.menuConnect(_:)), "", target)
+        add(fileMenu, "SMB 连接…", #selector(MainViewController.menuSMBConnect(_:)), "", target)
 
         // 编辑菜单
         let editMenuItem = NSMenuItem()
