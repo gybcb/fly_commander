@@ -148,4 +148,94 @@ final class SMBMountManagerTests: XCTestCase {
         XCTAssertEqual(mp, URL(fileURLWithPath: "/Volumes/downloads"), "复用外部挂载点")
         XCTAssertEqual(mountCalls, 0, "外部已挂载 → 不得调用 mount_smbfs")
     }
+
+    func testPutBackMountRemountsAtOriginalExternalPoint() throws {
+        // 复用 Finder 卷断连：umount 后须把共享挂回**原挂载点**（/Volumes/downloads），
+        // 而不是 app 根 /Volumes/FlyCommander/…（旧实现 _ = try mount(config:) 的 bug）。
+        let finderLine = """
+        //shaogaoyang@truenas._smb._tcp.local/downloads on /Volumes/downloads (smbfs, nodev, nosuid, mounted by user)
+        """
+        var unmountArgs: [[String]] = []
+        var mountArgs: [[String]] = []
+        var ensureCalls = 0
+        let manager = SMBMountManager(
+            runMount: { args in mountArgs.append(args); return (0, "") },
+            runUnmount: { args in unmountArgs.append(args); return (0, "") },
+            runList: { finderLine },
+            ensureDirectories: { _ in ensureCalls += 1 }   // 外部路径 umount 后目录仍在，不该建目录
+        )
+        let mp = URL(fileURLWithPath: "/Volumes/downloads")
+        try manager.putBackMount(mp,
+                                 config: cfg(server: "truenas._smb._tcp.local"),
+                                 secret: "pw")
+        XCTAssertEqual(unmountArgs, [["/sbin/umount", "-f", "/Volumes/downloads"]], "先强卸原挂载点")
+        XCTAssertEqual(mountArgs.count, 1, "重挂恰好一次")
+        let args = mountArgs[0]
+        XCTAssertEqual(args[3], "/Volumes/downloads", "挂回原挂载点，不是 app 根")
+        XCTAssertTrue(args[2].contains("@truenas._smb._tcp.local/downloads"), "URL 仍是同共享")
+        XCTAssertEqual(ensureCalls, 0, "原路径（Finder 留下的目录）不需要 ensureDirectories")
+    }
+
+    func testPutBackMountInsideRootOnlyUnmounts() throws {
+        // app 根内的挂载点：只卸载，不得重挂（app 自己的卷，断连即消失）。
+        var mountCalls = 0
+        var unmountArgs: [[String]] = []
+        let manager = SMBMountManager(
+            runMount: { _ in mountCalls += 1; return (0, "") },
+            runUnmount: { args in unmountArgs.append(args); return (0, "") },
+            runList: { "" },
+            ensureDirectories: { _ in }
+        )
+        try manager.putBackMount(URL(fileURLWithPath: "/Volumes/FlyCommander/truenas--downloads"),
+                                 config: cfg(), secret: nil)
+        XCTAssertEqual(unmountArgs, [["/sbin/umount", "-f", "/Volumes/FlyCommander/truenas--downloads"]])
+        XCTAssertEqual(mountCalls, 0, "root 内挂载点 → 只 unmount，零 runMount")
+    }
+
+    func testPutBackMountFailureThrowsWithoutLeakingSecret() {
+        // 重挂失败（exit 非 0 且 mount 表里没有该共享）→ 抛错；消息经 redact，不得残留密码/URL。
+        var mountArgs: [[String]] = []
+        let manager = SMBMountManager(
+            runMount: { args in mountArgs.append(args); return (32, "boom") },
+            runUnmount: { _ in (0, "") },
+            runList: { "" },
+            ensureDirectories: { _ in }
+        )
+        XCTAssertThrowsError(
+            try manager.putBackMount(URL(fileURLWithPath: "/Volumes/downloads"),
+                                     config: cfg(server: "truenas._smb._tcp.local"), secret: "pw")) { error in
+            let tc = asTCError(error)
+            guard case .unknown(let m) = tc else {
+                return XCTFail("期望 unknown（挂回失败），实际 \(tc)")
+            }
+            XCTAssertTrue(m.contains("挂回原处失败"), "消息应说明挂回失败：\(m)")
+            XCTAssertFalse(m.contains("pw"), "错误信息不得残留密码")
+            XCTAssertFalse(m.contains("@truenas._smb._tcp.local/downloads"), "不得残留完整挂载 URL")
+        }
+        XCTAssertEqual(mountArgs.last?[3], "/Volumes/downloads", "失败分支同样针对原挂载点重挂")
+    }
+
+    func testMountPermissionDeniedMessageOnEnsureDirectories() {
+        // 无外部挂载 → 走建目录 → /Volumes 不可写（EACCES）→ 一次性 sudo 提示。
+        var ensureCalls = 0
+        let manager = SMBMountManager(
+            runMount: { _ in (0, "") },
+            runUnmount: { _ in (0, "") },
+            runList: { "" },
+            ensureDirectories: { mp in
+                ensureCalls += 1
+                XCTAssertEqual(mp, "/Volumes/FlyCommander/truenas--downloads")
+                throw NSError(domain: NSCocoaErrorDomain,
+                              code: NSFileWriteNoPermissionError)
+            }
+        )
+        XCTAssertThrowsError(try manager.mount(cfg(), secret: nil)) { error in
+            guard case .permissionDenied(let m) = asTCError(error) else {
+                return XCTFail("期望 permissionDenied，实际 \(asTCError(error))")
+            }
+            XCTAssertTrue(m.contains("sudo mkdir -p /Volumes/FlyCommander"),
+                          "应给出一次性提权命令：\(m)")
+        }
+        XCTAssertEqual(ensureCalls, 1, "无外部挂载时才建目录")
+    }
 }

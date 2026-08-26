@@ -114,6 +114,13 @@ final class SMBMountManager {
 
     func mount(_ config: SMBConnectionConfig, secret: String?) throws -> URL {
         let mp = Self.mountPointPath(config)
+        // macOS 对同一共享只允许一个活动挂载：Finder 已挂 /Volumes/<share> 时
+        // 重挂会 EEXIST —— 复用其挂载点（同 sourceID 不重连哲学，扩展到系统级）。
+        // 建目录之前先查：纯复用连接根本不需要 app 目录（没跑过一次性 sudo mkdir 的机器不撞权限错）。
+        if let existing = Self.shareMountedPoint(server: config.server, share: config.share,
+                                                 fromMountOutput: runList()) {
+            return URL(fileURLWithPath: existing)
+        }
         do {
             try ensureDirectories(mp)
         } catch {
@@ -125,12 +132,6 @@ final class SMBMountManager {
                     + "sudo mkdir -p \(Self.root) && sudo chown \"$(whoami)\" \(Self.root)")
             }
             throw asTCError(error)
-        }
-        // macOS 对同一共享只允许一个活动挂载：Finder 已挂 /Volumes/<share> 时
-        // 重挂会 EEXIST —— 复用其挂载点（同 sourceID 不重连哲学，扩展到系统级）。
-        if let existing = Self.shareMountedPoint(server: config.server, share: config.share,
-                                                 fromMountOutput: runList()) {
-            return URL(fileURLWithPath: existing)
         }
         if isMounted(URL(fileURLWithPath: mp)) {
             return URL(fileURLWithPath: mp)   // 复用
@@ -150,13 +151,21 @@ final class SMBMountManager {
     }
 
     /// 断开挂载点；若它不在本 app 根（root）下（如复用了 Finder 的 /Volumes/<share> 挂载），
-    /// 卸载后把共享挂回原处（断连不该吞掉用户的 Finder 卷）。重挂失败时共享处于未挂载状态，
-    /// 用户重连即可。
+    /// 卸载后把共享挂回**原挂载点**（断连不该吞掉用户的 Finder 卷）。
+    /// 重挂失败时共享处于未挂载状态，用户重连（app 或 Finder）即可。
     func putBackMount(_ mountPoint: URL, config: SMBConnectionConfig, secret: String?) throws {
         let wasOutsideRoot = !mountPoint.path.hasPrefix(Self.root + "/")
         try unmount(mountPoint)
-        if wasOutsideRoot {
-            _ = try mount(config, secret: secret)
+        guard wasOutsideRoot else { return }
+        var args = Self.mountArgs(config: config, secret: secret)
+        args[3] = mountPoint.path   // mountArgs[3] 是挂载点；挂回原处而非 app 根
+        let url = args[2]           // //…@server/share 挂载 URL（含密码）
+        let (code, stderr) = runMount(args)
+        let back = Self.shareMountedPoint(server: config.server, share: config.share,
+                                          fromMountOutput: runList())
+        guard code == 0, back == mountPoint.path else {
+            let diag = Self.redact(stderr, url: url, secret: secret)
+            throw TCError.unknown("挂回原处失败（exit \(code)）：\(diag.prefix(200))")
         }
     }
 

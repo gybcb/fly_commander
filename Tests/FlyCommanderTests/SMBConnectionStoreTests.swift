@@ -161,4 +161,36 @@ final class SMBConnectionStoreTests: XCTestCase {
         XCTAssertEqual(kc?.service, "FlyCommander.smb")
         XCTAssertNotEqual(kc?.service, "FlyCommander.sftp")
     }
+
+    /// disconnect 对"复用 Finder 卷"的连接走 put-back 分支（as? SMBMountManager 下转 +
+    /// config 版 loadSecret）：unmount 后把共享挂回**原外部挂载点**。
+    func testDisconnectReusedFinderVolumePutsBackAtOriginalPoint() throws {
+        let finderLine = """
+        //shaogaoyang@truenas._smb._tcp.local/downloads on /Volumes/downloads (smbfs, nodev, nosuid, mounted by user)
+        """
+        var unmountArgs: [[String]] = []
+        var mountArgs: [[String]] = []
+        let mm = SMBMountManager(
+            runMount: { args in mountArgs.append(args); return (0, "") },
+            runUnmount: { args in unmountArgs.append(args); return (0, "") },
+            runList: { finderLine },
+            ensureDirectories: { _ in }   // 免触 /Volumes（hermetic）
+        )
+        let store = SMBConnectionStore(mountManager: mm,
+                                       credentials: SMBCredentialsStore(keychain: FakeKeychain()),
+                                       defaults: fakeDefaults())
+        let req = SMBConnectionRequest(server: "truenas._smb._tcp.local", share: "downloads",
+                                       domain: nil, username: "shaogaoyang")
+        let (src, _) = try store.connect(req)
+        XCTAssertEqual(src.mountPoint.path, "/Volumes/downloads", "connect 复用 Finder 卷")
+        XCTAssertEqual(mountArgs.count, 0, "外部已挂载 → connect 不触发 mount_smbfs")
+
+        store.disconnect(src.sourceID)
+
+        XCTAssertEqual(unmountArgs, [["/sbin/umount", "-f", "/Volumes/downloads"]], "先卸原挂载点")
+        XCTAssertEqual(mountArgs.count, 1, "断连触发一次挂回重挂")
+        XCTAssertEqual(mountArgs[0][3], "/Volumes/downloads", "挂回原外部挂载点（而非 app 根）")
+        XCTAssertTrue(mountArgs[0][2].contains("@truenas._smb._tcp.local/downloads"), "重挂同一共享")
+        XCTAssertNil(store.source(for: src.sourceID), "断连后活动表清空")
+    }
 }
