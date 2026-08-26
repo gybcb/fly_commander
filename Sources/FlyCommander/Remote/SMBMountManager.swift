@@ -80,8 +80,19 @@ final class SMBMountManager {
     func mount(_ config: SMBConnectionConfig, secret: String?) throws -> URL {
         let mp = Self.mountPointPath(config)
         let fm = FileManager.default
-        try fm.createDirectory(atPath: Self.root, withIntermediateDirectories: true)
-        try fm.createDirectory(atPath: mp, withIntermediateDirectories: true)
+        do {
+            try fm.createDirectory(atPath: Self.root, withIntermediateDirectories: true)
+            try fm.createDirectory(atPath: mp, withIntermediateDirectories: true)
+        } catch {
+            // /Volumes 对当前用户不可写（root:wheel）时建目录 EACCES——
+            // 给出一次性的提权命令，用户照抄即可，之后无需再 sudo。
+            if case .permissionDenied = asTCError(error) {
+                throw TCError.permissionDenied(
+                    "无法创建挂载点 \(Self.root)（/Volumes 对当前用户不可写）。请先在终端执行一次：\n"
+                    + "sudo mkdir -p \(Self.root) && sudo chown \"$(whoami)\" \(Self.root)")
+            }
+            throw asTCError(error)
+        }
         if isMounted(URL(fileURLWithPath: mp)) {
             return URL(fileURLWithPath: mp)   // 复用
         }
