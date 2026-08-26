@@ -14,7 +14,7 @@ public struct TCPath: Hashable, Equatable {
     }
 
     public init(_ string: String) {
-        if string.hasPrefix("sftp://") {
+        if string.hasPrefix("sftp://") || string.hasPrefix("smb://") {
             self.url = URL(string: string)!
             return
         }
@@ -43,7 +43,7 @@ public struct TCPath: Hashable, Equatable {
 
     public func displayString() -> String {
         if isRemote {
-            var s = "sftp://\(url.host ?? "")"
+            var s = "\(url.scheme ?? "sftp")://\(url.host ?? "")"
             if let port = url.port { s += ":\(port)" }
             return s + url.path
         }

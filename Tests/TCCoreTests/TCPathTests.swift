@@ -88,6 +88,29 @@ final class TCPathTests: XCTestCase {
                        "sftp://example.com/a")
     }
 
+    // MARK: - smb scheme
+
+    func testSMBPathIsRemote() {
+        let p = TCPath("smb://truenas/downloads/docs/a.txt")
+        XCTAssertTrue(p.isRemote, "smb:// 应判为远端")
+        XCTAssertEqual(p.pathString, "/downloads/docs/a.txt", "pathString 丢 host、保留 /share/rel")
+        XCTAssertEqual(p.fileName, "a.txt")
+    }
+    func testSMBDisplayStringUsesActualScheme() {
+        // displayString 现写死 sftp://——smb 路径须渲染为 smb://
+        XCTAssertEqual(TCPath("smb://truenas/downloads/x").displayString(),
+                       "smb://truenas/downloads/x", "displayString 用实际 scheme")
+    }
+    func testSFTPDisplayStringUnchanged() {
+        // sftp 分支回归：port 缺省省略、有 port 带 port
+        XCTAssertEqual(TCPath("sftp://h:22/a").displayString(), "sftp://h:22/a")
+        XCTAssertEqual(TCPath("sftp://h/a").displayString(), "sftp://h/a", "无 port 不追加 :port")
+    }
+    func testSMBPathStringDropsHost() {
+        // 关键不变式：id 将取 pathString，须与 SFTP 的 fullPath 语义一致（无 host）
+        XCTAssertEqual(TCPath("smb://truenas/downloads/x").pathString, "/downloads/x")
+    }
+
     func testLocalPathUnaffected() {
         let p = TCPath("/a/b/../c")
         XCTAssertEqual(p.pathString, "/a/c")
