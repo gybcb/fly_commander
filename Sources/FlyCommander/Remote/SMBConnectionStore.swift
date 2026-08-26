@@ -51,9 +51,20 @@ final class SMBConnectionStore {
     func source(for id: String) -> SMBSource? { sources[id] }
 
     /// 断开并移除活动连接（unmount；凭据保留，可重连）。
+    /// 挂载点在 root 外（复用了 Finder 的 /Volumes/<share>）时经 putBackMount 挂回原处，
+    /// 断连不该吞掉用户的 Finder 卷。
     func disconnect(_ id: String) {
         if let src = sources.removeValue(forKey: id) {
-            try? mountManager.unmount(src.mountPoint)
+            do {
+                if let mm = mountManager as? SMBMountManager {
+                    try mm.putBackMount(src.mountPoint, config: src.config, secret: loadSecret(for: src.config))
+                } else {
+                    try mountManager.unmount(src.mountPoint)
+                }
+            } catch {
+                // 卸载/挂回失败不阻断断连（残留由下次启动 reclaimStale 回收；
+                // 挂回失败时共享处于未挂载状态，用户重连即可）。
+            }
             src.closeConnection()
         }
     }
@@ -65,6 +76,12 @@ final class SMBConnectionStore {
     /// 回读已记住的密码（记录标记 remembers 时供表单预填）。
     func loadSecret(for record: SMBConnectionRecord) throws -> String? {
         try credentials.load(for: record.config())
+    }
+
+    /// 断连时供 putBackMount 挂回原处取密码：按 config 取（Keychain 键 credentialAccount 与 record 一致）。
+    /// 取不到/Keychain 失败返回 nil（挂回走匿名挂载，用户重连即可补密码）。
+    private func loadSecret(for config: SMBConnectionConfig) -> String? {
+        do { return try credentials.load(for: config) } catch { return nil }
     }
 
     // MARK: - 凭据 / 最近连接

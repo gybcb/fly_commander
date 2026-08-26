@@ -81,4 +81,71 @@ final class SMBMountManagerTests: XCTestCase {
                                       "/Volumes/FlyCommander/nas--backup"]),
                        "只收 /Volumes/FlyCommander 下，不碰 /Volumes/downloads")
     }
+
+    func testShareIdentifierParsesUserAtServerShare() {
+        // 常规 user@server/share
+        XCTAssertEqual(
+            SMBMountManager.shareIdentifier(
+                fromMountLine: "//shaogaoyang@truenas._smb._tcp.local/downloads on /Volumes/downloads (smbfs, nodev, nosuid, mapping=derived)"),
+            "truenas._smb._tcp.local/downloads")
+        // 带域 + user:pass（分隔符 ; : 与 percent-encode 不影响 lastIndex("@") 取尾部）
+        XCTAssertEqual(
+            SMBMountManager.shareIdentifier(
+                fromMountLine: "//WORKGROUP;user:p%40ss@host/share on /Volumes/share (smbfs)"),
+            "host/share")
+        // 非 smb 行（无 // 前缀）→ nil
+        XCTAssertNil(
+            SMBMountManager.shareIdentifier(
+                fromMountLine: "/dev/disk3s1 on /Volumes/Macintosh HD (apfs, journaled)"))
+    }
+
+    func testShareMountedPointFindsExternalMount() {
+        let out = """
+        devfs on /dev (nfs, local)
+        //shaogaoyang@truenas._smb._tcp.local/downloads on /Volumes/downloads (smbfs, nodev)
+        """
+        XCTAssertEqual(
+            SMBMountManager.shareMountedPoint(server: "truenas._smb._tcp.local",
+                                              share: "downloads", fromMountOutput: out),
+            "/Volumes/downloads",
+            "命中 Finder 已挂载的共享 → 返回其挂载点")
+    }
+
+    func testShareMountedPointIgnoresOtherShareAndServer() {
+        let out = """
+        //u@truenas._smb._tcp.local/videos on /Volumes/videos (smbfs)
+        //u@other-host/downloads on /Volumes/downloads (smbfs)
+        """
+        XCTAssertNil(
+            SMBMountManager.shareMountedPoint(server: "truenas._smb._tcp.local",
+                                              share: "downloads", fromMountOutput: out),
+            "不同共享（videos）/不同服务器（other-host）都不命中")
+    }
+
+    func testMountOwnMountPointNotReportedAsExternal() {
+        let out = """
+        //u@truenas._smb._tcp.local/downloads on /Volumes/FlyCommander/truenas--downloads (smbfs)
+        """
+        XCTAssertNil(
+            SMBMountManager.shareMountedPoint(server: "truenas._smb._tcp.local",
+                                              share: "downloads", fromMountOutput: out),
+            "已挂在本挂载点（root 下）返回 nil —— 由 isMounted 复用分支处理")
+    }
+
+    func testMountReusesExternalMountWithoutCallingMount() throws {
+        // Finder 已挂 /Volumes/downloads：mount() 须复用之，绝不触发 runMount。
+        let finderLine = """
+        //shaogaoyang@truenas._smb._tcp.local/downloads on /Volumes/downloads (smbfs, nodev)
+        """
+        var mountCalls = 0
+        let manager = SMBMountManager(
+            runMount: { _ in mountCalls += 1; return (0, "") },
+            runList: { finderLine },
+            ensureDirectories: { _ in }   // 免触 /Volumes（hermetic）
+        )
+        let mp = try manager.mount(cfg(server: "truenas._smb._tcp.local", share: "downloads"),
+                                   secret: nil)
+        XCTAssertEqual(mp, URL(fileURLWithPath: "/Volumes/downloads"), "复用外部挂载点")
+        XCTAssertEqual(mountCalls, 0, "外部已挂载 → 不得调用 mount_smbfs")
+    }
 }

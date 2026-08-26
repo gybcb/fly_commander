@@ -63,26 +63,59 @@ final class SMBMountManager {
         return out
     }
 
+    /// 共享 URL 的"server/share"标识（mount 表第 1 列形如 //user@server/share 或 //domain;user:pass@server/share）。
+    static func shareIdentifier(fromMountLine: String) -> String? {
+        let first = fromMountLine.split(separator: " ", omittingEmptySubsequences: true).first.map(String.init)
+        guard let first, first.hasPrefix("//") else { return nil }
+        let rest = first.dropFirst(2)
+        guard let at = rest.lastIndex(of: "@") else { return nil }
+        let offset = rest.distance(from: rest.startIndex, to: at) + 1
+        return String(rest.dropFirst(offset))
+    }
+
+    /// 该 server/share 是否已被挂在别处（如 Finder 挂在 /Volumes/<share>）。
+    /// 命中返回其挂载点路径；已挂在本挂载点（root 下）返回 nil（由 isMounted 复用分支处理）。
+    static func shareMountedPoint(server: String, share: String,
+                                  fromMountOutput: String) -> String? {
+        let id = "\(server)/\(share)"
+        for line in fromMountOutput.split(separator: "\n") {
+            guard Self.shareIdentifier(fromMountLine: String(line)) == id else { continue }
+            let cols = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard cols.count >= 3 else { continue }
+            let mp = String(cols[2])
+            if !mp.hasPrefix(root + "/") { return mp }
+        }
+        return nil
+    }
+
+    /// 预建挂载点目录（root + 挂载点）。/Volumes 不可写时由调用方转 permissionDenied 提示。
+    static func makeDirectories(_ mp: String) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: mp, withIntermediateDirectories: true)
+    }
+
     // MARK: - 真实挂载（e2e 验证）。每个动作注一个 [String]->(exit,stderr)，args[0]=可执行路径。
 
     private let runMount: ([String]) -> (Int32, String)     // (exit, output)
     private let runUnmount: ([String]) -> (Int32, String)   // (exit, output)
     private let runList: () -> String                        // `mount` 全文
+    private let ensureDirectories: (String) throws -> Void   // 建 root+挂载点目录（测试可注 fake 免触 /Volumes）
 
     init(runMount: @escaping ([String]) -> (Int32, String) = SMBMountManager.exec,
          runUnmount: @escaping ([String]) -> (Int32, String) = SMBMountManager.exec,
-         runList: @escaping () -> String = { SMBMountManager.exec(["/usr/bin/mount"]).1 }) {
+         runList: @escaping () -> String = { SMBMountManager.exec(["/usr/bin/mount"]).1 },
+         ensureDirectories: @escaping (String) throws -> Void = SMBMountManager.makeDirectories) {
         self.runMount = runMount
         self.runUnmount = runUnmount
         self.runList = runList
+        self.ensureDirectories = ensureDirectories
     }
 
     func mount(_ config: SMBConnectionConfig, secret: String?) throws -> URL {
         let mp = Self.mountPointPath(config)
-        let fm = FileManager.default
         do {
-            try fm.createDirectory(atPath: Self.root, withIntermediateDirectories: true)
-            try fm.createDirectory(atPath: mp, withIntermediateDirectories: true)
+            try ensureDirectories(mp)
         } catch {
             // /Volumes 对当前用户不可写（root:wheel）时建目录 EACCES——
             // 给出一次性的提权命令，用户照抄即可，之后无需再 sudo。
@@ -92,6 +125,12 @@ final class SMBMountManager {
                     + "sudo mkdir -p \(Self.root) && sudo chown \"$(whoami)\" \(Self.root)")
             }
             throw asTCError(error)
+        }
+        // macOS 对同一共享只允许一个活动挂载：Finder 已挂 /Volumes/<share> 时
+        // 重挂会 EEXIST —— 复用其挂载点（同 sourceID 不重连哲学，扩展到系统级）。
+        if let existing = Self.shareMountedPoint(server: config.server, share: config.share,
+                                                 fromMountOutput: runList()) {
+            return URL(fileURLWithPath: existing)
         }
         if isMounted(URL(fileURLWithPath: mp)) {
             return URL(fileURLWithPath: mp)   // 复用
@@ -108,6 +147,17 @@ final class SMBMountManager {
 
     func unmount(_ mountPoint: URL) throws {
         _ = runUnmount(["/sbin/umount", "-f", mountPoint.path])   // 已卸则忽略
+    }
+
+    /// 断开挂载点；若它不在本 app 根（root）下（如复用了 Finder 的 /Volumes/<share> 挂载），
+    /// 卸载后把共享挂回原处（断连不该吞掉用户的 Finder 卷）。重挂失败时共享处于未挂载状态，
+    /// 用户重连即可。
+    func putBackMount(_ mountPoint: URL, config: SMBConnectionConfig, secret: String?) throws {
+        let wasOutsideRoot = !mountPoint.path.hasPrefix(Self.root + "/")
+        try unmount(mountPoint)
+        if wasOutsideRoot {
+            _ = try mount(config, secret: secret)
+        }
     }
 
     /// 只查 mount 表（runList）——**不**加 contentsOfDirectory 兜底：
