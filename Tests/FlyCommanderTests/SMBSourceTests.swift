@@ -43,14 +43,42 @@ final class SMBSourceTests: XCTestCase {
         XCTAssertTrue(r.path.isRemote)
     }
 
-    func testToLocalRoundTrip() {
+    func testToLocalMapsRootAndNested() throws {
+        // 正常嵌套映射（回归——不得抛错）
         let p = TCPath("smb://\(server)/\(share)/docs/n.txt")
-        XCTAssertEqual(SMBSource.toLocal(p, mountPoint: mount, share: share).url.path,
+        XCTAssertEqual(try SMBSource.toLocal(p, mountPoint: mount, share: share).url.path,
                        mount.appendingPathComponent("docs/n.txt").path)
         // share 根 → 挂载点本身（不重复拼 share 名）
-        XCTAssertEqual(SMBSource.toLocal(TCPath("smb://\(server)/\(share)"),
-                                         mountPoint: mount, share: share).url.path,
+        XCTAssertEqual(try SMBSource.toLocal(TCPath("smb://\(server)/\(share)"),
+                                             mountPoint: mount, share: share).url.path,
                        mount.path)
+    }
+
+    func testToLocalRejectsSiblingShareBoundary() {
+        // 段边界：/downloadsother 与 /downloads 是不同共享，不得误路由到挂载点内
+        XCTAssertThrowsError(
+            try SMBSource.toLocal(TCPath("smb://\(server)/downloadsother"),
+                                  mountPoint: mount, share: share)) { error in
+            XCTAssertEqual(error as? TCError, .invalidPath("路径不在共享内：/downloadsother"))
+        }
+    }
+
+    func testToLocalRejectsDotDotEscape() {
+        // standardizedFileURL 词法折叠 .. → 逃逸挂载点 → 抛错
+        XCTAssertThrowsError(
+            try SMBSource.toLocal(TCPath("smb://\(server)/\(share)/../../etc"),
+                                  mountPoint: mount, share: share)) { error in
+            XCTAssertTrue(error is TCError)
+        }
+    }
+
+    func testToLocalRejectsOutsideSharePrefix() {
+        // 不在 /<share>/ 前缀下的路径（另一共享/异常输入）一律抛错，不再兜底转发
+        XCTAssertThrowsError(
+            try SMBSource.toLocal(TCPath("smb://\(server)/other/x"),
+                                  mountPoint: mount, share: share)) { error in
+            XCTAssertEqual(error as? TCError, .invalidPath("路径不在共享内：/other/x"))
+        }
     }
 
     func testListDirectoryRemapsAndRecursiveRead() throws {
