@@ -47,8 +47,10 @@ final class RemoteSMBE2ETests: XCTestCase {
         let user = self.user!
         let pass = self.pass!
         // 挂载 + 浏览
+        // remember: true——connect 会按 remember 存/忘凭据；保持预置的密码在 keychain 里，
+        // 否则 tearDown 断连复用 Finder 卷时 loadSecret 拿不到密码、挂回原处失败。
         let req = SMBConnectionRequest(server: server, share: share, domain: domain,
-                                       username: user, secret: pass)
+                                       username: user, secret: pass, remember: true)
         let (src, home) = try store.connect(req)
         XCTAssertTrue(src.isRemote)
         let listing = try src.listDirectory(home)   // 非空断言（真 NAS 必有内容）
