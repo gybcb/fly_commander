@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import Traversio
 @testable import FlyCommander
 import TCCore
 
@@ -236,5 +237,39 @@ final class SFTPSourceTests: XCTestCase {
 
     func testOpenReaderMissingFileThrows() throws {
         XCTAssertThrowsError(try source.openReader(p("/no/such/\(UUID().uuidString)")))
+    }
+}
+
+/// 纯路径映射单测（不依赖 sshd）：远端名字含空格必须保持远端路由并往返一致。
+/// 曾因 TCPath("sftp://…\(path)") 裸拼在空格处 URL(string:)==nil 回落本地分支，
+/// 导致复制/移动/删除静默路由到不存在的本地路径。
+final class SFTPPathMappingTests: XCTestCase {
+    private let attrs = SSHSFTPFileAttributes(flags: 0, size: 5, userID: nil, groupID: nil,
+                                              permissions: nil, accessTime: nil,
+                                              modificationTime: 0, extensions: [])
+    private let cfg = SFTPConnectionConfig(host: "h", port: 22, username: "u",
+                                           auth: .password("p"))
+
+    func testTCPathWithSpacesStaysRemoteAndRoundTrips() {
+        let p = SFTPSource.tcPath(host: "h", port: 22, remotePath: "/home/My Docs/a b.txt")
+        XCTAssertTrue(p.isRemote, "含空格不得回落本地分支")
+        XCTAssertEqual(p.pathString, "/home/My Docs/a b.txt")
+        XCTAssertEqual(p.url.host, "h")
+        XCTAssertEqual(p.url.port, 22)
+    }
+
+    func testTCPathRootAndPlainPath() {
+        XCTAssertTrue(SFTPSource.tcPath(host: "h", port: 22, remotePath: "/").isRemote)
+        let plain = SFTPSource.tcPath(host: "h", port: 22, remotePath: "/a/b.txt")
+        XCTAssertTrue(plain.isRemote)
+        XCTAssertEqual(plain.pathString, "/a/b.txt")
+    }
+
+    func testMapWithSpaceNameKeepsItemRemote() {
+        let item = SFTPSource.map(attrs: attrs, name: "a b.txt",
+                                  fullPath: "/home/My Docs/a b.txt", config: cfg)
+        XCTAssertTrue(item.path.isRemote)
+        XCTAssertEqual(item.path.pathString, "/home/My Docs/a b.txt")
+        XCTAssertEqual(item.id, "/home/My Docs/a b.txt")
     }
 }

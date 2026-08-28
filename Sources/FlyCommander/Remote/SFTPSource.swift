@@ -67,7 +67,22 @@ public final class SFTPSource: FileSource {
 
     private func makePath(dir: String, name: String) -> TCPath {
         let joined = dir.hasSuffix("/") ? dir + name : dir + "/" + name
-        return TCPath("sftp://\(config.host):\(config.port)\(joined)")
+        return Self.tcPath(host: config.host, port: Int(config.port), remotePath: joined)
+    }
+
+    /// 远端绝对路径 → TCPath。逐段 percent-encode 后经 URLComponents 构造——
+    /// 裸拼 "sftp://…\(path)" 在名字含空格时 URL(string:)==nil 会回落本地分支（静默错路由）。
+    /// TCPath.pathString / url.path 取值时自动解码，往返与远端真实路径一致。
+    static func tcPath(host: String, port: Int, remotePath: String) -> TCPath {
+        var c = URLComponents()
+        c.scheme = "sftp"
+        c.host = host
+        c.port = port
+        let encoded = remotePath.split(separator: "/", omittingEmptySubsequences: true)
+            .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)! }
+            .joined(separator: "/")
+        c.percentEncodedPath = encoded.isEmpty ? "/" : "/" + encoded
+        return TCPath(url: c.url!)
     }
 
     // MARK: - 浏览 / 元信息
@@ -164,7 +179,7 @@ public final class SFTPSource: FileSource {
     static func map(attrs: SSHSFTPFileAttributes, name: String,
                     fullPath: String, config: SFTPConnectionConfig) -> FileItem {
         let isDir = (attrs.permissions ?? 0) & 0o170000 == 0o040000
-        let itemPath = TCPath("sftp://\(config.host):\(config.port)\(fullPath)")
+        let itemPath = Self.tcPath(host: config.host, port: Int(config.port), remotePath: fullPath)
         let execBit = (attrs.permissions ?? 0) & 0o0111 != 0
         return FileItem(
             id: fullPath,

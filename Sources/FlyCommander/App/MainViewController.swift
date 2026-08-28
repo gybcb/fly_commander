@@ -379,7 +379,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             let side = self.workspace.active
             let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
             let container = (side == .left) ? self.leftContainer! : self.rightContainer!
-            let path = TCPath("sftp://\(source.config.host):\(source.config.port)\(home)")
+            let path = SFTPSource.tcPath(host: source.config.host,
+                                         port: Int(source.config.port),
+                                         remotePath: home)
             let pane = FilePane(id: side, source: source, startPath: path)
             tab.add(pane)                                   // 新标签（保留当前活动标签）
             pane.onReload = { [weak self] p in self?.refresh(p) }
