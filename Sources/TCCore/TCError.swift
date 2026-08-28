@@ -28,9 +28,14 @@ public func asTCError(_ error: Error) -> TCError {
         return .notFound(ns.localizedDescription)
     case NSFileReadNoPermissionError, NSFileWriteNoPermissionError:
         return .permissionDenied(ns.localizedDescription)
-    case NSFileReadInvalidFileNameError, NSFileReadUnknownError:
+    case NSFileReadInvalidFileNameError:
         return .invalidPath(ns.localizedDescription)
+    case NSFileWriteFileExistsError:
+        return .unknown("目标已存在同名文件")
+    case NSFileWriteOutOfSpaceError:
+        return .unknown("磁盘空间不足")
     default:
+        // 256（NSFileReadUnknownError）等未知原因的通用错误不猜具体类别。
         return .unknown(ns.localizedDescription)
     }
 }

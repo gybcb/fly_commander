@@ -20,4 +20,23 @@ final class TCErrorTests: XCTestCase {
             XCTFail("expected .notFound, got \(asTCError(err))")
         }
     }
+
+    /// 256 是 Cocoa 通用读错误（原因不明），映射 invalidPath 会误导用户。
+    func testMapsReadUnknownToUnknownNotInvalidPath() {
+        let err = NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError, userInfo: nil)
+        XCTAssertEqual(asTCError(err), .unknown(err.localizedDescription))
+        if case .invalidPath = asTCError(err) {
+            XCTFail("256 不应映射为 invalidPath")
+        }
+    }
+
+    func testMapsFileExistsCode() {
+        let err = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteFileExistsError, userInfo: nil)
+        XCTAssertEqual(asTCError(err), .unknown("目标已存在同名文件"))
+    }
+
+    func testMapsOutOfSpaceCode() {
+        let err = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError, userInfo: nil)
+        XCTAssertEqual(asTCError(err), .unknown("磁盘空间不足"))
+    }
 }
