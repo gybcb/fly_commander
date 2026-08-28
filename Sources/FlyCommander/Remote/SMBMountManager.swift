@@ -41,13 +41,22 @@ final class SMBMountManager {
         return ["/sbin/mount_smbfs", "-N", url, mountPointPath(config)]
     }
 
-    /// 解析 `mount` 输出，返回落在 /Volumes/FlyCommander/ 下的挂载点（第 3 列，以 root 开头）。
+    /// 解析 mount 表一行 → (设备列, 挂载点)。按 " on " 与末个 " (" 切——
+    /// server/share/挂载点都可能含空格，不能按空格切列。
+    static func parseMountLine(_ line: String) -> (device: String, mountPoint: String)? {
+        guard let onRange = line.range(of: " on ") else { return nil }
+        let device = String(line[..<onRange.lowerBound])
+        let rest = line[onRange.upperBound...]
+        guard let paren = rest.range(of: " (", options: .backwards) else { return nil }
+        return (device, String(rest[..<paren.lowerBound]))
+    }
+
+    /// 解析 `mount` 输出，返回落在 /Volumes/FlyCommander/ 下的挂载点。
     static func staleMounts(fromMountOutput: String) -> [String] {
         fromMountOutput.split(separator: "\n").compactMap { line in
-            let cols = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard cols.count >= 3 else { return nil }
-            let mp = String(cols[2])
-            return mp.hasPrefix(root + "/") ? mp : nil
+            guard let parsed = parseMountLine(String(line)),
+                  parsed.mountPoint.hasPrefix(root + "/") else { return nil }
+            return parsed.mountPoint
         }
     }
 
@@ -63,11 +72,11 @@ final class SMBMountManager {
         return out
     }
 
-    /// 共享 URL 的"server/share"标识（mount 表第 1 列形如 //user@server/share 或 //domain;user:pass@server/share）。
+    /// 共享 URL 的"server/share"标识（mount 表设备列形如 //user@server/share 或 //domain;user:pass@server/share）。
     static func shareIdentifier(fromMountLine: String) -> String? {
-        let first = fromMountLine.split(separator: " ", omittingEmptySubsequences: true).first.map(String.init)
-        guard let first, first.hasPrefix("//") else { return nil }
-        let rest = first.dropFirst(2)
+        guard let parsed = parseMountLine(fromMountLine),
+              parsed.device.hasPrefix("//") else { return nil }
+        let rest = parsed.device.dropFirst(2)
         guard let at = rest.lastIndex(of: "@") else { return nil }
         let offset = rest.distance(from: rest.startIndex, to: at) + 1
         return String(rest.dropFirst(offset))
@@ -79,11 +88,9 @@ final class SMBMountManager {
                                   fromMountOutput: String) -> String? {
         let id = "\(server)/\(share)"
         for line in fromMountOutput.split(separator: "\n") {
-            guard Self.shareIdentifier(fromMountLine: String(line)) == id else { continue }
-            let cols = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard cols.count >= 3 else { continue }
-            let mp = String(cols[2])
-            if !mp.hasPrefix(root + "/") { return mp }
+            guard let parsed = parseMountLine(String(line)),
+                  Self.shareIdentifier(fromMountLine: String(line)) == id else { continue }
+            if !parsed.mountPoint.hasPrefix(root + "/") { return parsed.mountPoint }
         }
         return nil
     }

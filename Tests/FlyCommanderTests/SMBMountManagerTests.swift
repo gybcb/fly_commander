@@ -132,6 +132,44 @@ final class SMBMountManagerTests: XCTestCase {
             "已挂在本挂载点（root 下）返回 nil —— 由 isMounted 复用分支处理")
     }
 
+    // MARK: - mount 表含空格解析（按 " on "/" (" 切，不能按空格切列）
+
+    func testParseMountLineWithSpacesInDeviceAndMountPoint() {
+        let parsed = SMBMountManager.parseMountLine("//u@srv/My Files on /Volumes/My Files (smbfs, nodev)")
+        XCTAssertEqual(parsed?.device, "//u@srv/My Files")
+        XCTAssertEqual(parsed?.mountPoint, "/Volumes/My Files")
+        // 常规行不受影响
+        let plain = SMBMountManager.parseMountLine("devfs on /dev (nfs, local)")
+        XCTAssertEqual(plain?.device, "devfs")
+        XCTAssertEqual(plain?.mountPoint, "/dev")
+        // 异常行（有 " on " 无 " ("）→ nil
+        XCTAssertNil(SMBMountManager.parseMountLine("weird on /Volumes/x"))
+    }
+
+    func testStaleMountsWithSpaces() {
+        let out = """
+        //u@srv/My Files on /Volumes/My Files (smbfs)
+        //u@srv/other on /Volumes/FlyCommander/srv--other (smbfs)
+        """
+        XCTAssertEqual(SMBMountManager.staleMounts(fromMountOutput: out),
+                       ["/Volumes/FlyCommander/srv--other"],
+                       "含空格的 /Volumes/My Files 不在 app 根下，不回收")
+    }
+
+    func testShareMountedPointWithSpaces() {
+        let out = "//u@srv/My Files on /Volumes/My Files (smbfs, nodev)"
+        XCTAssertEqual(SMBMountManager.shareMountedPoint(server: "srv", share: "My Files",
+                                                         fromMountOutput: out),
+                       "/Volumes/My Files", "含空格共享的 Finder 挂载应能命中复用")
+    }
+
+    func testShareIdentifierWithSpaces() {
+        XCTAssertEqual(
+            SMBMountManager.shareIdentifier(
+                fromMountLine: "//u@srv/My Files on /Volumes/My Files (smbfs)"),
+            "srv/My Files")
+    }
+
     func testMountReusesExternalMountWithoutCallingMount() throws {
         // Finder 已挂 /Volumes/downloads：mount() 须复用之，绝不触发 runMount。
         let finderLine = """
