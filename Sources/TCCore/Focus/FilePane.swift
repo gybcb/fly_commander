@@ -14,6 +14,8 @@ public final class FilePane {
     public var onReload: ((FilePane) -> Void)?
 
     private var loadToken = 0
+    /// 远端 navigate 的在途 stat 校验（新导航/setSource 使旧 hop 失效）。
+    private var navToken = 0
     private let loadQueue = DispatchQueue(label: "fly.filepane.load")
 
     public init(id: PaneID, source: FileSource, startPath: TCPath) {
@@ -125,6 +127,7 @@ public final class FilePane {
     /// 切换数据源（SFTP 连接成功后把窗格接到远端）。
     public func setSource(_ newSource: FileSource, andPath newPath: TCPath) {
         loadToken &+= 1   // 使在途的旧源加载失效
+        navToken &+= 1    // 使在途的旧源导航 stat 失效
         source = newSource
         path = newPath
         selection = SelectionModel()
@@ -138,11 +141,23 @@ public final class FilePane {
     }
 
     public func navigate(to newPath: TCPath, focusID: String? = nil) {
-        guard newPath.isRoot || (try? source.stat(newPath))?.isDirectory == true else { return }
-        path = newPath
         if source.isRemote {
-            loadAsync(preserveFocus: false, focusID: focusID)
+            // 远端 stat 有网络 RTT，不得在主线程同步执行：放进 loadQueue，
+            // 回主线程经 navToken 校验后再改 path 并 loadAsync（旧导航被新导航失效）。
+            navToken &+= 1
+            let token = navToken
+            loadQueue.async { [source] in
+                let isDirectory = newPath.isRoot
+                    || ((try? source.stat(newPath))?.isDirectory == true)
+                DispatchQueue.main.async {
+                    guard token == self.navToken, isDirectory else { return }
+                    self.path = newPath
+                    self.loadAsync(preserveFocus: false, focusID: focusID)
+                }
+            }
         } else {
+            guard newPath.isRoot || (try? source.stat(newPath))?.isDirectory == true else { return }
+            path = newPath
             load(preserveFocus: false, focusID: focusID)
         }
     }

@@ -19,6 +19,31 @@ private final class DupIDSource: FileSource {
     func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
 }
 
+/// 远端 fake：stat 用信号量挂起（2s 超时兜底，旧同步实现不会挂死测试），
+/// 验证 navigate 的远端 stat 不在主线程同步执行、在途导航可被失效。
+private final class RemoteStubSource: FileSource {
+    let gate = DispatchSemaphore(value: 0)
+    var onStatEntered: (() -> Void)?
+    var sourceID: String { "remote-stub" }
+    var isRemote: Bool { true }
+    func listDirectory(_ path: TCPath) throws -> [FileItem] { [] }
+    func isDirectory(_ path: TCPath) -> Bool { false }
+    func stat(_ path: TCPath) throws -> FileItem? {
+        onStatEntered?()
+        _ = gate.wait(timeout: .now() + 2)   // 超时也返回目录项，旧实现下测试可失败而非挂死
+        return FileItem(id: path.pathString, path: path, name: path.fileName,
+                        isDirectory: true, size: 0, modificationDate: .distantPast,
+                        isHidden: false, isReadOnly: false, isExecutable: true)
+    }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at: TCPath) throws {}
+    func removeItem(at: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle { { _ in nil } }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+}
+
 final class FilePaneTests: XCTestCase {
     private let source = LocalFileSource()
     private var tmp: URL!
@@ -116,6 +141,53 @@ final class FilePaneTests: XCTestCase {
         // 同 id 两条目在 selection 里就是一个 id → operationTargets 恰一项
         XCTAssertEqual(pane.operationTargets.count, 1)
     }
+
+    /// 远端 navigate：stat 不得在主线程同步执行（Enter 一次 = 一次网络 RTT 卡顿）。
+    func testRemoteNavigateDefersPathChangeUntilStatCompletes() {
+        let src = RemoteStubSource()
+        let pane = FilePane(id: .left, source: src, startPath: TCPath("/start"))
+        var reloads = 0
+        pane.onReload = { _ in reloads += 1 }
+        let statEntered = expectation(description: "stat entered")
+        src.onStatEntered = { statEntered.fulfill() }
+        pane.navigate(to: TCPath("/target"))
+        wait(for: [statEntered], timeout: 2)
+        XCTAssertEqual(pane.path.pathString, "/start",
+                       "stat 未完成前不得改 path（旧实现在主线程同步 stat 会改掉它）")
+        src.gate.signal()
+        let reloaded = expectation(description: "reload after navigate")
+        pane.onReload = { _ in reloaded.fulfill() }
+        wait(for: [reloaded], timeout: 2)
+        XCTAssertEqual(pane.path.pathString, "/target")
+    }
+
+    /// stat 挂起时再次 navigate：第一次的在途 hop 必须被 token 失效（只应用最后一次）。
+    func testSecondRemoteNavigateCancelsPendingFirst() {
+        let src = RemoteStubSource()
+        let pane = FilePane(id: .left, source: src, startPath: TCPath("/start"))
+        var reloads = 0
+        pane.onReload = { _ in reloads += 1 }
+        var statCount = 0
+        let stat1 = expectation(description: "stat1")
+        let stat2 = expectation(description: "stat2")
+        src.onStatEntered = {
+            statCount += 1
+            (statCount == 1 ? stat1 : stat2).fulfill()
+        }
+        pane.navigate(to: TCPath("/first"))
+        wait(for: [stat1], timeout: 2)
+        src.gate.signal()                        // stat1 放行 → 其主线程 hop 入队（尚未执行）
+        pane.navigate(to: TCPath("/second"))     // 应使第一次的 hop 失效
+        src.gate.signal()                        // stat2 放行
+        wait(for: [stat2], timeout: 2)
+        // 双重 async 排干主队列（hop 与其触发的 reload 都落地后再断言）
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.fulfill() } }
+        wait(for: [drained], timeout: 2)
+        XCTAssertEqual(pane.path.pathString, "/second")
+        XCTAssertEqual(reloads, 1, "第一次导航的 hop 应被丢弃，只触发一次 reload：\(reloads)")
+    }
+
     func testWorkspaceSwitchActive() {
         let a = FilePane(id: .left, source: source, startPath: TCPath("~"))
         let b = FilePane(id: .right, source: source, startPath: TCPath("~"))

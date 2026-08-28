@@ -55,15 +55,20 @@ public final class CommandRouter {
         }
     }
 
+    /// 操作后刷新：远端窗格走异步加载（同步 load 会把网络 RTT 卡进主线程）。
+    private func reloadPane(_ pane: FilePane) {
+        if pane.source.isRemote { pane.loadAsync() } else { pane.load() }
+    }
+
     public func rename(to newName: String) {
         guard let item = workspace.activePane.focusedItem else { return }
         workspace.operationState(.running(label: "重命名", progress: 0))
         do {
             try engine.performRename(item, to: newName, source: workspace.activePane.source)
-            workspace.activePane.load()
+            reloadPane(workspace.activePane)
             workspace.operationState(.done("已重命名"))
         } catch {
-            workspace.activePane.load()
+            reloadPane(workspace.activePane)
             workspace.operationState(.failed(asTCError(error).message))
         }
     }
@@ -73,10 +78,10 @@ public final class CommandRouter {
         workspace.operationState(.running(label: "新建目录", progress: 0))
         do {
             _ = try engine.performMakeDirectory(name, in: a.path, source: a.source)
-            a.load()
+            reloadPane(a)
             workspace.operationState(.done("已新建目录"))
         } catch {
-            a.load()
+            reloadPane(a)
             workspace.operationState(.failed(asTCError(error).message))
         }
     }
