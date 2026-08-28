@@ -59,8 +59,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         transferEngine.state = { [weak self] s in self?.workspace.operationState(s) }
         transferEngine.onFinished = { [weak self] srcPane, dstPane in
             guard let self else { return }
-            srcPane.load()
-            dstPane.load()
+            self.reloadPane(srcPane)
+            self.reloadPane(dstPane)
             self.updateBars()
         }
         router.onRemoteTransfer = { [weak self] isCopy, src, dst in
@@ -179,6 +179,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     }
 
     // MARK: - Core callbacks
+
+    /// 操作后刷新窗格：远端源走异步加载（同步 load 会把网络 RTT 卡进主线程）。
+    private func reloadPane(_ pane: FilePane) {
+        if pane.source.isRemote { pane.loadAsync() } else { pane.load() }
+    }
 
     private func refresh(_ pane: FilePane) {
         guard let pv = viewOfPane(pane) else { return }
@@ -491,7 +496,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         let state = { [weak self] s in self?.workspace.operationState(s) }
         state(.running(label: "删除 \(targets.count) 个文件", progress: 0))
         // 系统预建全局队列执行（不新建 DispatchQueue——SDK 约束）。
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result: Result<Void, Error>
             do { try engine.performDelete(targets, source: source); result = .success(()) }
             catch { result = .failure(error) }
@@ -502,7 +507,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
                 case .failure(let error):
                     state(.failed((error as? TCError)?.message ?? error.localizedDescription))
                 }
-                pane.load()
+                self?.reloadPane(pane)
             }
         }
     }
