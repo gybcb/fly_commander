@@ -160,6 +160,40 @@ final class OperationEngineRoutingTests: XCTestCase {
         XCTAssertTrue(warnings[0].contains("源端残留"))
     }
 
+    // MARK: - 跨源目录明确报错（C1：目录不得静默当空文件流过去）
+
+    private func fakeDir(_ name: String, in dir: String) -> FileItem {
+        FileItem(id: dir + "/" + name, path: TCPath(dir + "/" + name),
+                 name: name, isDirectory: true, size: 0,
+                 modificationDate: .distantPast, isHidden: false,
+                 isReadOnly: false, isExecutable: true)
+    }
+
+    func testCrossSourceDirectoryCopyThrowsExplicitError() throws {
+        XCTAssertThrowsError(
+            try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b)
+        ) {
+            guard case .unknown(let m) = asTCError($0) else {
+                return XCTFail("期望 unknown，实际 \(asTCError($0))")
+            }
+            XCTAssertTrue(m.contains("目录"), "错误应明确说明目录：\(m)")
+        }
+        XCTAssertTrue(a.openReaders.isEmpty, "目录不得进流式读")
+        XCTAssertTrue(b.streamWrites.isEmpty)
+    }
+
+    func testCrossSourceDirectoryMoveThrowsBeforeStreamingDir() throws {
+        a.readerChunks = [Data("x".utf8)]
+        let items = [fakeItem("1.txt", in: "/s"), fakeDir("dir", in: "/s")]
+        XCTAssertThrowsError(
+            try engine.performMove(items, to: TCPath("/d"), srcSource: a, dstSource: b)
+        )
+        XCTAssertEqual(b.streamWrites.count, 1, "仅文件被流式传输")
+        XCTAssertEqual(a.removeCalls, ["/s/1.txt"])
+        XCTAssertFalse(a.removeCalls.contains("/s/dir"), "目录不得被流式/删除")
+    }
+
     // MARK: - 冲突调用序（同源）
 
     func testConflictOverwriteAllSequence() throws {

@@ -25,6 +25,7 @@ public final class OperationEngine {
             if srcSource.sourceID == dstSource.sourceID {
                 try dstSource.copyItem(from: item.path, to: dst)
             } else {
+                try checkCrossSourceDirectory(item)
                 try stream(from: srcSource, to: dstSource, src: item.path, dst: dst)
             }
             progress?(i + 1, total)
@@ -55,6 +56,7 @@ public final class OperationEngine {
                     try dstSource.moveItem(from: item.path, to: dst)
                     rolledBack.append((from: dst, to: item.path))
                 } else {
+                    try checkCrossSourceDirectory(item)
                     try stream(from: srcSource, to: dstSource, src: item.path, dst: dst)
                     do { try srcSource.removeItem(at: item.path) }
                     catch { onWarning?("源端残留：\(item.name)（\(asTCError(error).message)）") }
@@ -103,6 +105,14 @@ public final class OperationEngine {
     }
 
     // MARK: - 私有
+
+    /// 跨源流式只支持文件：目录（openReader 无法读）此前被静默当空文件传过去。
+    /// 明确报错（递归跨源复制另立项）。
+    private func checkCrossSourceDirectory(_ item: FileItem) throws {
+        if item.isDirectory {
+            throw TCError.unknown("跨源传输暂不支持目录：\(item.name)")
+        }
+    }
 
     /// 冲突判定。返回 true 表示本项被跳过（skip/skipAll）。
     /// 其余分支已完成目标清理（overwrite/overwriteAll）或已 throw（cancel）。
