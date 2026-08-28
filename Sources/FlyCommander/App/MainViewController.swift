@@ -64,7 +64,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self.updateBars()
         }
         router.onRemoteTransfer = { [weak self] isCopy, src, dst in
-            self?.transferEngine.prompt = { s, d in self?.promptConflict(s, d) ?? .overwrite }
+            // promptOnMain：runModal 只允许主线程（引擎在后台线程逐文件询问）。
+            self?.transferEngine.prompt = TransferEngine.promptOnMain { s, d in
+                self?.promptConflict(s, d) ?? .overwrite
+            }
             self?.transferEngine.run(isCopy, src, dst)
         }
 

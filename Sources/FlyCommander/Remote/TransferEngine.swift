@@ -32,6 +32,16 @@ final class TransferEngine {
         self.engine = engine
     }
 
+    /// 把任意 ConflictPrompt 提升到主线程执行（后台线程 sync 回主线程）。
+    /// 引擎只在 runInBackground 块内调用 prompt（后台线程）；已在主线程则直行，
+    /// 单测注入同步 runInBackground 时不会自锁。
+    static func promptOnMain(_ raw: @escaping ConflictPrompt) -> ConflictPrompt {
+        { s, d in
+            if Thread.isMainThread { return raw(s, d) }
+            return DispatchQueue.main.sync { raw(s, d) }
+        }
+    }
+
     /// 复制/移动活动窗格标记项到另一窗格。targets 为空则直接返回。
     func run(_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) {
         let targets = srcPane.operationTargets

@@ -150,6 +150,31 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertEqual(h.local.data["/dst/a.txt"], Data("hello world".utf8), "覆盖后应为源内容")
     }
 
+    func testConflictPromptRunsOnMainThread() {
+        let h = Harness()
+        h.local.table["/dst/a.txt"] = h.local.item("/dst/a.txt", size: 1)
+        var ranOnMain = false
+        h.engine.prompt = TransferEngine.promptOnMain { _, _ in
+            ranOnMain = Thread.isMainThread
+            return .overwrite
+        }
+        // 模拟 app 侧真实线程拓扑：传输块跑在后台线程（run() 仍在主线程发起）。
+        // 用 expectation + wait(for:)（泵 run loop），不能用信号量阻塞主线程——
+        // 否则 promptOnMain 的 main.sync 无法被服务。
+        let exp = expectation(description: "transfer finished")
+        h.engine.runInBackground = { block in
+            DispatchQueue.global(qos: .userInitiated).async {
+                block()
+                exp.fulfill()
+            }
+        }
+        h.engine.onMain = { $0() }
+        h.engine.run(true, h.left, h.right)
+        wait(for: [exp], timeout: 5)
+        XCTAssertTrue(ranOnMain, "冲突询问必须在主线程执行")
+        XCTAssertEqual(h.local.data["/dst/a.txt"], Data("hello world".utf8))
+    }
+
     func testCancelFromPromptYieldsIdleNotFailed() {
         let h = Harness()
         h.local.table["/dst/a.txt"] = h.local.item("/dst/a.txt", size: 1)
