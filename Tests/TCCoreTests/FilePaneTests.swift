@@ -2,6 +2,23 @@ import XCTest
 import Foundation
 @testable import TCCore
 
+/// 最小 fake：listDirectory 返回预置条目（重复 id 容错用）。
+private final class DupIDSource: FileSource {
+    let items: [FileItem]
+    init(items: [FileItem]) { self.items = items }
+    var sourceID: String { "dup-test" }
+    func listDirectory(_ path: TCPath) throws -> [FileItem] { items }
+    func isDirectory(_ path: TCPath) -> Bool { false }
+    func stat(_ path: TCPath) throws -> FileItem? { nil }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at: TCPath) throws {}
+    func removeItem(at: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle { { _ in nil } }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+}
+
 final class FilePaneTests: XCTestCase {
     private let source = LocalFileSource()
     private var tmp: URL!
@@ -83,6 +100,22 @@ final class FilePaneTests: XCTestCase {
         XCTAssertEqual(Set(pane.operationTargets.map { $0.name }), ["dir1", "file.txt"])
     }
 
+    /// 远端列表由服务器返回，异常服务器可能给出重复 id——itemByID 不得 trap，
+    /// 保留首条；operationTargets 等消费方照常工作。
+    func testItemByIDToleratesDuplicateIDs() {
+        func item(_ name: String) -> FileItem {
+            FileItem(id: "/x/same", path: TCPath("/x/same"), name: name,
+                     isDirectory: false, size: 1, modificationDate: .distantPast,
+                     isHidden: false, isReadOnly: false, isExecutable: false)
+        }
+        let pane = FilePane(id: .left, source: DupIDSource(items: [item("a"), item("b")]),
+                            startPath: TCPath("/x"))
+        pane.load()   // 修复前：Dictionary(uniqueKeysWithValues:) 重复键 trap
+        XCTAssertEqual(pane.itemCount, 2)
+        XCTAssertEqual(pane.itemByID["/x/same"]?.name, "a", "重复 id 保留首条")
+        // 同 id 两条目在 selection 里就是一个 id → operationTargets 恰一项
+        XCTAssertEqual(pane.operationTargets.count, 1)
+    }
     func testWorkspaceSwitchActive() {
         let a = FilePane(id: .left, source: source, startPath: TCPath("~"))
         let b = FilePane(id: .right, source: source, startPath: TCPath("~"))

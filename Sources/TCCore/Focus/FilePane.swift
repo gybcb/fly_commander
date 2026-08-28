@@ -24,7 +24,8 @@ public final class FilePane {
 
     public var itemByID: [String: FileItem] {
         guard let page else { return [:] }
-        return Dictionary(uniqueKeysWithValues: page.items.map { ($0.id, $0) })
+        // uniquingKeysWith：远端列表由服务器返回，重复 id 不得 trap（保留首条）。
+        return Dictionary(page.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     public var operationTargets: [FileItem] {
