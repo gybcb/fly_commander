@@ -33,6 +33,22 @@ final class SMBSourceTests: XCTestCase {
                  isHidden: false, isReadOnly: false, isExecutable: false)
     }
 
+    /// 行为钉子：含空格的 share，homePath 必须保持远端且与 toLocal 语义一致。
+    /// 审查曾怀疑裸拼 TCPath 会回落本地分支——实测 macOS 14+ 的 URL 解析器对
+    /// path 里的空格自动 percent-encode（host 含空格才返回 nil），并不成立。
+    /// 留此测试防止未来 TCPath/URL 行为变化悄悄破坏该前提。
+    func testHomePathWithSpaceShareStaysRemote() throws {
+        let src = SMBSource(config: SMBConnectionConfig(server: "srv", share: "My Files",
+                                                        domain: nil, username: "u"),
+                            mountPoint: mount)
+        XCTAssertTrue(src.homePath.isRemote, "含空格 share 不得回落本地分支")
+        XCTAssertEqual(src.homePath.pathString, "/My Files")
+        // share 根经 toLocal 应映射回挂载点（与无空格 share 同语义）
+        XCTAssertEqual(try SMBSource.toLocal(src.homePath, mountPoint: mount,
+                                             share: "My Files").url.path,
+                       mount.path)
+    }
+
     func testRemapSatisfiesIDEqualsPathString() {
         // 核心不变式：id == path.pathString（app revealItem 依赖）——由构造保证
         let smb = TCPath("smb://\(server)/\(share)/docs/n.txt")
