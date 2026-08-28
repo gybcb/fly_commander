@@ -195,12 +195,18 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             var visited = 0
+            // 进度刷新节流：大目录树 progress 每逢 10 项回调一次，逐次 dispatch 主线程会洪泛；
+            // 收尾状态由下方完成块负责（不受此节流影响）。
+            var lastFlush = CFAbsoluteTimeGetCurrent()
             let found = FileSearcher().search(
                 root: rootPath,
                 pattern: NamePattern(pattern),
                 source: searchSource,
                 progress: { n in
                     visited = n
+                    let now = CFAbsoluteTimeGetCurrent()
+                    guard now - lastFlush >= 0.1 else { return }
+                    lastFlush = now
                     DispatchQueue.main.async {
                         guard self.isSearching else { return }
                         self.statusLabel.stringValue = "搜索中… 已检查 \(n) 项"
