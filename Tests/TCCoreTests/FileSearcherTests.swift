@@ -107,6 +107,56 @@ final class FileSearcherTests: XCTestCase {
         XCTAssertEqual(Set(hits.map { $0.path.pathString }),
                        ["/a.txt", "/docs/a.txt"], "递归应找到两枚 a.txt 且跳过 .hidden/")
     }
+
+    /// 目录环（symlink 指向祖先的真实场景）：搜索必须终止、已访问目录不得重复下潜。
+    func testSearchTerminatesOnDirectoryCycle() {
+        let s = CycleSource()
+        let hits = FileSearcher().search(root: TCPath("sftp://c/"),
+                                         pattern: NamePattern("*.txt"),
+                                         source: s,
+                                         isCancelled: { s.totalCalls() > 1000 })
+        XCTAssertFalse(hits.isEmpty, "环不应阻止命中")
+        XCTAssertEqual(s.calls["/"], 1)
+        XCTAssertEqual(s.calls["/a"], 1, "已访问目录不得重复下潜；实际 calls=\(s.calls) hits=\(hits.map(\.path.pathString))")
+        XCTAssertLessThan(s.totalCalls(), 1000, "搜索应在取消阈值前自然终止")
+    }
+}
+
+/// 虚拟目录环：/a/loop 的内容 = 根的内容（含 /a）→ 无环防护时 DFS 永动。
+private final class CycleSource: FileSource {
+    var calls: [String: Int] = [:]
+    func totalCalls() -> Int { calls.values.reduce(0, +) }
+    var sourceID: String { "cycle-test" }
+
+    func listDirectory(_ path: TCPath) throws -> [FileItem] {
+        calls[path.pathString, default: 0] += 1
+        switch path.pathString {
+        case "/": return [CycleSource.dir("/a"), CycleSource.file("/x.txt")]
+        case "/a": return [CycleSource.dir("/a/loop")]
+        case "/a/loop": return [CycleSource.dir("/a"), CycleSource.file("/x.txt")]
+        default: return []
+        }
+    }
+    func isDirectory(_ path: TCPath) -> Bool { false }
+    func stat(_ path: TCPath) throws -> FileItem? { nil }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at: TCPath) throws {}
+    func removeItem(at: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle { { _ in Data() } }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+
+    private static func dir(_ p: String) -> FileItem {
+        FileItem(id: p, path: TCPath("sftp://c\(p)"), name: p.split(separator: "/").last.map(String.init) ?? p,
+                 isDirectory: true, size: 0, modificationDate: .distantPast,
+                 isHidden: false, isReadOnly: false, isExecutable: true)
+    }
+    private static func file(_ p: String) -> FileItem {
+        FileItem(id: p, path: TCPath("sftp://c\(p)"), name: p.split(separator: "/").last.map(String.init) ?? p,
+                 isDirectory: false, size: 10, modificationDate: .distantPast,
+                 isHidden: false, isReadOnly: false, isExecutable: false)
+    }
 }
 
 /// 内存式远端源：`listDirectory` 按 pathString 字典返回，其余方法最小占位。

@@ -52,9 +52,12 @@ public struct FileSearcher {
         // DFS 迭代（栈）。目录项的 path 是"可直接再 list 的源内绝对路径"，
         // 故 stack.append(item.path) 天然成立（本地 file URL / sftp URL 皆然）。
         var stack: [TCPath] = [root]
+        // 已访问目录查重：目录含指向祖先的 symlink 时防无限环。
+        var visitedDirs = Set<String>()
         while !stack.isEmpty {
             if isCancelled() || hits.count >= limit { break }
             let dir = stack.removeLast()
+            guard visitedDirs.insert(dir.pathString).inserted else { continue }
             guard let items = try? source.listDirectory(dir) else { continue }
             for item in items {
                 visited += 1
