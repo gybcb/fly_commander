@@ -115,6 +115,15 @@ final class InternalCommandExecutor {
                     : TCPath((pane.path.url.path as NSString).appendingPathComponent(raw))
             }
         }
+        if pane.source.isRemote {
+            // navigate 的远端 stat 已异步化，path 不会同步变化，不能靠 path 判定成败；
+            // 命令栏回显需要同步结果，这里自己 stat 校验一次（同步网络 RTT 与旧同步 navigate 同价）。
+            guard (try? pane.source.stat(target))?.isDirectory == true else {
+                return "无法进入：\(target.displayString())（不存在或不是目录）"
+            }
+            pane.navigate(to: target)
+            return "已进入 \(target.displayString())"
+        }
         let before = pane.path
         pane.navigate(to: target)
         return pane.path == before ? "无法进入：\(target.displayString())（不存在或不是目录）"
