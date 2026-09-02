@@ -7,6 +7,12 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     enum SortKey { case name, size, date }
     enum SortDirection { case ascending, descending }
 
+    /// 列的稳定 identifier（语言无关，永不变）：既是 NSTableColumn 的 id，也是列头点击
+    /// 选列的依据。点击排序靠它匹配，与本地化标题彻底解耦——语言切换/列头重建都不影响。
+    static let nameColumnID = "name"
+    static let sizeColumnID = "size"
+    static let dateColumnID = "date"
+
     let pane: FilePane
     private let workspace: Workspace
     private let router: CommandRouter
@@ -42,15 +48,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tv.autosaveTableColumns = true
         tv.autosaveName = "FlyCommanderPane\((id == .left) ? "L" : "R")\(ObjectIdentifier(pane).hashValue)"
 
-        let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(Self.nameColumnID))
         name.title = L10n.t(.colName)
         name.width = 280
         name.minWidth = 80
-        let size = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
+        let size = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(Self.sizeColumnID))
         size.title = L10n.t(.colSize)
         size.width = 70
         size.minWidth = 40
-        let date = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("date"))
+        let date = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(Self.dateColumnID))
         date.title = L10n.t(.colDate)
         date.width = 150
         date.minWidth = 80
@@ -125,14 +131,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     // MARK: - Column header sorting（视图层：点击列头换 display 顺序）
 
-    func tableView(_ tableView: NSTableView, clickOnColumnName columnName: String) {
+    /// 点列头换排序列。参数是**稳定 identifier**（"name"/"size"/"date"），不是显示标题——
+    /// 选列完全与本地化解耦，语言切换或列头重建都不会让点击失效。
+    func sortByColumnIdentifier(_ identifier: String) {
         let newKey: SortKey
-        // 列头标题已本地化：clickOnColumnName 传入的是当前语言的标题，须与 L10n 值比对，
-        // 不能再硬编码中文，否则非中文语言下点列头排序失效。
-        switch columnName {
-        case L10n.t(.colName): newKey = .name
-        case L10n.t(.colSize): newKey = .size
-        default: newKey = .date
+        switch identifier {
+        case Self.nameColumnID: newKey = .name
+        case Self.sizeColumnID: newKey = .size
+        case Self.dateColumnID: newKey = .date
+        default: return
         }
         if newKey == sortKey {
             sortDirection = (sortDirection == .ascending) ? .descending : .ascending
