@@ -80,28 +80,28 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch itemIdentifier {
         case .copy:
-            return item(id: .copy, label: "复制", symbol: "doc.on.doc",
+            return item(id: .copy, label: L10n.t(.toolbarCopy), symbol: "doc.on.doc",
                         action: #selector(MainViewController.menuCopyToOtherPane(_:)))
         case .move:
-            return item(id: .move, label: "移动", symbol: "arrow.left.arrow.right",
+            return item(id: .move, label: L10n.t(.toolbarMove), symbol: "arrow.left.arrow.right",
                         action: #selector(MainViewController.menuMoveToOtherPane(_:)))
         case .makeDirectory:
-            return item(id: .makeDirectory, label: "新建目录", symbol: "folder.badge.plus",
+            return item(id: .makeDirectory, label: L10n.t(.newDirectory), symbol: "folder.badge.plus",
                         action: #selector(MainViewController.menuNewDirectory(_:)))
         case .delete:
-            return item(id: .delete, label: "删除", symbol: "trash",
+            return item(id: .delete, label: L10n.t(.toolbarDelete), symbol: "trash",
                         action: #selector(MainViewController.menuTrashDelete(_:)))
         case .rename:
-            return item(id: .rename, label: "重命名", symbol: "pencil",
+            return item(id: .rename, label: L10n.t(.rename), symbol: "pencil",
                         action: #selector(MainViewController.menuRename(_:)))
         case .search:
-            return item(id: .search, label: "查找", symbol: "magnifyingglass",
+            return item(id: .search, label: L10n.t(.find), symbol: "magnifyingglass",
                         action: #selector(MainViewController.menuSearch(_:)))
         case .connect:
-            return item(id: .connect, label: "连接", symbol: "network",
+            return item(id: .connect, label: L10n.t(.toolbarConnect), symbol: "network",
                         action: #selector(MainViewController.menuConnect(_:)))
         case .theme:
-            return item(id: .theme, label: "主题", symbol: "paintpalette",
+            return item(id: .theme, label: L10n.t(.toolbarTheme), symbol: "paintpalette",
                         action: #selector(MainViewController.menuTheme(_:)))
         case .selectionStatus:
             let label = NSTextField(labelWithString: "")

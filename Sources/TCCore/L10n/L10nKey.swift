@@ -6,6 +6,15 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case ok, cancel, create, `default`, close, browse, connect, forget
     // —— 菜单 ——
     case menuFile
+    case aboutApp, hideApp, quitApp
+    case newTab, closeTab, newDirectory, rename, moveToTrash
+    case copyToOtherPane, moveToOtherPane, sftpConnect, smbConnect
+    case menuEdit, find, selectAll
+    case menuView, preview, editItem, switchPane, parentDirectory, themeEllipsis
+    // —— 工具栏 ——
+    case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarTheme
+    // —— 窗口/系统 ——
+    case showNextPrevTab
     // —— 命令回显（AppKit 层 InternalCommandExecutor）——
     case entered, cannotEnterNotDirectory
     // —— 状态栏前缀 ——

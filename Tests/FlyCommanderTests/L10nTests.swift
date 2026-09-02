@@ -24,6 +24,24 @@ final class L10nTests: XCTestCase {
         // testFallbackProbe 只在 en 表：zh 下必须落英文表值，而非 zh 缺失导致的 key.rawValue
         XCTAssertEqual(L10n.t(.testFallbackProbe), "__PROBE_EN__")
     }
+    func testMenuToolbarKeysEnglish() {
+        XCTAssertEqual(L10n.t(.newDirectory), "New Directory")
+        XCTAssertEqual(L10n.t(.menuFile), "File")
+        XCTAssertEqual(L10n.t(.rename), "Rename")
+        XCTAssertEqual(L10n.t(.sftpConnect), "SFTP Connect…")
+        XCTAssertEqual(L10n.t(.toolbarCopy), "Copy")
+        XCTAssertEqual(L10n.t(.preview), "Preview")
+        XCTAssertEqual(L10n.t(.editItem), "Edit")
+        XCTAssertEqual(L10n.t(.menuEdit), "Edit")
+    }
+    func testMenuToolbarKeysChinese() {
+        L10n.current = .zh
+        XCTAssertEqual(L10n.t(.newDirectory), "新建目录")
+        XCTAssertEqual(L10n.t(.menuFile), "文件")
+        XCTAssertEqual(L10n.t(.moveToTrash), "移到废纸篓")
+        XCTAssertEqual(L10n.t(.themeEllipsis), "主题…")
+        XCTAssertEqual(L10n.t(.showNextPrevTab), "显示下一/上一个窗口标签页")
+    }
     func testOnChangeFiresOnSwitch() {
         var fired = 0
         let token = L10n.observe { fired += 1 }
