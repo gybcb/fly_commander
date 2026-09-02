@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = wc
         if let vc = wc.window?.contentViewController as? MainViewController {
             NSApp.mainMenu = MainMenu.build(target: vc)
+            vc.attachMainWindowController(wc)   // 语言切换时回刷工具栏 label（VC 侧 weak）
         }
         wc.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

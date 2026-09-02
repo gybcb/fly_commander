@@ -1,4 +1,5 @@
 import AppKit
+import TCCore
 
 extension NSToolbarItem.Identifier {
     static let copy = NSToolbarItem.Identifier("copy")
@@ -61,6 +62,32 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         toolbar.allowsUserCustomization = false
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
+    }
+
+    /// identifier → 文案键。工具栏项 label/toolTip 在 delegate 建 item 时一次性冻结，
+    /// 切语言后须据此重刷。唯一不带此 label 的 .selectionStatus（状态文本 view，label 恒空）
+    /// 故意不入映射 → 重刷时自然跳过。纯函数，供单测断言各语言映射。
+    static let toolbarLabelKeys: [NSToolbarItem.Identifier: L10nKey] = [
+        .copy: .toolbarCopy, .move: .toolbarMove, .makeDirectory: .newDirectory,
+        .delete: .toolbarDelete, .rename: .rename, .search: .find,
+        .connect: .toolbarConnect, .theme: .toolbarTheme,
+    ]
+
+    /// 纯函数：给定语言下各工具栏项的 label（走 L10n 表兜底：本语言缺→en 缺→rawValue）。
+    static func toolbarLabels(lang: Language) -> [NSToolbarItem.Identifier: String] {
+        let table = lang == .en ? L10nTable.en : L10nTable.zh
+        return toolbarLabelKeys.mapValues { table[$0] ?? L10nTable.en[$0] ?? $0.rawValue }
+    }
+
+    /// 语言切换后重刷工具栏 label/toolTip：按稳定 identifier 找回项、查当前语言表重设。
+    /// .selectionStatus（无映射）跳过，保持其空 label 语义。
+    func refreshLocalizedLabels() {
+        let labels = MainWindowController.toolbarLabels(lang: L10n.current)
+        for item in window?.toolbar?.items ?? [] {
+            guard let label = labels[item.itemIdentifier] else { continue }
+            item.label = label
+            item.toolTip = label
+        }
     }
 
     private func item(id: NSToolbarItem.Identifier, label: String, symbol: String,

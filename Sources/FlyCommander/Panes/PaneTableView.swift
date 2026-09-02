@@ -112,7 +112,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     /// 语言切换后重刷列头标题：按**稳定 identifier** 找回列（与显示标题解耦），
     /// 重设 .title 后请求表头重绘。列宽/顺序/autosave 全不受影响。
-    func retitileColumns() {
+    func retitleColumns() {
         for col in tableView.tableColumns {
             switch col.identifier.rawValue {
             case Self.nameColumnID: col.title = L10n.t(.colName)

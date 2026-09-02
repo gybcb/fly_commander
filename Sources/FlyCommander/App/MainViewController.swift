@@ -19,6 +19,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private let engine = OperationEngine()
     /// L10n 观察者 token（单例生命周期，永久保留；切换时重刷常驻 UI）。
     private var l10nToken: Int?
+    /// 主窗控制器弱引用（语言切换时重刷工具栏 label；强引用会成循环——window 持 contentVC）。
+    private weak var mainWindowController: MainWindowController?
+
+    /// AppDelegate 建窗后注入回链。
+    func attachMainWindowController(_ wc: MainWindowController) { mainWindowController = wc }
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -178,9 +183,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// 未在此重绘（见 task-7 报告后续项）。
     private func rebuildForLanguage() {
         NSApp.mainMenu = MainMenu.build(target: self)
-        leftContainer.allPaneViews.forEach { $0.retitileColumns() }
-        rightContainer.allPaneViews.forEach { $0.retitileColumns() }
+        leftContainer.allPaneViews.forEach { $0.retitleColumns() }
+        rightContainer.allPaneViews.forEach { $0.retitleColumns() }
         commandBar!.refreshLocalizedText()
+        mainWindowController?.refreshLocalizedLabels()
         updateBars()
     }
 

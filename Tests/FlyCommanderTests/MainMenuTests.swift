@@ -53,4 +53,17 @@ final class MainMenuTests: XCTestCase {
         XCTAssertEqual(en?.state, .on)
         XCTAssertEqual(zh?.state, .off)
     }
+
+    func testLanguageSubmenuChecksCurrentLanguageChinese() {
+        L10n.current = .zh
+        let main = MainMenu.build(target: NSObject())
+        let lang = submenu(in: main, titled: L10n.t(.menuView))!
+            .items.first { $0.submenu?.title == L10n.t(.menuLanguage) }?.submenu
+        XCTAssertEqual(lang?.items.count, 2)
+        // zh 当前：中文项应勾选，English 不应勾选。
+        let en = lang?.items.first { $0.title == L10n.t(.langEnglishName) }
+        let zh = lang?.items.first { $0.title == "简体中文" }
+        XCTAssertEqual(zh?.state, .on)
+        XCTAssertEqual(en?.state, .off)
+    }
 }
