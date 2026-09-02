@@ -12,7 +12,7 @@ final class PreviewViewController: NSViewController {
     /// 单行 → 78645pt document view，且曾导致预览区空白）→ 超长行截到此值。
     static let textLineLimit = 32 * 1024
     /// 长行截断处的可见标记（UI 测试按此文案断言）。
-    static let longLineMarker = " …（行已截断）"
+    static let longLineMarker = L10n.t(.lineTruncatedMark)
     /// 这些扩展名**跳过二进制嗅探**直接按文本预览：.torrent 是 bencode 文本 +
     /// piece 哈希二进制块，哈希里的 NUL/控制字节能占到前 8KB 的 50%（多 piece 时），
     /// 任何"NUL/密度"嗅探都会误判（用户实测小 .torrent 无法预览）；哈希字节按
@@ -161,17 +161,17 @@ final class PreviewViewController: NSViewController {
     /// 横幅必须有确定性高度——label 若只 centerY 钉住，横幅高度歧义，
     /// Auto Layout 会把 scroll 压到 0 高（probe 复现：文字区消失、无滚动条）。
     private func makeTruncationBanner(totalBytes: Int64, longLineTruncated: Bool) -> NSView {
-        var message = "仅显示前 \(ByteCountFormatter().string(fromByteCount: Int64(Self.textPreviewLimit)))"
-            + "（文件共 \(ByteCountFormatter().string(fromByteCount: totalBytes))）"
+        var message = L10n.t(.previewTruncBanner, ByteCountFormatter().string(fromByteCount: Int64(Self.textPreviewLimit)))
+            + L10n.t(.previewOfFileTotal, ByteCountFormatter().string(fromByteCount: totalBytes))
         if longLineTruncated {
-            message += "，超 \(ByteCountFormatter().string(fromByteCount: Int64(Self.textLineLimit))) 的长行已截断"
+            message += L10n.t(.previewLongLineTrunc, ByteCountFormatter().string(fromByteCount: Int64(Self.textLineLimit)))
         }
         let label = NSTextField(labelWithString: message)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        let button = NSButton(title: "用默认应用打开", target: nil, action: nil)
+        let button = NSButton(title: L10n.t(.openWithDefault), target: nil, action: nil)
         button.bezelStyle = .rounded
         button.controlSize = .small
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -211,7 +211,7 @@ final class PreviewViewController: NSViewController {
                 imageView.heightAnchor.constraint(lessThanOrEqualTo: container.heightAnchor, constant: -24),
             ])
         } else {
-            let label = NSTextField(labelWithString: "无法读取图片：\(url.lastPathComponent)")
+            let label = NSTextField(labelWithString: L10n.t(.cannotReadImage, url.lastPathComponent))
             label.textColor = .secondaryLabelColor
             label.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(label)
@@ -228,7 +228,7 @@ final class PreviewViewController: NSViewController {
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
 
-        let title = NSTextField(labelWithString: "无法预览此文件")
+        let title = NSTextField(labelWithString: L10n.t(.cannotPreview))
         title.font = .systemFont(ofSize: 14, weight: .medium)
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -238,7 +238,7 @@ final class PreviewViewController: NSViewController {
         pathLabel.isSelectable = true
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let button = NSButton(title: "用默认应用打开", target: nil, action: nil)
+        let button = NSButton(title: L10n.t(.openWithDefault), target: nil, action: nil)
         button.bezelStyle = .rounded
         button.keyEquivalent = "\r"
         button.translatesAutoresizingMaskIntoConstraints = false

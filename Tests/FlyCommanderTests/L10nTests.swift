@@ -82,6 +82,52 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.cannotOpenFile), "无法打开文件")
         XCTAssertEqual(L10n.t(.statusErrorPrefix), "错误：")
     }
+    func testSearchPreviewKeysEnglish() {
+        XCTAssertEqual(L10n.t(.searchSummary, "2", "5"), "2 results, checked 5 items")
+        XCTAssertEqual(L10n.t(.startSearch), "Search")
+        XCTAssertEqual(L10n.t(.searchRootLabel, "/tmp"), "Search in /tmp")
+        XCTAssertEqual(L10n.t(.searching), "Searching…")
+        XCTAssertEqual(L10n.t(.searchingChecked, "10"), "Searching… checked 10 items")
+        XCTAssertEqual(L10n.t(.searchStopped, "3"), "Stopped (3 results)")
+        XCTAssertEqual(L10n.t(.searchNone, "7"), "No matches (checked 7 items)")
+        XCTAssertEqual(L10n.t(.stopping), "Stopping…")
+        XCTAssertEqual(L10n.t(.stop), "Stop")
+        XCTAssertEqual(L10n.t(.newSearch), "New Search")
+        XCTAssertEqual(L10n.t(.colFile), "File")
+        XCTAssertEqual(L10n.t(.openWithDefault), "Open with Default App")
+        XCTAssertEqual(L10n.t(.previewTruncBanner, "512 KB"), "Showing only first 512 KB")
+        XCTAssertEqual(L10n.t(.previewOfFileTotal, "1.5 MB"), " (file total 1.5 MB)")
+        XCTAssertEqual(L10n.t(.previewLongLineTrunc, "32 KB"), ", lines over 32 KB truncated")
+        XCTAssertEqual(L10n.t(.lineTruncatedMark), " …(line truncated)")
+        XCTAssertEqual(L10n.t(.cannotReadImage, "a.png"), "Cannot read image: a.png")
+        XCTAssertEqual(L10n.t(.cannotPreview), "Cannot preview this file")
+        XCTAssertEqual(L10n.t(.previewWindowTitlePlain), "FlyCommander Preview")
+        XCTAssertEqual(L10n.t(.previewWindowTitle, "x.txt"), "FlyCommander Preview — x.txt")
+    }
+    func testSearchPreviewKeysChinese() {
+        L10n.current = .zh
+        XCTAssertEqual(L10n.t(.searchSummary, "2", "5"), "共 2 个结果，已检查 5 项")
+        XCTAssertEqual(L10n.t(.startSearch), "开始搜索")
+        XCTAssertEqual(L10n.t(.searchRootLabel, "/tmp"), "在 /tmp 中搜索")
+        XCTAssertEqual(L10n.t(.searchHint), "支持通配符 * 与 ?，递归搜索当前目录（跳过隐藏文件）")
+        XCTAssertEqual(L10n.t(.searching), "搜索中…")
+        XCTAssertEqual(L10n.t(.searchingChecked, "10"), "搜索中… 已检查 10 项")
+        XCTAssertEqual(L10n.t(.searchStopped, "3"), "已停止（3 个结果）")
+        XCTAssertEqual(L10n.t(.searchNone, "7"), "未找到匹配项（已检查 7 项）")
+        XCTAssertEqual(L10n.t(.stopping), "正在停止…")
+        XCTAssertEqual(L10n.t(.stop), "停止")
+        XCTAssertEqual(L10n.t(.newSearch), "新搜索")
+        XCTAssertEqual(L10n.t(.colFile), "文件")
+        XCTAssertEqual(L10n.t(.openWithDefault), "用默认应用打开")
+        XCTAssertEqual(L10n.t(.previewTruncBanner, "512 KB"), "仅显示前 512 KB")
+        XCTAssertEqual(L10n.t(.previewOfFileTotal, "1.5 MB"), "（文件共 1.5 MB）")
+        XCTAssertEqual(L10n.t(.previewLongLineTrunc, "32 KB"), "，超 32 KB 的长行已截断")
+        XCTAssertEqual(L10n.t(.lineTruncatedMark), " …（行已截断）")
+        XCTAssertEqual(L10n.t(.cannotReadImage, "a.png"), "无法读取图片：a.png")
+        XCTAssertEqual(L10n.t(.cannotPreview), "无法预览此文件")
+        XCTAssertEqual(L10n.t(.previewWindowTitlePlain), "FlyCommander 查看")
+        XCTAssertEqual(L10n.t(.previewWindowTitle, "x.txt"), "FlyCommander 查看 — x.txt")
+    }
     func testOnChangeFiresOnSwitch() {
         var fired = 0
         let token = L10n.observe { fired += 1 }

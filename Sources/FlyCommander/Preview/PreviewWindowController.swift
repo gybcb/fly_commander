@@ -17,7 +17,7 @@ final class PreviewWindowController: NSWindowController {
             backing: .buffered,
             defer: false)
         window.contentMinSize = NSSize(width: 360, height: 240)
-        window.title = "FlyCommander 查看"
+        window.title = L10n.t(.previewWindowTitlePlain)
         window.contentViewController = PreviewViewController()
         super.init(window: window)
     }
@@ -25,7 +25,7 @@ final class PreviewWindowController: NSWindowController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private func present(item: FileItem) {
-        window?.title = "FlyCommander 查看 — \(item.name)"
+        window?.title = L10n.t(.previewWindowTitle, item.name)
         (window?.contentViewController as? PreviewViewController)?.show(item: item)
         if !hasBeenShown {
             hasBeenShown = true

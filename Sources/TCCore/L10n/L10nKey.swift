@@ -26,6 +26,14 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case selectedCount, cannotOpenFile
     case colName, colSize, colDate
     case closeTabTip, newTabTip
+    // —— 搜索窗（SearchViewController）——
+    case searchRootLabel, searchHint, startSearch, stop, newSearch
+    case searching, searchingChecked, searchStopped, searchSummary, searchNone, stopping
+    case colFile
+    // —— 预览窗（PreviewViewController / PreviewWindowController）——
+    case openWithDefault, previewTruncBanner, previewOfFileTotal, previewLongLineTrunc
+    case lineTruncatedMark, cannotReadImage, cannotPreview
+    case previewWindowTitle, previewWindowTitlePlain
     // —— 仅供 fallback 回归测试，故意只进 en 表 ——
     case testFallbackProbe
     // …（各任务按 key 清单增补本 enum）

@@ -42,16 +42,16 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
     private let formContainer = NSView()
     private let rootLabel = NSTextField(labelWithString: "")
     private let patternField = NSTextField(frame: .zero)
-    private let hintLabel = NSTextField(labelWithString: "支持通配符 * 与 ?，递归搜索当前目录（跳过隐藏文件）")
-    private let startButton = NSButton(title: "开始搜索", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    private let hintLabel = NSTextField(labelWithString: L10n.t(.searchHint))
+    private let startButton = NSButton(title: L10n.t(.startSearch), target: nil, action: nil)
+    private let cancelButton = NSButton(title: L10n.t(.cancel), target: nil, action: nil)
 
     // MARK: - Result segment
 
     private let resultContainer = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let stopButton = NSButton(title: "停止", target: nil, action: nil)
-    private let newSearchButton = NSButton(title: "新搜索", target: nil, action: nil)
+    private let stopButton = NSButton(title: L10n.t(.stop), target: nil, action: nil)
+    private let newSearchButton = NSButton(title: L10n.t(.newSearch), target: nil, action: nil)
     private let table = HitTableView()
 
     override func loadView() {
@@ -116,7 +116,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
 
     private func buildResult() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("hit"))
-        column.title = "文件"
+        column.title = L10n.t(.colFile)
         column.width = 460
         table.addTableColumn(column)
         table.headerView = nil
@@ -162,7 +162,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         self.onSelect = onSelect
         hits = []
         isSearching = false
-        rootLabel.stringValue = "在 \(root.displayString()) 中搜索"
+        rootLabel.stringValue = L10n.t(.searchRootLabel, root.displayString())
         patternField.stringValue = "*"
         statusLabel.stringValue = ""
         stopButton.isHidden = true
@@ -184,7 +184,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         lock.lock(); cancelled = false; lock.unlock()
         formContainer.isHidden = true
         resultContainer.isHidden = false
-        statusLabel.stringValue = "搜索中…"
+        statusLabel.stringValue = L10n.t(.searching)
         stopButton.isHidden = false
         newSearchButton.isHidden = true
         table.reloadData()
@@ -209,7 +209,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
                     lastFlush = now
                     DispatchQueue.main.async {
                         guard self.isSearching else { return }
-                        self.statusLabel.stringValue = "搜索中… 已检查 \(n) 项"
+                        self.statusLabel.stringValue = L10n.t(.searchingChecked, "\(n)")
                         self.onOperation?(.running(label: "搜索", progress: 0))
                     }
                 },
@@ -227,14 +227,14 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
                 self.newSearchButton.isHidden = false
                 self.lock.lock(); let wasCancelled = self.cancelled; self.lock.unlock()
                 if wasCancelled {
-                    self.statusLabel.stringValue = "已停止（\(found.count) 个结果）"
+                    self.statusLabel.stringValue = L10n.t(.searchStopped, "\(found.count)")
                     self.onOperation?(.idle)
                 } else {
-                    self.statusLabel.stringValue = "共 \(found.count) 个结果，已检查 \(visited) 项"
+                    self.statusLabel.stringValue = L10n.t(.searchSummary, "\(found.count)", "\(visited)")
                     self.onOperation?(.done("搜索完成，\(found.count) 个结果"))
                 }
                 if found.isEmpty && !wasCancelled {
-                    self.statusLabel.stringValue = "未找到匹配项（已检查 \(visited) 项）"
+                    self.statusLabel.stringValue = L10n.t(.searchNone, "\(visited)")
                 }
             }
         }
@@ -246,7 +246,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
 
     @objc private func stopTapped() {
         lock.lock(); cancelled = true; lock.unlock()
-        statusLabel.stringValue = "正在停止…"
+        statusLabel.stringValue = L10n.t(.stopping)
     }
 
     @objc private func newSearchTapped() {
