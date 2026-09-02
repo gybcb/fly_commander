@@ -181,7 +181,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// 重设两窗格列头标题，刷新命令栏常驻文案与状态栏。对话框/告警在调用时现取
     /// t()，本就随语言更新，无需在此重绘。Theme/Connection/SMB/Search 四个常驻窗口
     /// 缓存其 VC、标签在 loadView 冻结，故各经其 WindowController 就地重刷（含窗口标题）；
-    /// 刷新只重写文本、绝不 showWindow，未显示过的窗口不会被弹出。
+    /// 预览窗（第五个常驻单例，首次预览才建）经 PreviewWindowController 的可选单例短路——
+    /// 从未预览过时 _shared 为 nil，重刷不建窗、绝不 showWindow（未显示的窗口不被弹出）。
     private func rebuildForLanguage() {
         NSApp.mainMenu = MainMenu.build(target: self)
         leftContainer.allPaneViews.forEach { $0.retitleColumns() }
@@ -192,6 +193,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         connectionWindow.refreshLocalizedText()
         smbConnectionWindow.refreshLocalizedText()
         themeWindow.refreshLocalizedText()
+        PreviewWindowController.refreshLocalizedTextIfCreated()
         updateBars()
     }
 

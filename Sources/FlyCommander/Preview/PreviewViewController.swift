@@ -32,6 +32,24 @@ final class PreviewViewController: NSViewController {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 520))
     }
 
+    /// 语言切换重刷绑定：闭包捕获控件 + key，刷新时按当前语言重算 t() 回写。
+    /// 每次 show(item:) 会丢弃旧内容重建 → show 开头清空绑定，只绑本轮真正静态的控件。
+    private var localizedBindings: [() -> Void] = []
+    private func bind(_ field: NSTextField, _ key: L10nKey) {
+        localizedBindings.append { field.stringValue = L10n.t(key) }
+    }
+    private func bind(_ button: NSButton, _ key: L10nKey) {
+        localizedBindings.append { button.title = L10n.t(key) }
+    }
+
+    /// 语言变更后重刷当前已显示内容里的静态控件（"用默认应用打开"按钮、降级标题等）。
+    /// 动态串（含文件名的横幅文案/路径/图片失败提示、窗口标题）随下次 show 现取，不绑。
+    /// 视图未加载（单例从未预览过任何文件）时绑定表为空 → 无操作，不强开窗口。
+    func refreshLocalizedText() {
+        localizedBindings.forEach { $0() }
+    }
+
+
     /// Esc 关闭预览窗（NSWindow 把 cancelOperation 派发到响应链；
     /// 焦点在文本区/横幅按钮上时同样能关）。
     override func cancelOperation(_ sender: Any?) {
@@ -39,6 +57,7 @@ final class PreviewViewController: NSViewController {
     }
 
     func show(item: FileItem) {
+        localizedBindings.removeAll()   // 旧内容即将丢弃，绑定随之作废
         let url = item.path.url
         let content: NSView
         if Self.imageExtensions.contains(url.pathExtension.lowercased()) {
@@ -178,6 +197,7 @@ final class PreviewViewController: NSViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.target = self
         button.action = #selector(openWithDefaultApplication)
+        bind(button, .openWithDefault)   // 静态按钮标题；横幅文案含字节数（动态）随下次 show 现取，不绑
 
         let banner = NSView()
         banner.addSubview(label)
@@ -232,6 +252,7 @@ final class PreviewViewController: NSViewController {
         let title = NSTextField(labelWithString: L10n.t(.cannotPreview))
         title.font = .systemFont(ofSize: 14, weight: .medium)
         title.translatesAutoresizingMaskIntoConstraints = false
+        bind(title, .cannotPreview)   // 静态降级标题；下方 pathLabel 含文件路径（动态）不绑
 
         let pathLabel = NSTextField(labelWithString: item.path.displayString())
         pathLabel.font = .systemFont(ofSize: 12)
@@ -245,6 +266,7 @@ final class PreviewViewController: NSViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.target = self
         button.action = #selector(openWithDefaultApplication)
+        bind(button, .openWithDefault)
         fallbackURL = item.path.url
 
         let stack = NSStackView(views: [title, pathLabel, button])
