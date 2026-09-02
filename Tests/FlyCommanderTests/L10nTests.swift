@@ -60,7 +60,6 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.skipAll), "Skip All")
         XCTAssertEqual(L10n.t(.trashConfirm, "5"), "Move 5 item(s) to Trash?")
         XCTAssertEqual(L10n.t(.deleteWord), "Delete")
-        XCTAssertEqual(L10n.t(.unrecoverable), "Cannot be undone")
         XCTAssertEqual(L10n.t(.remoteDeleteConfirm, "2"), "Delete 2 item(s) from the server?")
         XCTAssertEqual(L10n.t(.remoteNoTrash), "Remote has no Trash; deletion is permanent.")
         XCTAssertEqual(L10n.t(.cannotOpenFile), "Cannot open file")

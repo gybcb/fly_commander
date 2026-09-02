@@ -357,7 +357,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             }
         } else {
             if !NSWorkspace.shared.open(url) {
-                setStatus("无法打开文件")
+                setStatus(L10n.t(.cannotOpenFile))
             }
         }
     }

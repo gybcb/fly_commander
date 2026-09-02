@@ -22,7 +22,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     // —— 主窗对话框 / 列头 / 标签辅助串 ——
     case renameTitle, newDirTitle, okBtn, createBtn, cancelBtn
     case conflictTitle, conflictQuestion, overwrite, skip, overwriteAll, skipAll
-    case trashConfirm, deleteWord, unrecoverable, remoteDeleteConfirm, remoteNoTrash
+    case trashConfirm, deleteWord, remoteDeleteConfirm, remoteNoTrash
     case selectedCount, cannotOpenFile
     case colName, colSize, colDate
     case closeTabTip, newTabTip
