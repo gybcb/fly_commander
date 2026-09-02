@@ -10,5 +10,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case entered, cannotEnterNotDirectory
     // —— 状态栏前缀 ——
     case statusErrorPrefix
+    // —— 仅供 fallback 回归测试，故意只进 en 表 ——
+    case testFallbackProbe
     // …（各任务按 key 清单增补本 enum）
 }

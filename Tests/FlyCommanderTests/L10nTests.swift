@@ -20,9 +20,9 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.entered, "/tmp"), "Entered /tmp")
     }
     func testMissingKeyFallsBackEnglishNotRawKey() {
-        // 选一个只在 en 表有的 key，切到 zh 也应能解析（若 zh 缺则落 en）
         L10n.current = .zh
-        XCTAssertTrue(L10n.t(.menuFile).count > 0)
+        // testFallbackProbe 只在 en 表：zh 下必须落英文表值，而非 zh 缺失导致的 key.rawValue
+        XCTAssertEqual(L10n.t(.testFallbackProbe), "__PROBE_EN__")
     }
     func testOnChangeFiresOnSwitch() {
         var fired = 0

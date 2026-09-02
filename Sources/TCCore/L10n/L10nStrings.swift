@@ -7,6 +7,7 @@ public enum L10nTable {
         .entered: "Entered {0}", .cannotEnterNotDirectory: "Cannot enter: {0} (missing or not a directory)",
         .statusErrorPrefix: "Error: ",
         .menuFile: "File",
+        .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
         .ok: "确定", .cancel: "取消", .create: "创建", .close: "关闭",
