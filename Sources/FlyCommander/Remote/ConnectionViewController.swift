@@ -44,7 +44,7 @@ final class ConnectionViewController: NSViewController {
         passwordRow = labeled(L10n.t(.fieldPassword), passwordField)
         keyPathRow = row(L10n.t(.fieldKey), keyPathField)
         keyPathRow.addArrangedSubview(browseButton)
-        passphraseRow = labeled("passphrase", passphraseField)
+        passphraseRow = labeled(L10n.t(.fieldPassphrase), passphraseField)
         passwordRow.isHidden = false
         keyPathRow.isHidden = true
         passphraseRow.isHidden = true

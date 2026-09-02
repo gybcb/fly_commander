@@ -2,7 +2,7 @@ import Foundation
 /// 中英两表的内存文案表。跨模块（FlyCommander 层）读取，故 public。
 public enum L10nTable {
     public static let en: [L10nKey: String] = [
-        .ok: "OK", .cancel: "Cancel", .create: "Create", .close: "Close",
+        .cancel: "Cancel",
         .browse: "Browse…", .connect: "Connect",
         .entered: "Entered {0}", .cannotEnterNotDirectory: "Cannot enter: {0} (missing or not a directory)",
         .statusErrorPrefix: "Error: ",
@@ -18,7 +18,6 @@ public enum L10nTable {
         .menuLanguage: "Language",
         .toolbarCopy: "Copy", .toolbarMove: "Move", .toolbarDelete: "Delete",
         .toolbarConnect: "Connect", .toolbarTheme: "Theme",
-        .showNextPrevTab: "Show Next/Previous Window Tab",
         .themeWindowTitle: "Theme", .sftpWindowTitle: "SFTP Connection",
         .smbWindowTitle: "SMB Connection", .searchWindowTitle: "Find Files",
         .renameTitle: "Rename", .newDirTitle: "New Folder", .okBtn: "OK",
@@ -53,6 +52,7 @@ public enum L10nTable {
         .commandBarPrompt: "Command:",
         .commandBarPlaceholder: "Enter command (ls / cd / mkdir / copy / move / del / sftp / help)",
         .fieldPassword: "Password", .fieldKeyFile: "Key File", .rememberPassword: "Remember Password",
+        .fieldPassphrase: "Passphrase",
         .fieldHost: "Host", .fieldPort: "Port", .fieldUser: "User", .fieldKey: "Key", .chooseWord: "Choose",
         .fillHost: "Please enter host", .invalidPort: "Invalid port", .chooseKeyFile: "Please choose a key file",
         .connecting: "Connecting…",
@@ -107,7 +107,7 @@ public enum L10nTable {
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
-        .ok: "确定", .cancel: "取消", .create: "创建", .close: "关闭",
+        .cancel: "取消",
         .browse: "浏览…", .connect: "连接",
         .entered: "已进入 {0}", .cannotEnterNotDirectory: "无法进入：{0}（不存在或不是目录）",
         .statusErrorPrefix: "错误：",
@@ -123,7 +123,6 @@ public enum L10nTable {
         .menuLanguage: "语言",
         .toolbarCopy: "复制", .toolbarMove: "移动", .toolbarDelete: "删除",
         .toolbarConnect: "连接", .toolbarTheme: "主题",
-        .showNextPrevTab: "显示下一/上一个窗口标签页",
         .themeWindowTitle: "主题", .sftpWindowTitle: "SFTP 连接",
         .smbWindowTitle: "SMB 连接", .searchWindowTitle: "搜索文件",
         .renameTitle: "重命名", .newDirTitle: "新建目录", .okBtn: "确定",
@@ -158,6 +157,7 @@ public enum L10nTable {
         .commandBarPrompt: "命令:",
         .commandBarPlaceholder: "输入命令（ls / cd / mkdir / copy / move / del / sftp / help）",
         .fieldPassword: "密码", .fieldKeyFile: "密钥文件", .rememberPassword: "记住密码",
+        .fieldPassphrase: "密码短语",
         .fieldHost: "主机", .fieldPort: "端口", .fieldUser: "用户", .fieldKey: "密钥", .chooseWord: "选择",
         .fillHost: "请填写主机", .invalidPort: "端口无效", .chooseKeyFile: "请选择密钥文件",
         .connecting: "连接中…",

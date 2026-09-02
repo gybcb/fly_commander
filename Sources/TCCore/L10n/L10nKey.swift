@@ -3,7 +3,7 @@ import Foundation
 /// 新增串=加 case + 在 en/zh 两表各补一行。内核零文案，仅枚举。
 public enum L10nKey: String, Hashable, CaseIterable {
     // —— 通用/对话框按钮 ——
-    case ok, cancel, create, `default`, close, browse, connect, forget
+    case cancel, browse, connect
     // —— 菜单 ——
     case menuFile
     case aboutApp, hideApp, quitApp
@@ -14,8 +14,6 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case menuLanguage
     // —— 工具栏 ——
     case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarTheme
-    // —— 窗口/系统 ——
-    case showNextPrevTab
     // —— 窗口标题（各 WindowController）——
     case themeWindowTitle, sftpWindowTitle, smbWindowTitle, searchWindowTitle
     // —— 命令回显（AppKit 层 InternalCommandExecutor）——
@@ -43,7 +41,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     // —— 命令栏（CommandLineBar）——
     case commandBarPrompt, commandBarPlaceholder
     // —— SFTP/SMB 连接窗（ConnectionViewController / SMBConnectionViewController）——
-    case fieldPassword, fieldKeyFile, rememberPassword
+    case fieldPassword, fieldKeyFile, rememberPassword, fieldPassphrase
     case fieldHost, fieldPort, fieldUser, fieldKey, chooseWord
     case fillHost, invalidPort, chooseKeyFile, connecting
     case fieldServer, fieldShare, fieldDomain, fillServerShare

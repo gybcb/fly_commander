@@ -40,7 +40,6 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.menuFile), "文件")
         XCTAssertEqual(L10n.t(.moveToTrash), "移到废纸篓")
         XCTAssertEqual(L10n.t(.themeEllipsis), "主题…")
-        XCTAssertEqual(L10n.t(.showNextPrevTab), "显示下一/上一个窗口标签页")
     }
     func testDialogColumnKeysEnglish() {
         XCTAssertEqual(L10n.t(.conflictQuestion, "x"), "“x” already exists. How to handle?")
@@ -140,6 +139,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.restoreDefaults), "Restore Defaults")
         XCTAssertEqual(L10n.t(.commandBarPlaceholder), "Enter command (ls / cd / mkdir / copy / move / del / sftp / help)")
         XCTAssertEqual(L10n.t(.fieldPassword), "Password")
+        XCTAssertEqual(L10n.t(.fieldPassphrase), "Passphrase")
         XCTAssertEqual(L10n.t(.fieldKeyFile), "Key File")
         XCTAssertEqual(L10n.t(.rememberPassword), "Remember Password")
         XCTAssertEqual(L10n.t(.fieldHost), "Host")
@@ -170,6 +170,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.restoreDefaults), "恢复默认")
         XCTAssertEqual(L10n.t(.commandBarPlaceholder), "输入命令（ls / cd / mkdir / copy / move / del / sftp / help）")
         XCTAssertEqual(L10n.t(.fieldPassword), "密码")
+        XCTAssertEqual(L10n.t(.fieldPassphrase), "密码短语")
         XCTAssertEqual(L10n.t(.fieldKeyFile), "密钥文件")
         XCTAssertEqual(L10n.t(.rememberPassword), "记住密码")
         XCTAssertEqual(L10n.t(.fieldHost), "主机")
@@ -207,5 +208,21 @@ final class L10nTests: XCTestCase {
         L10n.current = .en
         L10n.unobserve(token)
         XCTAssertEqual(fired, 2)
+    }
+
+    /// 覆盖性守卫：每个 L10nKey 都必须在 en 表有值；除故意只进 en 表的
+    /// testFallbackProbe（专测 zh→en 兜底，见上）外，都必须在 zh 表也有值。
+    /// 防的是"加了 enum case 却漏补表文案"这类静默 bug（t() 会退回 rawValue）。
+    func testEveryKeyTabledInEnglishAndChinese() {
+        let enOnly: Set<L10nKey> = [.testFallbackProbe]
+        for key in L10nKey.allCases {
+            XCTAssertNotNil(L10nTable.en[key], "en 表缺少 key：\(key.rawValue)")
+            if !enOnly.contains(key) {
+                XCTAssertNotNil(L10nTable.zh[key], "zh 表缺少 key：\(key.rawValue)")
+            }
+        }
+        // 反向：表里不得有 allCases 之外的野键（枚举与表结构必须一致）。
+        for key in L10nTable.en.keys { XCTAssertTrue(L10nKey.allCases.contains(key), "en 表有未定义 key：\(key.rawValue)") }
+        for key in L10nTable.zh.keys { XCTAssertTrue(L10nKey.allCases.contains(key), "zh 表有未定义 key：\(key.rawValue)") }
     }
 }

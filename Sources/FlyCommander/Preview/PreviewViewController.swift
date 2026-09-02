@@ -11,8 +11,9 @@ final class PreviewViewController: NSViewController {
     /// 单行上限：TextKit 的排版量/文档高度随单行字符数走（probe 实测 524K 字符
     /// 单行 → 78645pt document view，且曾导致预览区空白）→ 超长行截到此值。
     static let textLineLimit = 32 * 1024
-    /// 长行截断处的可见标记（UI 测试按此文案断言）。
-    static let longLineMarker = L10n.t(.lineTruncatedMark)
+    /// 长行截断处的可见标记（UI 测试按此文案断言）。计算属性：若用 static let 会在首次
+    /// 访问时把文案冻结进进程生命周期，语言切换后截断标记仍停在启动语言。
+    static var longLineMarker: String { L10n.t(.lineTruncatedMark) }
     /// 这些扩展名**跳过二进制嗅探**直接按文本预览：.torrent 是 bencode 文本 +
     /// piece 哈希二进制块，哈希里的 NUL/控制字节能占到前 8KB 的 50%（多 piece 时），
     /// 任何"NUL/密度"嗅探都会误判（用户实测小 .torrent 无法预览）；哈希字节按
