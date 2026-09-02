@@ -113,6 +113,15 @@ final class CommandLineParserTests: XCTestCase {
         XCTAssertEqual(c.args, ["sftp://10.0.0.1:2222/home/bob"])
     }
 
+    func testLangCommandParses() throws {
+        let en = try CommandLineParser.parse("lang en")
+        XCTAssertEqual(en.name, "lang")
+        XCTAssertEqual(en.args, ["en"])
+        let bare = try CommandLineParser.parse("lang")
+        XCTAssertEqual(bare.name, "lang")
+        XCTAssertEqual(bare.args, [])
+    }
+
     // MARK: - encodeToken（cd 补全把文件名写回命令栏，须 round-trip 成单个 token）
 
     func testEncodePlainUnchanged() {

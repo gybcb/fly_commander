@@ -47,5 +47,19 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case connectFailedPrefix
     // —— 仅供 fallback 回归测试，故意只进 en 表 ——
     case testFallbackProbe
+    // —— 命令栏回显（InternalCommandExecutor，T6）——
+    case syntaxError, copyInitiated, moveInitiated, themeOpened, unknownCommand
+    case remoteSftpOnly, localCannotCdSftp, readFailed, lsSummary
+    case mkdirUsage, mkdirDone, mkdirFailed
+    case nothingToTransfer, notFoundItems, nothingToDelete, deleteInitiated
+    case noFocusedItem, dirNotPreviewable, remoteNoPreview, dirNotEditable, remoteNoEdit
+    case sftpUsage, sftpOpenedHost, sftpOpened
+    case smbUsage, smbOpenedServer, smbOpened
+    case tabCreated, tabClosed, tabCannotCloseLast, tabUsage
+    case langUsageCurrent, langSet, langUnknown, langEnglishName, langChineseName
+    // —— 命令栏帮助（helpText 拆条）——
+    case helpHeader, helpCd, helpLs, helpMkdir, helpCopy, helpMove, helpDel
+    case helpView, helpEdit, helpSftp, helpSmb, helpTabNew, helpTabClose
+    case helpTheme, helpHelp, helpLang
     // …（各任务按 key 清单增补本 enum）
 }

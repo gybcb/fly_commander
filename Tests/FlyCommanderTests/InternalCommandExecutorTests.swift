@@ -96,6 +96,11 @@ private final class Harness {
 }
 
 final class InternalCommandExecutorTests: XCTestCase {
+    // L10n.current 是进程级静态；本文件默认英文断言，故 setUp/tearDown 复位为 .en，
+    // 防 lang 测试切到 zh 后泄漏到其它断言。
+    override func setUp() { super.setUp(); L10n.current = .en }
+    override func tearDown() { L10n.current = .en; super.tearDown() }
+
     // MARK: - ls / help
 
     func testLsEchoesItemCount() {
@@ -103,23 +108,52 @@ final class InternalCommandExecutorTests: XCTestCase {
                         remote: StubSource(id: "sftp://h:2222", remote: true), activeRemote: false)
         h.seedLocal(["a.txt", "b.txt"])
         let out = h.executor.execute(line: "ls")
-        XCTAssertEqual(out, "/L：2 个条目")
+        XCTAssertEqual(out, "/L: 2 items")
     }
 
     func testHelpListsCommands() {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "help")
-        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "theme", "help"] {
+        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "smb", "tab", "theme", "lang", "help"] {
             XCTAssertTrue(out?.contains(kw) ?? false, "help 应含 \(kw)：\(out ?? "nil")")
         }
+    }
+
+    // MARK: - lang（切换语言）
+
+    func testLangSwitchesLanguage() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        // 从英文起：lang zh 回显用切换前的语言（英）构建 → "Language set to Chinese"，再落 zh。
+        XCTAssertEqual(h.executor.execute(line: "lang zh"), "Language set to Chinese")
+        XCTAssertEqual(L10n.current, .zh)
+        // 切回 en：行为意图=状态回到 .en（回显串此时按切换前的 zh 表构建，不固定字面）。
+        _ = h.executor.execute(line: "lang en")
+        XCTAssertEqual(L10n.current, .en)
+    }
+
+    func testLangNoArgShowsCurrent() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        XCTAssertEqual(h.executor.execute(line: "lang"), "Language: English (usage: lang en | lang zh)")
+        _ = h.executor.execute(line: "lang zh")
+        XCTAssertEqual(h.executor.execute(line: "lang"), "当前语言：简体中文（用法：lang en | lang zh）")
+        _ = h.executor.execute(line: "lang en")   // 复位，防泄漏（tearDown 亦兜底）
+    }
+
+    func testLangUnknown() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        XCTAssertEqual(h.executor.execute(line: "lang xx"), "Unknown language: xx (en / zh)")
+        XCTAssertEqual(L10n.current, .en, "未知语言不得改状态")
     }
 
     func testUnknownCommand() {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "frobnicate")
-        XCTAssertTrue(out?.contains("未知命令") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Unknown command: frobnicate (type help)")
     }
 
     // MARK: - cd 本地
@@ -130,7 +164,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: false)
         local.table["/L/sub"] = local.item("/L/sub", dir: true)
         let out = h.executor.execute(line: "cd sub")
-        XCTAssertEqual(out, "已进入 /L/sub")
+        XCTAssertEqual(out, "Entered /L/sub")
         XCTAssertEqual(h.workspace.activePane.path.pathString, "/L/sub")
     }
 
@@ -140,7 +174,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: false)
         local.table["/tmp/x"] = local.item("/tmp/x", dir: true)
         let out = h.executor.execute(line: "cd /tmp/x")
-        XCTAssertEqual(out, "已进入 /tmp/x")
+        XCTAssertEqual(out, "Entered /tmp/x")
     }
 
     func testCdLocalRejectsSftpTarget() {
@@ -148,7 +182,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let remote = StubSource(id: "s", remote: true)
         let h = Harness(local: local, remote: remote, activeRemote: false)
         let out = h.executor.execute(line: "cd sftp://h:22/x")
-        XCTAssertTrue(out?.contains("本地窗格不能") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Local pane cannot cd to sftp:// (use the sftp command first)")
     }
 
     // MARK: - cd 远程
@@ -159,7 +193,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: true)
         remote.table["/R/deep"] = remote.item("/R/deep", dir: true)
         let out = h.executor.execute(line: "cd sftp://h:2222/R/deep")
-        XCTAssertEqual(out, "已进入 sftp://h:2222/R/deep")
+        XCTAssertEqual(out, "Entered sftp://h:2222/R/deep")
     }
 
     func testCdRemoteRejectsLocalPath() {
@@ -167,7 +201,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let remote = StubSource(id: "sftp://h:2222", remote: true)
         let h = Harness(local: local, remote: remote, activeRemote: true)
         let out = h.executor.execute(line: "cd /etc")
-        XCTAssertTrue(out?.contains("远程窗格只接受") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Remote pane accepts only sftp://host:port/path")
     }
 
     func testCdMissingDirReportsFailure() {
@@ -176,7 +210,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: false)
         // 目标不在 table → stat nil → navigate 拒绝（路径不变）
         let out = h.executor.execute(line: "cd /L/nonexistent")
-        XCTAssertTrue(out?.contains("无法进入") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Cannot enter: /L/nonexistent (missing or not a directory)")
     }
 
     // MARK: - mkdir（远程）
@@ -187,7 +221,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: true)
         h.seedRemote(["a.txt"])
         let out = h.executor.execute(line: "mkdir nd")
-        XCTAssertEqual(out, "已新建目录 sftp://h:2222/R/nd")
+        XCTAssertEqual(out, "Created sftp://h:2222/R/nd")
         XCTAssertNotNil(remote.table["/R/nd"])
     }
 
@@ -198,14 +232,14 @@ final class InternalCommandExecutorTests: XCTestCase {
         h.seedRemote(["a.txt"])
         remote.mkdirError = TCError.permissionDenied("nope")
         let out = h.executor.execute(line: "mkdir nd")
-        XCTAssertTrue(out?.contains("新建失败") ?? false, "got: \(out ?? "nil")")
+        XCTAssertTrue(out?.hasPrefix("Create failed:") ?? false, "got: \(out ?? "nil")")
     }
 
     func testMkdirRequiresExactlyOneArg() {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
-        XCTAssertTrue(h.executor.execute(line: "mkdir")?.contains("用法") ?? false)
-        XCTAssertTrue(h.executor.execute(line: "mkdir a b")?.contains("用法") ?? false)
+        XCTAssertEqual(h.executor.execute(line: "mkdir"), "Usage: mkdir NAME")
+        XCTAssertEqual(h.executor.execute(line: "mkdir a b"), "Usage: mkdir NAME")
     }
 
     // MARK: - del（远程拦截语义：不直接删，走 onDelete 钩子）
@@ -229,7 +263,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: true)
         h.seedRemote(["a.txt"])
         let out = h.executor.execute(line: "del nope.txt")
-        XCTAssertTrue(out?.contains("未找到") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Not found: nope.txt (nothing here)")
         XCTAssertNil(h.deleted)
     }
 
@@ -250,7 +284,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: local, remote: remote, activeRemote: true)
         h.seedRemote(["a.txt"])
         let out = h.executor.execute(line: "view")
-        XCTAssertTrue(out?.contains("远程暂不支持") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Remote preview unsupported, download first")
         XCTAssertNil(h.viewItem)
     }
 
@@ -271,7 +305,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let out = h.executor.execute(line: "sftp")
         XCTAssertNil(h.connect?.0)
         XCTAssertNil(h.connect?.1)
-        XCTAssertTrue(out?.contains("已打开") ?? false)
+        XCTAssertEqual(out, "SFTP connection window opened")
     }
 
     func testSFTPWithHostPort() {
@@ -325,7 +359,7 @@ final class InternalCommandExecutorTests: XCTestCase {
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "smb a b c")
         XCTAssertNil(h.smbConnect, "参数过多时不应触发连接钩子")
-        XCTAssertTrue(out?.contains("用法") ?? false, "got: \(out ?? "nil")")
+        XCTAssertEqual(out, "Usage: smb [server[/share]] [user]")
     }
 
     // MARK: - copy/move 走 workspace 钩子
@@ -353,7 +387,7 @@ final class InternalCommandExecutorTests: XCTestCase {
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "theme")
         XCTAssertEqual(h.themeOpened, 1)
-        XCTAssertEqual(out, "已打开主题窗")
+        XCTAssertEqual(out, "Theme window opened")
     }
 
     // MARK: - tab（多标签入口）
@@ -363,7 +397,7 @@ final class InternalCommandExecutorTests: XCTestCase {
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "tab new")
         XCTAssertEqual(h.newTab, 1, "tab new 应触发一次 onNewTab")
-        XCTAssertEqual(out, "已新建标签")
+        XCTAssertEqual(out, "Tab created")
     }
 
     func testTabBareDefaultsToNew() {
@@ -379,7 +413,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         h.closeTab = true
         let out = h.executor.execute(line: "tab close")
         XCTAssertEqual(h.newTab, 0, "close 不新建")
-        XCTAssertEqual(out, "已关闭标签")
+        XCTAssertEqual(out, "Tab closed")
     }
 
     func testTabCloseRefusedOnLastTab() {
@@ -388,13 +422,13 @@ final class InternalCommandExecutorTests: XCTestCase {
         h.closeTab = false
         let out = h.executor.execute(line: "tab close")
         XCTAssertEqual(h.newTab, 0)
-        XCTAssertEqual(out, "无法关闭：每侧至少保留 1 个标签")
+        XCTAssertEqual(out, "Cannot close: keep at least 1 tab per side")
     }
 
     func testTabUnknownArgUsage() {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "tab foo")
-        XCTAssertEqual(out, "用法：tab new | tab close")
+        XCTAssertEqual(out, "Usage: tab new | tab close")
     }
 }
