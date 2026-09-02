@@ -110,6 +110,21 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         layer?.borderWidth = active ? 1 : 0.5
     }
 
+    /// 语言切换后重刷列头标题：按**稳定 identifier** 找回列（与显示标题解耦），
+    /// 重设 .title 后请求表头重绘。列宽/顺序/autosave 全不受影响。
+    func retitileColumns() {
+        for col in tableView.tableColumns {
+            switch col.identifier.rawValue {
+            case Self.nameColumnID: col.title = L10n.t(.colName)
+            case Self.sizeColumnID: col.title = L10n.t(.colSize)
+            case Self.dateColumnID: col.title = L10n.t(.colDate)
+            default: break
+            }
+        }
+        tableView.headerView?.needsLayout = true
+        tableView.tile()
+    }
+
     // MARK: - Data source
 
     func numberOfRows(in tableView: NSTableView) -> Int { displayIDs.count }

@@ -55,7 +55,23 @@ enum MainMenu {
         add(viewMenu, L10n.t(.parentDirectory), #selector(MainViewController.menuGoToParent(_:)), "", target)
         add(viewMenu, L10n.t(.themeEllipsis), #selector(MainViewController.menuTheme(_:)), "", target)
 
+        // 语言子菜单：View ▸ Language ▸ English/中文，勾当前语言。选择后由
+        // MainViewController 的 L10n.observe 回调重建整份菜单 + 列头。
+        let langItem = viewMenu.addItem(withTitle: L10n.t(.menuLanguage), action: nil, keyEquivalent: "")
+        let langMenu = NSMenu(title: L10n.t(.menuLanguage))
+        langItem.submenu = langMenu
+        addLang(langMenu, L10n.t(.langEnglishName), #selector(MainViewController.menuLangEnglish(_:)), .en, target)
+        addLang(langMenu, L10n.t(.langChineseName), #selector(MainViewController.menuLangChinese(_:)), .zh, target)
+
         return mainMenu
+    }
+
+    /// 语言子项：动作指向 VC，勾中当前语言（每次重建反映当前态）。
+    private static func addLang(_ menu: NSMenu, _ title: String, _ action: Selector,
+                                _ lang: Language, _ target: AnyObject) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        item.target = target
+        item.state = (L10n.current == lang) ? .on : .off
     }
 
     @discardableResult

@@ -92,6 +92,13 @@ final class CommandLineBar: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// 语言切换后重刷常驻文案：prompt/placeholder 在属性初始化时冻结，须显式重设。
+    /// 输出行是当前回显（一次性），不在此重刷（切语言后下次执行自然用新语言）。
+    func refreshLocalizedText() {
+        prompt.stringValue = L10n.t(.commandBarPrompt)
+        input.placeholderString = L10n.t(.commandBarPlaceholder)
+    }
+
     // MARK: - 焦点切换（PaneTableView 右箭头 → 激活；Enter/Esc → 返回窗格）
 
     /// 让输入框成为第一响应者并把光标移到末尾（右箭头激活时用）。

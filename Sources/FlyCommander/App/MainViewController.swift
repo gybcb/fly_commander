@@ -17,6 +17,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private var commandExecutor: InternalCommandExecutor!
     /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
     private let engine = OperationEngine()
+    /// L10n 观察者 token（单例生命周期，永久保留；切换时重刷常驻 UI）。
+    private var l10nToken: Int?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -163,6 +165,22 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         leftPane.load()
         rightPane.load()
         applyActiveState()
+        updateBars()
+
+        // 语言切换 → 重刷所有"建一次即常驻"的 UI（整份菜单/列头/命令栏/状态栏）。
+        // 回调在 L10n.current 的 setter 内同步触发（菜单动作在主线程 → 重建亦在主线程）。
+        l10nToken = L10n.observe { [weak self] in self?.rebuildForLanguage() }
+    }
+
+    /// 语言变更后的全量重刷：重建整份主菜单（MainMenu 为纯静态、可重入），
+    /// 重设两窗格列头标题，刷新命令栏常驻文案与状态栏。对话框/告警在调用时现取
+    /// t()，本就随语言更新，无需在此重绘。Theme/Connection/SMB 窗控制器缓存其 VC，
+    /// 未在此重绘（见 task-7 报告后续项）。
+    private func rebuildForLanguage() {
+        NSApp.mainMenu = MainMenu.build(target: self)
+        leftContainer.allPaneViews.forEach { $0.retitileColumns() }
+        rightContainer.allPaneViews.forEach { $0.retitileColumns() }
+        commandBar!.refreshLocalizedText()
         updateBars()
     }
 
@@ -329,6 +347,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     @objc func menuNewTab(_ sender: Any?) { newTab() }
     @objc func menuCloseTab(_ sender: Any?) { _ = closeActiveTab() }
+
+    @objc func menuLangEnglish(_ sender: Any?) { L10n.current = .en }
+    @objc func menuLangChinese(_ sender: Any?) { L10n.current = .zh }
 
     // MARK: - AppKit-provided operations
 

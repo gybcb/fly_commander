@@ -11,6 +11,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case copyToOtherPane, moveToOtherPane, sftpConnect, smbConnect
     case menuEdit, find, selectAll
     case menuView, preview, editItem, switchPane, parentDirectory, themeEllipsis
+    case menuLanguage
     // —— 工具栏 ——
     case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarTheme
     // —— 窗口/系统 ——
