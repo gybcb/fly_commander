@@ -43,15 +43,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tv.autosaveName = "FlyCommanderPane\((id == .left) ? "L" : "R")\(ObjectIdentifier(pane).hashValue)"
 
         let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        name.title = "名称"
+        name.title = L10n.t(.colName)
         name.width = 280
         name.minWidth = 80
         let size = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
-        size.title = "大小"
+        size.title = L10n.t(.colSize)
         size.width = 70
         size.minWidth = 40
         let date = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("date"))
-        date.title = "修改日期"
+        date.title = L10n.t(.colDate)
         date.width = 150
         date.minWidth = 80
         [name, size, date].forEach { tv.addTableColumn($0) }
@@ -127,9 +127,11 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, clickOnColumnName columnName: String) {
         let newKey: SortKey
+        // 列头标题已本地化：clickOnColumnName 传入的是当前语言的标题，须与 L10n 值比对，
+        // 不能再硬编码中文，否则非中文语言下点列头排序失效。
         switch columnName {
-        case "名称": newKey = .name
-        case "大小": newKey = .size
+        case L10n.t(.colName): newKey = .name
+        case L10n.t(.colSize): newKey = .size
         default: newKey = .date
         }
         if newKey == sortKey {
@@ -267,12 +269,12 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private func promptRename() {
         guard let item = pane.focusedItem else { return }
         let alert = NSAlert()
-        alert.messageText = "重命名"
+        alert.messageText = L10n.t(.renameTitle)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = item.name
         alert.accessoryView = field
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L10n.t(.okBtn))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.rename(to: field.stringValue)
         }
@@ -280,11 +282,11 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private func promptMakeDirectory() {
         let alert = NSAlert()
-        alert.messageText = "新建目录"
+        alert.messageText = L10n.t(.newDirTitle)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         alert.accessoryView = field
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L10n.t(.createBtn))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.makeDirectory(named: field.stringValue)
         }

@@ -19,6 +19,13 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case entered, cannotEnterNotDirectory
     // —— 状态栏前缀 ——
     case statusErrorPrefix
+    // —— 主窗对话框 / 列头 / 标签辅助串 ——
+    case renameTitle, newDirTitle, okBtn, createBtn, cancelBtn
+    case conflictTitle, conflictQuestion, overwrite, skip, overwriteAll, skipAll
+    case trashConfirm, deleteWord, unrecoverable, remoteDeleteConfirm, remoteNoTrash
+    case selectedCount, cannotOpenFile
+    case colName, colSize, colDate
+    case closeTabTip, newTabTip
     // —— 仅供 fallback 回归测试，故意只进 en 表 ——
     case testFallbackProbe
     // …（各任务按 key 清单增补本 enum）

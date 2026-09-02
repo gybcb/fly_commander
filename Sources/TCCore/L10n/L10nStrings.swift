@@ -18,6 +18,18 @@ public enum L10nTable {
         .toolbarCopy: "Copy", .toolbarMove: "Move", .toolbarDelete: "Delete",
         .toolbarConnect: "Connect", .toolbarTheme: "Theme",
         .showNextPrevTab: "Show Next/Previous Window Tab",
+        .renameTitle: "Rename", .newDirTitle: "New Folder", .okBtn: "OK",
+        .createBtn: "Create", .cancelBtn: "Cancel",
+        .conflictTitle: "Item Already Exists",
+        .conflictQuestion: "“{0}” already exists. How to handle?",
+        .overwrite: "Overwrite", .skip: "Skip", .overwriteAll: "Overwrite All", .skipAll: "Skip All",
+        .trashConfirm: "Move {0} item(s) to Trash?", .deleteWord: "Delete",
+        .unrecoverable: "Cannot be undone",
+        .remoteDeleteConfirm: "Delete {0} item(s) from the server?",
+        .remoteNoTrash: "Remote has no Trash; deletion is permanent.",
+        .selectedCount: "{0} selected", .cannotOpenFile: "Cannot open file",
+        .colName: "Name", .colSize: "Size", .colDate: "Date Modified",
+        .closeTabTip: "Close Tab", .newTabTip: "New Tab",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -37,5 +49,17 @@ public enum L10nTable {
         .toolbarCopy: "复制", .toolbarMove: "移动", .toolbarDelete: "删除",
         .toolbarConnect: "连接", .toolbarTheme: "主题",
         .showNextPrevTab: "显示下一/上一个窗口标签页",
+        .renameTitle: "重命名", .newDirTitle: "新建目录", .okBtn: "确定",
+        .createBtn: "创建", .cancelBtn: "取消",
+        .conflictTitle: "目标已存在",
+        .conflictQuestion: "“{0}” 已存在，如何处理？",
+        .overwrite: "覆盖", .skip: "跳过", .overwriteAll: "全部覆盖", .skipAll: "全部跳过",
+        .trashConfirm: "删除 {0} 个文件到废纸篓？", .deleteWord: "删除",
+        .unrecoverable: "无法恢复",
+        .remoteDeleteConfirm: "从服务器删除 {0} 个文件？",
+        .remoteNoTrash: "远端没有废纸篓，删除后无法恢复。",
+        .selectedCount: "已选 {0} 项", .cannotOpenFile: "无法打开文件",
+        .colName: "名称", .colSize: "大小", .colDate: "修改日期",
+        .closeTabTip: "关闭标签", .newTabTip: "新建标签",
     ]
 }

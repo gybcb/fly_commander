@@ -1,4 +1,5 @@
 import AppKit
+import TCCore
 
 /// TC 式标签条：每个标签一个标题按钮 + 一个"×"关闭按钮，末尾固定"+"新建按钮。
 /// 纯 AppKit 视图；可单测点=纯函数 truncate。所有子视图 translates=false（reduced-SDK）。
@@ -59,7 +60,7 @@ final class TabBarView: NSView {
             close.tag = i
             close.isBordered = false              // Chrome 式：无边框紧凑小 ×（弃 .recessed 圆角盒，省空间）
             close.font = .systemFont(ofSize: 10, weight: .medium)
-            close.toolTip = "关闭标签"
+            close.toolTip = L10n.t(.closeTabTip)
             close.isHidden = titles.count <= 1   // 唯一标签不显示 ×（保底 1）
             close.translatesAutoresizingMaskIntoConstraints = false
             stack.addArrangedSubview(close)
@@ -71,7 +72,7 @@ final class TabBarView: NSView {
         let plus = NSButton(title: "+", target: self, action: #selector(plusClicked(_:)))
         plus.bezelStyle = .recessed
         plus.font = .systemFont(ofSize: 11, weight: .bold)
-        plus.toolTip = "新建标签"
+        plus.toolTip = L10n.t(.newTabTip)
         stack.addArrangedSubview(plus)
     }
 

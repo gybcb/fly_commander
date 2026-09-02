@@ -253,7 +253,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         switch s {
         case .running(let label, let progress): setStatus("\(label) \(Int(progress * 100))%")
         case .done(let m): setStatus(m)
-        case .failed(let m): setStatus("错误：\(m)")
+        case .failed(let m): setStatus(L10n.t(.statusErrorPrefix) + m)
         case .idle: setStatus("")
         }
     }
@@ -269,7 +269,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         let a = workspace.activePane
         view.window?.title = a.path.displayString()
         let op = a.selection.operationIDs.count
-        statusLabel?.stringValue = op > 0 ? "已选 \(op) 项" : ""
+        statusLabel?.stringValue = op > 0 ? L10n.t(.selectedCount, "\(op)") : ""
     }
 
     // MARK: - Toolbar wiring
@@ -350,7 +350,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
                 if error != nil {
                     DispatchQueue.main.async {
                         if let self, !NSWorkspace.shared.open(url) {
-                            self.setStatus("无法打开文件")
+                            self.setStatus(L10n.t(.cannotOpenFile))
                         }
                     }
                 }
@@ -417,12 +417,12 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private func promptRename() {
         guard let item = workspace.activePane.focusedItem else { return }
         let alert = NSAlert()
-        alert.messageText = "重命名"
+        alert.messageText = L10n.t(.renameTitle)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = item.name
         alert.accessoryView = field
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L10n.t(.okBtn))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.rename(to: field.stringValue)
         }
@@ -430,11 +430,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     private func promptMakeDirectory() {
         let alert = NSAlert()
-        alert.messageText = "新建目录"
+        alert.messageText = L10n.t(.newDirTitle)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         alert.accessoryView = field
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L10n.t(.createBtn))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.makeDirectory(named: field.stringValue)
         }
@@ -442,13 +442,13 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     private func promptConflict(_ src: TCPath, _ dst: TCPath) -> ConflictChoice {
         let alert = NSAlert()
-        alert.messageText = "目标已存在"
-        alert.informativeText = "“\(dst.fileName)” 已存在，如何处理？"
-        alert.addButton(withTitle: "覆盖")
-        alert.addButton(withTitle: "跳过")
-        alert.addButton(withTitle: "全部覆盖")
-        alert.addButton(withTitle: "全部跳过")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L10n.t(.conflictTitle)
+        alert.informativeText = L10n.t(.conflictQuestion, dst.fileName)
+        alert.addButton(withTitle: L10n.t(.overwrite))
+        alert.addButton(withTitle: L10n.t(.skip))
+        alert.addButton(withTitle: L10n.t(.overwriteAll))
+        alert.addButton(withTitle: L10n.t(.skipAll))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         switch alert.runModal() {
         case .alertFirstButtonReturn: return .overwrite
         case .alertSecondButtonReturn: return .skip
@@ -467,9 +467,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         if targets.count > 1 {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "删除 \(targets.count) 个文件到废纸篓？"
-            alert.addButton(withTitle: "删除")
-            alert.addButton(withTitle: "取消")
+            alert.messageText = L10n.t(.trashConfirm, "\(targets.count)")
+            alert.addButton(withTitle: L10n.t(.deleteWord))
+            alert.addButton(withTitle: L10n.t(.cancelBtn))
             if alert.runModal() != .alertFirstButtonReturn { return }
         }
         let urls = targets.map { $0.path.url }
@@ -485,10 +485,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private func doRemoteDelete(pane: FilePane, targets: [FileItem]) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "从服务器删除 \(targets.count) 个文件？"
-        alert.informativeText = "远端没有废纸篓，删除后无法恢复。"
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L10n.t(.remoteDeleteConfirm, "\(targets.count)")
+        alert.informativeText = L10n.t(.remoteNoTrash)
+        alert.addButton(withTitle: L10n.t(.deleteWord))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
         if alert.runModal() != .alertFirstButtonReturn { return }
 
         let source = pane.source

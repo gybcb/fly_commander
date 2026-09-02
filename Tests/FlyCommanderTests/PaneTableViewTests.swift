@@ -133,11 +133,11 @@ final class PaneTableViewTests: XCTestCase {
         let tv = paneView.tableView!
         // 名称序：a.txt b.dat z.txt
         XCTAssertEqual(cell(atColumn: 0, row: 0)?.nameLabel.stringValue, "a.txt")
-        paneView.tableView(tv, clickOnColumnName: "大小")
+        paneView.tableView(tv, clickOnColumnName: L10n.t(.colSize))
         // 大小升序：a(1) z(1) b(100)
         XCTAssertEqual(cell(atColumn: 0, row: 0)?.nameLabel.stringValue, "a.txt")
         XCTAssertEqual(cell(atColumn: 0, row: 2)?.nameLabel.stringValue, "b.dat")
-        paneView.tableView(tv, clickOnColumnName: "大小")
+        paneView.tableView(tv, clickOnColumnName: L10n.t(.colSize))
         // 大小降序：b z a
         XCTAssertEqual(cell(atColumn: 0, row: 0)?.nameLabel.stringValue, "b.dat")
         XCTAssertEqual(cell(atColumn: 0, row: 2)?.nameLabel.stringValue, "a.txt")
@@ -160,7 +160,7 @@ final class PaneTableViewTests: XCTestCase {
     /// 排序后 display 行号 ≠ selection 索引：点击/加标记必须落在该显示行的文件上
     /// （回归 2026-08-22：旧实现把 row 当 selection 索引，排序后错位点错文件）。
     func testClickAfterSortingHitsDisplayedItem() {
-        paneView.tableView(paneView.tableView!, clickOnColumnName: "大小")
+        paneView.tableView(paneView.tableView!, clickOnColumnName: L10n.t(.colSize))
         // 大小序显示：a.txt(1) z.txt(1) b.dat(100)
         paneView.handleMouseClick(row: 2, event: mouseEvent([]), doubleClick: false)
         XCTAssertEqual(pane.focusedItem?.name, "b.dat")
@@ -223,7 +223,7 @@ final class PaneTableViewTests: XCTestCase {
     /// 焦点在 a.txt（display[0] = selection[0]），navigate(+1) 必须落到**显示下一行**
     /// z.txt，而非 selection 序的下一项 b.dat。修复前（走 selection±1）此断言必挂。
     func testNavigateInScrambledSizeOrderLandsOnDisplayedNext() {
-        paneView.tableView(paneView.tableView!, clickOnColumnName: "大小")
+        paneView.tableView(paneView.tableView!, clickOnColumnName: L10n.t(.colSize))
         // 焦点对齐到 display 首行 a.txt
         paneView.handleMouseClick(row: 0, event: mouseEvent([]), doubleClick: false)
         XCTAssertEqual(pane.focusedItem?.name, "a.txt")
@@ -234,7 +234,7 @@ final class PaneTableViewTests: XCTestCase {
 
     /// home/end 在乱序下落到 display 首/末行。
     func testNavigateHomeEndInScrambledOrder() {
-        paneView.tableView(paneView.tableView!, clickOnColumnName: "大小")
+        paneView.tableView(paneView.tableView!, clickOnColumnName: L10n.t(.colSize))
         // 大小升序 display：a.txt z.txt b.dat（首 a.txt 末 b.dat）
         paneView.navigate(toEdge: .end, mode: .sticky)
         XCTAssertEqual(pane.focusedItem?.name, "b.dat", "End 应到显示末行 b.dat")
