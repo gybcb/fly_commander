@@ -16,7 +16,7 @@ final class SMBConnectionWindowController: NSWindowController {
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 280),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "SMB 连接"
+        window.title = L10n.t(.smbWindowTitle)
         window.contentViewController = connectionVC
         super.init(window: window)
     }

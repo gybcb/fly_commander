@@ -28,6 +28,9 @@ final class FlyCommanderUITests: XCTestCase {
         fixture = makeFixture()
         app = XCUIApplication()
         app.terminate()   // 清掉上一用例可能残留的进程
+        // 强制默认英文：UserDefaults 注册域参数，键 "appLanguage"（L10n 读取），
+        // 使断言不受用户持久化的 zh 偏好影响（UI 定位符已全按英文标题匹配）。
+        app.launchArguments = ["-appLanguage", "en"]
         app.launchEnvironment = ["FLY_START_DIR": fixture.path]
         app.launch()
         // 主窗两个表格出现（启动 + 列目录耗时）
@@ -150,7 +153,7 @@ final class FlyCommanderUITests: XCTestCase {
 
     func testBothPanesListFiles() {
         XCTAssertEqual(app.tables.count, 2, "应恰好两个窗格表格")
-        for header in ["名称", "大小", "修改日期"] {
+        for header in ["Name", "Size", "Date Modified"] {
             XCTAssertTrue(headerButton(header).exists, "列头缺失：\(header)")
         }
         XCTAssertEqual(leftTable().tableRows.count, 8, "行数不等于夹具 8 项")
@@ -160,7 +163,7 @@ final class FlyCommanderUITests: XCTestCase {
         XCTAssertTrue(window.title.hasSuffix(fixture.lastPathComponent),
                       "窗口标题应为启动目录，实际：\(window.title)")
         // 焦点行 = 1 项操作目标，工具栏状态非空
-        XCTAssertTrue(selectionStatus("已选 1 项").exists, "启动时焦点行应显示已选 1 项")
+        XCTAssertTrue(selectionStatus("1 selected").exists, "启动时焦点行应显示已选 1 项")
     }
 
     /// 回归 #23：分隔条拖拽后两栏都不得消失。
@@ -214,110 +217,110 @@ final class FlyCommanderUITests: XCTestCase {
 
     func testMenuBarItemsPresent() {
         let titles = app.menuBarItems.allElementsBoundByIndex.compactMap { $0.title as String }
-        XCTAssertEqual(titles, ["Apple", "FlyCommander", "文件", "编辑", "查看"])
+        XCTAssertEqual(titles, ["Apple", "FlyCommander", "File", "Edit", "View"])
     }
 
     func testToolbarButtonsPresent() {
-        for name in ["复制", "移动", "新建目录", "删除", "重命名", "查找", "连接"] {
+        for name in ["Copy", "Move", "New Directory", "Delete", "Rename", "Find", "Connect"] {
             XCTAssertTrue(toolbarButton(name).exists, "工具栏按钮缺失：\(name)")
         }
     }
 
     func testToolbarNewDirectoryShowsPrompt() {
-        toolbarButton("新建目录").click()
+        toolbarButton("New Directory").click()
         guard let p = prompt() else { return XCTFail("新建目录弹窗未出现") }
-        p.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+        p.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
     func testMenuNewDirectoryShowsPrompt() {
-        menuBar("文件").click()
-        menuBar("文件").menuItems
-            .matching(NSPredicate(format: "title == '新建目录'")).firstMatch.click()
+        menuBar("File").click()
+        menuBar("File").menuItems
+            .matching(NSPredicate(format: "title == 'New Directory'")).firstMatch.click()
         guard let p = prompt() else { return XCTFail("菜单路径新建目录弹窗未出现") }
-        p.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+        p.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
     // MARK: - Cmd 组合（菜单 keyEquivalent 接管）
 
     func testCmdASelectsAll() {
         app.typeKey("a", modifierFlags: .command)
-        XCTAssertTrue(selectionStatus("已选 8 项").waitForExistence(timeout: 5), "全选后工具栏未显示已选 8 项")
+        XCTAssertTrue(selectionStatus("8 selected").waitForExistence(timeout: 5), "全选后工具栏未显示已选 8 项")
         // Cmd+A 非 toggle（selectAll 幂等）；清标记走 KeyDispatcher 的 Esc → clearMarks
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(selectionStatus("已选 1 项").waitForExistence(timeout: 5), "Esc 清标记后应回到已选 1 项（焦点行）")
+        XCTAssertTrue(selectionStatus("1 selected").waitForExistence(timeout: 5), "Esc 清标记后应回到已选 1 项（焦点行）")
     }
 
     func testCmdFOpensSearch() {
         app.typeKey("f", modifierFlags: .command)
-        let search = app.windows.matching(NSPredicate(format: "title == '搜索文件'")).firstMatch
+        let search = app.windows.matching(NSPredicate(format: "title == 'Find Files'")).firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Cmd+F 搜索窗未弹出")
         // 回归：窗口须真正铺开（非 0 宽）。曾漏设 translates=false 致 content 塌成 0 宽，
         // 窗口存在但看不见（"搜索窗出不来"）——旧断言只查按钮存在，0 宽时也绿。
         Thread.sleep(forTimeInterval: 0.3)
         let w = search.frame.width
         XCTAssertGreaterThan(w, 100, "搜索窗应铺开可见（宽>100），实际：\(Int(w))（疑似 0 宽塌陷）")
-        XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '开始搜索'")).firstMatch.exists)
-        XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.exists)
-        search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+        XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == 'Search'")).firstMatch.exists)
+        XCTAssertTrue(search.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.exists)
+        search.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
     // MARK: - SFTP 连接窗（只验窗口与控件出现，不真连——
     // 真实连接由 SPM 侧 ConnectionStoreE2ETests 对本地 sshd 覆盖）
 
     func testConnectWindowShowsFields() {
-        toolbarButton("连接").click()
-        let conn = app.windows.matching(NSPredicate(format: "title == 'SFTP 连接'")).firstMatch
+        toolbarButton("Connect").click()
+        let conn = app.windows.matching(NSPredicate(format: "title == 'SFTP Connection'")).firstMatch
         XCTAssertTrue(conn.waitForExistence(timeout: 5), "SFTP 连接窗未弹出")
         // 按钮
-        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == '连接'")).firstMatch.exists)
-        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.exists)
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Connect'")).firstMatch.exists)
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.exists)
         // 表单字段：AX 里单选是 RadioButton、复选是 CheckBox（不在 .buttons 里）
-        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == '密码'")).firstMatch.exists)
-        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == '密钥文件'")).firstMatch.exists)
-        XCTAssertTrue(conn.checkBoxes.matching(NSPredicate(format: "title == '记住密码'")).firstMatch.exists)
+        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == 'Password'")).firstMatch.exists)
+        XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == 'Key File'")).firstMatch.exists)
+        XCTAssertTrue(conn.checkBoxes.matching(NSPredicate(format: "title == 'Remember Password'")).firstMatch.exists)
         // 主机输入框（无最近连接时应为空）
         let hostField = conn.textFields.matching(NSPredicate(format: "identifier == 'hostField'")).firstMatch
         XCTAssertTrue(hostField.exists, "主机输入框缺失")
-        conn.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+        conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
     // MARK: - 搜索（通配符匹配语义由 core 单测 FileSearcherTests 覆盖）
     /// XCUITest 环境下搜索窗 AX frame 塌成 0 宽（实测 not hittable），键入/点击输入框不可达，
     /// 故搜索 UI 层只验窗口与按钮出现（与 Cmd+F 同一动作路径）。
     func testSearchFlowFindsFiles() {
-        toolbarButton("查找").click()
-        let search = app.windows.matching(NSPredicate(format: "title == '搜索文件'")).firstMatch
+        toolbarButton("Find").click()
+        let search = app.windows.matching(NSPredicate(format: "title == 'Find Files'")).firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5), "查找窗未弹出")
         let field = search.textFields.firstMatch
         XCTAssertEqual(field.value as? String, "*", "搜索模式框应预填 *")
-        search.buttons.matching(NSPredicate(format: "title == '取消'")).firstMatch.click()
+        search.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
     // MARK: - 主题窗（持久化由 SPM ThemeStoreTests 覆盖；此处只验窗口与控件）
 
     private func themeWindow() -> XCUIElement {
-        app.windows.matching(NSPredicate(format: "title == '主题'")).firstMatch
+        app.windows.matching(NSPredicate(format: "title == 'Theme'")).firstMatch
     }
 
     func testThemeWindowOpensViaMenu() {
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '主题…'")).firstMatch.click()
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Theme…'")).firstMatch.click()
         let win = themeWindow()
         XCTAssertTrue(win.waitForExistence(timeout: 5), "主题窗未弹出")
         // 关键控件：外观 segmented（3 段）、强调色取色器、规则行、添加/恢复按钮
-        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '添加规则'")).firstMatch.exists, "缺 添加规则")
-        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '恢复默认'")).firstMatch.exists, "缺 恢复默认")
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == 'Add Rule'")).firstMatch.exists, "缺 添加规则")
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == 'Restore Defaults'")).firstMatch.exists, "缺 恢复默认")
         // 默认主题带 5 条预置规则 → 至少 5 个扩展名输入框（textFields 已验证）；
         // 不取色器断言（colorWells 在缩减版 XCUITest SDK 未验证）。
         XCTAssertGreaterThanOrEqual(win.textFields.count, 5, "缺 文件类型规则行")
     }
 
     func testThemeWindowOpensViaToolbar() {
-        toolbarButton("主题").click()
+        toolbarButton("Theme").click()
         let win = themeWindow()
         XCTAssertTrue(win.waitForExistence(timeout: 5), "工具栏 主题 未弹出主题窗")
-        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == '添加规则'")).firstMatch.exists, "缺 添加规则")
+        XCTAssertTrue(win.buttons.matching(NSPredicate(format: "title == 'Add Rule'")).firstMatch.exists, "缺 添加规则")
     }
 
     // MARK: - 预览（查看 → 预览；须先点中一个文件行——预览要求焦点项非目录，
@@ -331,14 +334,14 @@ final class FlyCommanderUITests: XCTestCase {
 
     func testPreviewShowsWindow() {
         focusRowNamed("alpha_small.txt")
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
         // 小文件不应有截断横幅
         let smallBanner = preview.staticTexts
-            .matching(NSPredicate(format: "value BEGINSWITH '仅显示前'")).firstMatch
+            .matching(NSPredicate(format: "value BEGINSWITH 'Showing only first'")).firstMatch
         XCTAssertFalse(smallBanner.exists, "小文件预览不应有截断横幅")
         // 小文件内容应真的渲染出来（不是只有空文本区）
         XCTAssertEqual(previewTextContent(preview), "x", "小文件预览应渲染文件内容")
@@ -348,13 +351,13 @@ final class FlyCommanderUITests: XCTestCase {
     /// （只断言横幅曾漏掉"大文件预览空白"回归——文字区 0 高时横幅仍在）。
     func testLargeTextPreviewShowsTruncationBanner() {
         focusRowNamed("big.log")
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
         let banner = preview.staticTexts
-            .matching(NSPredicate(format: "value BEGINSWITH '仅显示前'")).firstMatch
+            .matching(NSPredicate(format: "value BEGINSWITH 'Showing only first'")).firstMatch
         XCTAssertTrue(banner.exists, "1.5MB 文件预览应显示截断横幅")
         let content = previewTextContent(preview)
         XCTAssertNotNil(content, "大文件预览文本区缺失")
@@ -366,13 +369,13 @@ final class FlyCommanderUITests: XCTestCase {
     /// .torrent 是 bencode 文本 + piece 哈希（哈希含控制字节）→ 应按文本预览出 bencode 开头。
     func testTorrentFilePreviewsAsText() {
         focusRowNamed("sample.torrent")
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
         let fallback = preview.staticTexts
-            .matching(NSPredicate(format: "value == '无法预览此文件'")).firstMatch
+            .matching(NSPredicate(format: "value == 'Cannot preview this file'")).firstMatch
         XCTAssertFalse(fallback.exists, ".torrent 不应落入'无法预览此文件'降级页")
         let content = previewTextContent(preview)
         // bencode 开头可读（~230 字符）；降级页无 NSTextView 或内容极短
@@ -383,10 +386,10 @@ final class FlyCommanderUITests: XCTestCase {
     /// 回归"预览窗不能按 Esc 退出"：Esc 应关闭预览窗（cancelOperation 路径）。
     func testEscapeClosesPreviewWindow() {
         focusRowNamed("alpha_small.txt")
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)
@@ -396,13 +399,13 @@ final class FlyCommanderUITests: XCTestCase {
     /// 长行截断后文本区必须有内容，且横幅含"长行已截断"说明。
     func testSingleLineLargeTextPreviewRendersContent() {
         focusRowNamed("longline.txt")
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
         let banner = preview.staticTexts
-            .matching(NSPredicate(format: "value CONTAINS '长行已截断'")).firstMatch
+            .matching(NSPredicate(format: "value CONTAINS 'lines over'")).firstMatch
         XCTAssertTrue(banner.exists, "单行长行预览应显示含'长行已截断'的横幅")
         let content = previewTextContent(preview)
         XCTAssertNotNil(content, "单行大文件预览文本区缺失")
@@ -429,10 +432,10 @@ final class FlyCommanderUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)
-        menuBar("查看").click()
-        menuBar("查看").menuItems
-            .matching(NSPredicate(format: "title == '预览'")).firstMatch.click()
-        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander 查看'")).firstMatch
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5),
                       "Tab 切右栏后 Down 应移动右栏焦点（文件行），预览应弹出；未弹出说明方向键仍落在左窗格")
     }
@@ -458,7 +461,7 @@ final class FlyCommanderUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         XCTAssertTrue(cmdBarOutput.waitForExistence(timeout: 2), "命令栏输出行缺失")
         let text = (cmdBarOutput.value as? String) ?? ""
-        XCTAssertTrue(text.contains("8 个条目"), "ls 应回显夹具 8 项，实际：\(text)")
+        XCTAssertTrue(text.contains("8 items"), "ls 应回显夹具 8 项，实际：\(text)")
     }
 
     func testCommandLineHelpListsCommands() {
@@ -466,7 +469,7 @@ final class FlyCommanderUITests: XCTestCase {
         for ch in Array("help") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         let text = (cmdBarOutput.value as? String) ?? ""
-        XCTAssertTrue(text.contains("可用命令"), "help 应回显命令清单，实际：\(text)")
+        XCTAssertTrue(text.contains("Available commands"), "help 应回显命令清单，实际：\(text)")
         XCTAssertTrue(text.contains("mkdir") && text.contains("sftp"), "清单应含 mkdir/sftp：\(text)")
     }
 
@@ -474,7 +477,7 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("8 个条目"), "前置：ls 已回显")
+        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("8 items"), "前置：ls 已回显")
         // Esc 清输入+输出：再激活命令栏放一个字符，Esc 后应清空输出并回到窗格
         activateCommandBar()
         app.typeKey(XCUIKeyboardKey(rawValue: "x"), modifierFlags: [])
@@ -505,23 +508,23 @@ final class FlyCommanderUITests: XCTestCase {
         XCTAssertEqual(closeTabButtonCount(), 0, "前置：启动每侧 1 标签（× 隐藏）")
 
         // ⌘T 新建（默认活动侧=左）→ 左 2 标签 → 2 个 ×
-        menuBar("文件").click()
-        menuBar("文件").menuItems
-            .matching(NSPredicate(format: "title == '新建标签页'")).firstMatch.click()
+        menuBar("File").click()
+        menuBar("File").menuItems
+            .matching(NSPredicate(format: "title == 'New Tab'")).firstMatch.click()
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(closeTabButtonCount(), 2, "⌘T 后左侧 2 标签应有 2 个 ×")
 
         // ⌘W 关活动标签（左）→ 左回 1 标签 → × 消失
-        menuBar("文件").click()
-        menuBar("文件").menuItems
-            .matching(NSPredicate(format: "title == '关闭标签页'")).firstMatch.click()
+        menuBar("File").click()
+        menuBar("File").menuItems
+            .matching(NSPredicate(format: "title == 'Close Tab'")).firstMatch.click()
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(closeTabButtonCount(), 0, "⌘W 后左侧回 1 标签，× 应消失")
 
         // 保底：左侧已 1 标签，再 ⌘W 应不减少（该侧无法再关）
-        menuBar("文件").click()
-        menuBar("文件").menuItems
-            .matching(NSPredicate(format: "title == '关闭标签页'")).firstMatch.click()
+        menuBar("File").click()
+        menuBar("File").menuItems
+            .matching(NSPredicate(format: "title == 'Close Tab'")).firstMatch.click()
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(closeTabButtonCount(), 0, "保底：每侧最后 1 标签不可再关")
     }
@@ -547,9 +550,9 @@ final class FlyCommanderUITests: XCTestCase {
     /// 目录（另一标签），标题应不再是 sub；若标题仍是 sub 说明 Ctrl+Tab 没生效。
     func testCtrlTabSwitchesTab() {
         // ⌘T 新建标签（活动侧=左，新标签成为活动），左侧 2 标签
-        menuBar("文件").click()
-        menuBar("文件").menuItems
-            .matching(NSPredicate(format: "title == '新建标签页'")).firstMatch.click()
+        menuBar("File").click()
+        menuBar("File").menuItems
+            .matching(NSPredicate(format: "title == 'New Tab'")).firstMatch.click()
         Thread.sleep(forTimeInterval: 0.5)
         // 当前活动标签 cd 进 sub → 活动窗格目录=sub → 窗口标题 …/sub
         activateCommandBar()

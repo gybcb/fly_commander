@@ -1,4 +1,5 @@
 import AppKit
+import TCCore
 
 /// 主题窗（非模态，仿 SearchWindowController）。改即生效——各控件 action 直接写 ThemeStore。
 final class ThemeWindowController: NSWindowController {
@@ -8,7 +9,7 @@ final class ThemeWindowController: NSWindowController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
                               styleMask: [.titled, .closable],
                               backing: .buffered, defer: false)
-        window.title = "主题"
+        window.title = L10n.t(.themeWindowTitle)
         window.contentViewController = themeVC
         super.init(window: window)
     }

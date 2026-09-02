@@ -16,6 +16,8 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarTheme
     // —— 窗口/系统 ——
     case showNextPrevTab
+    // —— 窗口标题（各 WindowController）——
+    case themeWindowTitle, sftpWindowTitle, smbWindowTitle, searchWindowTitle
     // —— 命令回显（AppKit 层 InternalCommandExecutor）——
     case entered, cannotEnterNotDirectory
     // —— 状态栏前缀 ——

@@ -187,6 +187,19 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.fillServerShare), "请填写服务器与共享")
         XCTAssertEqual(L10n.t(.connectFailedPrefix), "连接失败：")
     }
+    func testWindowTitleKeysEnglish() {
+        XCTAssertEqual(L10n.t(.themeWindowTitle), "Theme")
+        XCTAssertEqual(L10n.t(.sftpWindowTitle), "SFTP Connection")
+        XCTAssertEqual(L10n.t(.smbWindowTitle), "SMB Connection")
+        XCTAssertEqual(L10n.t(.searchWindowTitle), "Find Files")
+    }
+    func testWindowTitleKeysChinese() {
+        L10n.current = .zh
+        XCTAssertEqual(L10n.t(.themeWindowTitle), "主题")
+        XCTAssertEqual(L10n.t(.sftpWindowTitle), "SFTP 连接")
+        XCTAssertEqual(L10n.t(.smbWindowTitle), "SMB 连接")
+        XCTAssertEqual(L10n.t(.searchWindowTitle), "搜索文件")
+    }
     func testOnChangeFiresOnSwitch() {
         var fired = 0
         let token = L10n.observe { fired += 1 }

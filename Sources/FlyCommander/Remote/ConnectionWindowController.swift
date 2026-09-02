@@ -25,7 +25,7 @@ final class ConnectionWindowController: NSWindowController {
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
-        window.title = "SFTP 连接"
+        window.title = L10n.t(.sftpWindowTitle)
         window.contentViewController = connectionVC
         super.init(window: window)
     }

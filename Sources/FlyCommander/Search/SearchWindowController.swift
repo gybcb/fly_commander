@@ -14,7 +14,7 @@ final class SearchWindowController: NSWindowController {
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
-        window.title = "搜索文件"
+        window.title = L10n.t(.searchWindowTitle)
         window.contentViewController = searchVC
         super.init(window: window)
     }
