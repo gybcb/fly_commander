@@ -10,10 +10,10 @@ final class SMBConnectionViewController: NSViewController {
     private let domainField = NSTextField(frame: .zero)
     private let userField = NSTextField(frame: .zero)
     private let passwordField = NSSecureTextField(frame: .zero)
-    private let rememberCheckbox = NSButton(checkboxWithTitle: "记住密码", target: nil, action: nil)
+    private let rememberCheckbox = NSButton(checkboxWithTitle: L10n.t(.rememberPassword), target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let connectButton = NSButton(title: "连接", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    private let connectButton = NSButton(title: L10n.t(.connect), target: nil, action: nil)
+    private let cancelButton = NSButton(title: L10n.t(.cancel), target: nil, action: nil)
 
     private var connecting = false
     private var connectToken = 0
@@ -22,11 +22,11 @@ final class SMBConnectionViewController: NSViewController {
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
 
-        let serverRow = row("服务器", serverField)
-        let shareRow = row("共享", shareField)
-        let domainRow = row("域", domainField)          // 可选
-        let userRow = row("用户", userField)
-        let passwordRow = row("密码", passwordField)
+        let serverRow = row(L10n.t(.fieldServer), serverField)
+        let shareRow = row(L10n.t(.fieldShare), shareField)
+        let domainRow = row(L10n.t(.fieldDomain), domainField)          // 可选
+        let userRow = row(L10n.t(.fieldUser), userField)
+        let passwordRow = row(L10n.t(.fieldPassword), passwordField)
 
         connectButton.bezelStyle = .rounded
         connectButton.keyEquivalent = "\r"
@@ -129,7 +129,7 @@ final class SMBConnectionViewController: NSViewController {
         let server = serverField.stringValue.trimmingCharacters(in: .whitespaces)
         let share = shareField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !server.isEmpty, !share.isEmpty else {
-            statusLabel.stringValue = "请填写服务器与共享"
+            statusLabel.stringValue = L10n.t(.fillServerShare)
             return
         }
         let domain = domainField.stringValue.trimmingCharacters(in: .whitespaces)
@@ -142,7 +142,7 @@ final class SMBConnectionViewController: NSViewController {
                                            remember: rememberCheckbox.state == .on)
         connecting = true
         connectButton.isEnabled = false
-        statusLabel.stringValue = "连接中…"
+        statusLabel.stringValue = L10n.t(.connecting)
         let store = self.store
         let onConnected = self.onConnected
         let token = connectToken
@@ -161,7 +161,7 @@ final class SMBConnectionViewController: NSViewController {
                     onConnected?(source, home)
                 case .failure(let error):
                     let message = (error as? TCError)?.message ?? error.localizedDescription
-                    self.statusLabel.stringValue = "连接失败：\(message)"
+                    self.statusLabel.stringValue = L10n.t(.connectFailedPrefix) + message
                 }
             }
         }

@@ -18,21 +18,21 @@ final class ThemeViewController: NSViewController {
         container.distribution = .fill
 
         // 1) 外观
-        let appearanceLabel = NSTextField(labelWithString: "外观")
+        let appearanceLabel = NSTextField(labelWithString: L10n.t(.appearance))
         appearanceLabel.translatesAutoresizingMaskIntoConstraints = false
         let segment = NSSegmentedControl(frame: .zero)
         segment.translatesAutoresizingMaskIntoConstraints = false
         segment.segmentCount = 3
         segment.trackingMode = .selectOne
-        segment.setLabel("跟随系统", forSegment: 0)
-        segment.setLabel("浅色", forSegment: 1)
-        segment.setLabel("深色", forSegment: 2)
+        segment.setLabel(L10n.t(.followSystem), forSegment: 0)
+        segment.setLabel(L10n.t(.lightMode), forSegment: 1)
+        segment.setLabel(L10n.t(.darkMode), forSegment: 2)
         segment.target = self
         segment.action = #selector(appearanceChanged(_:))
         appearanceSegment = segment
 
         // 2) 强调色
-        let accentLabel = NSTextField(labelWithString: "强调色（标记行底色 / 活动窗格边框）")
+        let accentLabel = NSTextField(labelWithString: L10n.t(.accentColorHint))
         accentLabel.translatesAutoresizingMaskIntoConstraints = false
         let well = NSColorWell(frame: .zero)
         well.translatesAutoresizingMaskIntoConstraints = false
@@ -42,7 +42,7 @@ final class ThemeViewController: NSViewController {
         accentWell = well
 
         // 3) 文件类型配色（标题 + 滚动列表 + 添加按钮）
-        let rulesLabel = NSTextField(labelWithString: "文件类型配色（扩展名逗号分隔；编辑后按回车生效）")
+        let rulesLabel = NSTextField(labelWithString: L10n.t(.fileColorHint))
         rulesLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let rulesScroll = NSScrollView()
@@ -64,11 +64,11 @@ final class ThemeViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: rulesScroll.contentView.trailingAnchor),
         ])
 
-        let addBtn = NSButton(title: "添加规则", target: self, action: #selector(addRule))
+        let addBtn = NSButton(title: L10n.t(.addRule), target: self, action: #selector(addRule))
         addBtn.translatesAutoresizingMaskIntoConstraints = false
 
         // 恢复默认
-        let restoreBtn = NSButton(title: "恢复默认", target: self, action: #selector(restoreDefault))
+        let restoreBtn = NSButton(title: L10n.t(.restoreDefaults), target: self, action: #selector(restoreDefault))
         restoreBtn.translatesAutoresizingMaskIntoConstraints = false
 
         [appearanceLabel, segment, accentLabel, well, rulesLabel, rulesScroll, addBtn, restoreBtn]

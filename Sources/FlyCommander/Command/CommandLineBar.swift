@@ -10,7 +10,7 @@ import TCCore
 final class CommandLineBar: NSView {
     private let input = CommandBarInputField()
     private let output = NSTextField(labelWithString: "")
-    private let prompt = NSTextField(labelWithString: "命令:")
+    private let prompt = NSTextField(labelWithString: L10n.t(.commandBarPrompt))
     /// cd 下拉建议容器（输入行上方弹出，目录优先，前缀匹配）。
     private let dropdown = NSView()
     private let dropdownStack = NSStackView()
@@ -37,7 +37,7 @@ final class CommandLineBar: NSView {
         prompt.textColor = .secondaryLabelColor
         prompt.translatesAutoresizingMaskIntoConstraints = false
         input.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        input.placeholderString = "输入命令（ls / cd / mkdir / copy / move / del / sftp / help）"
+        input.placeholderString = L10n.t(.commandBarPlaceholder)
         input.translatesAutoresizingMaskIntoConstraints = false
         input.setAccessibilityIdentifier("cmdBarInput")
         input.target = self
@@ -71,7 +71,7 @@ final class CommandLineBar: NSView {
             heightAnchor.constraint(equalToConstant: 34),
             prompt.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             prompt.centerYAnchor.constraint(equalTo: centerYAnchor),
-            prompt.widthAnchor.constraint(equalToConstant: 36),
+            prompt.widthAnchor.constraint(equalToConstant: 60),
             input.leadingAnchor.constraint(equalTo: prompt.trailingAnchor, constant: 4),
             input.centerYAnchor.constraint(equalTo: centerYAnchor),
             input.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),

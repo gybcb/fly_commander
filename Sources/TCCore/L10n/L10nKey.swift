@@ -34,6 +34,17 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case openWithDefault, previewTruncBanner, previewOfFileTotal, previewLongLineTrunc
     case lineTruncatedMark, cannotReadImage, cannotPreview
     case previewWindowTitle, previewWindowTitlePlain
+    // —— 主题窗（ThemeViewController / ThemeWindowController）——
+    case appearance, followSystem, lightMode, darkMode
+    case accentColorHint, fileColorHint, addRule, restoreDefaults
+    // —— 命令栏（CommandLineBar）——
+    case commandBarPrompt, commandBarPlaceholder
+    // —— SFTP/SMB 连接窗（ConnectionViewController / SMBConnectionViewController）——
+    case fieldPassword, fieldKeyFile, rememberPassword
+    case fieldHost, fieldPort, fieldUser, fieldKey, chooseWord
+    case fillHost, invalidPort, chooseKeyFile, connecting
+    case fieldServer, fieldShare, fieldDomain, fillServerShare
+    case connectFailedPrefix
     // —— 仅供 fallback 回归测试，故意只进 en 表 ——
     case testFallbackProbe
     // …（各任务按 key 清单增补本 enum）

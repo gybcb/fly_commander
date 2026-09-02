@@ -9,16 +9,16 @@ final class ConnectionViewController: NSViewController {
     private let hostField = NSTextField(frame: .zero)
     private let portField = NSTextField(frame: .zero)
     private let userField = NSTextField(frame: .zero)
-    private let passwordRadio = NSButton(radioButtonWithTitle: "密码", target: nil, action: nil)
-    private let keyRadio = NSButton(radioButtonWithTitle: "密钥文件", target: nil, action: nil)
+    private let passwordRadio = NSButton(radioButtonWithTitle: L10n.t(.fieldPassword), target: nil, action: nil)
+    private let keyRadio = NSButton(radioButtonWithTitle: L10n.t(.fieldKeyFile), target: nil, action: nil)
     private let passwordField = NSSecureTextField(frame: .zero)
     private let keyPathField = NSTextField(frame: .zero)
-    private let browseButton = NSButton(title: "浏览…", target: nil, action: nil)
+    private let browseButton = NSButton(title: L10n.t(.browse), target: nil, action: nil)
     private let passphraseField = NSSecureTextField(frame: .zero)
-    private let rememberCheckbox = NSButton(checkboxWithTitle: "记住密码", target: nil, action: nil)
+    private let rememberCheckbox = NSButton(checkboxWithTitle: L10n.t(.rememberPassword), target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let connectButton = NSButton(title: "连接", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    private let connectButton = NSButton(title: L10n.t(.connect), target: nil, action: nil)
+    private let cancelButton = NSButton(title: L10n.t(.cancel), target: nil, action: nil)
 
     private var passwordRow: NSStackView!
     private var keyPathRow: NSStackView!
@@ -31,18 +31,18 @@ final class ConnectionViewController: NSViewController {
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
 
-        let hostRow = row("主机", hostField)
+        let hostRow = row(L10n.t(.fieldHost), hostField)
         let netRow = NSStackView(views: [
-            labeled("端口", portField, width: 60),
-            labeled("用户", userField),
+            labeled(L10n.t(.fieldPort), portField, width: 60),
+            labeled(L10n.t(.fieldUser), userField),
         ])
         netRow.spacing = 16
 
         let radioRow = NSStackView(views: [passwordRadio, keyRadio])
         radioRow.spacing = 20
 
-        passwordRow = labeled("密码", passwordField)
-        keyPathRow = row("密钥", keyPathField)
+        passwordRow = labeled(L10n.t(.fieldPassword), passwordField)
+        keyPathRow = row(L10n.t(.fieldKey), keyPathField)
         keyPathRow.addArrangedSubview(browseButton)
         passphraseRow = labeled("passphrase", passphraseField)
         passwordRow.isHidden = false
@@ -194,7 +194,7 @@ final class ConnectionViewController: NSViewController {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "选择"
+        panel.prompt = L10n.t(.chooseWord)
         if panel.runModal() == .OK, let url = panel.url {
             keyPathField.stringValue = url.path
         }
@@ -208,12 +208,12 @@ final class ConnectionViewController: NSViewController {
         guard !connecting else { return }
         let host = hostField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !host.isEmpty else {
-            statusLabel.stringValue = "请填写主机"
+            statusLabel.stringValue = L10n.t(.fillHost)
             return
         }
         guard let port = UInt16(portField.stringValue.trimmingCharacters(in: .whitespaces)),
               port > 0 else {
-            statusLabel.stringValue = "端口无效"
+            statusLabel.stringValue = L10n.t(.invalidPort)
             return
         }
         let username = userField.stringValue.trimmingCharacters(in: .whitespaces)
@@ -221,7 +221,7 @@ final class ConnectionViewController: NSViewController {
         let secret = (isKey ? passphraseField.stringValue : passwordField.stringValue)
         let keyPath = keyPathField.stringValue.trimmingCharacters(in: .whitespaces)
         if isKey && keyPath.isEmpty {
-            statusLabel.stringValue = "请选择密钥文件"
+            statusLabel.stringValue = L10n.t(.chooseKeyFile)
             return
         }
         let request = ConnectionRequest(
@@ -233,7 +233,7 @@ final class ConnectionViewController: NSViewController {
 
         connecting = true
         connectButton.isEnabled = false
-        statusLabel.stringValue = "连接中…"
+        statusLabel.stringValue = L10n.t(.connecting)
 
         // SSH 握手同步阻塞——后台队列执行（global 队列为系统预建，本工具链安全）。
         let store = self.store
@@ -253,7 +253,7 @@ final class ConnectionViewController: NSViewController {
                     onConnected?(source, home)
                 case .failure(let error):
                     let message = (error as? TCError)?.message ?? error.localizedDescription
-                    self.statusLabel.stringValue = "连接失败：\(message)"
+                    self.statusLabel.stringValue = L10n.t(.connectFailedPrefix) + message
                 }
             }
         }

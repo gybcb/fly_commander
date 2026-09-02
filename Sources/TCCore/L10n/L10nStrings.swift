@@ -43,6 +43,19 @@ public enum L10nTable {
         .lineTruncatedMark: " …(line truncated)",
         .cannotReadImage: "Cannot read image: {0}", .cannotPreview: "Cannot preview this file",
         .previewWindowTitle: "FlyCommander Preview — {0}", .previewWindowTitlePlain: "FlyCommander Preview",
+        .appearance: "Appearance", .followSystem: "Follow System", .lightMode: "Light", .darkMode: "Dark",
+        .accentColorHint: "Accent (marked-row background / active-pane border)",
+        .fileColorHint: "File-type colors (extensions comma-separated; press Return to apply)",
+        .addRule: "Add Rule", .restoreDefaults: "Restore Defaults",
+        .commandBarPrompt: "Command:",
+        .commandBarPlaceholder: "Enter command (ls / cd / mkdir / copy / move / del / sftp / help)",
+        .fieldPassword: "Password", .fieldKeyFile: "Key File", .rememberPassword: "Remember Password",
+        .fieldHost: "Host", .fieldPort: "Port", .fieldUser: "User", .fieldKey: "Key", .chooseWord: "Choose",
+        .fillHost: "Please enter host", .invalidPort: "Invalid port", .chooseKeyFile: "Please choose a key file",
+        .connecting: "Connecting…",
+        .fieldServer: "Server", .fieldShare: "Share", .fieldDomain: "Domain",
+        .fillServerShare: "Please enter server and share",
+        .connectFailedPrefix: "Connect failed: ",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -87,5 +100,18 @@ public enum L10nTable {
         .lineTruncatedMark: " …（行已截断）",
         .cannotReadImage: "无法读取图片：{0}", .cannotPreview: "无法预览此文件",
         .previewWindowTitle: "FlyCommander 查看 — {0}", .previewWindowTitlePlain: "FlyCommander 查看",
+        .appearance: "外观", .followSystem: "跟随系统", .lightMode: "浅色", .darkMode: "深色",
+        .accentColorHint: "强调色（标记行底色 / 活动窗格边框）",
+        .fileColorHint: "文件类型配色（扩展名逗号分隔；编辑后按回车生效）",
+        .addRule: "添加规则", .restoreDefaults: "恢复默认",
+        .commandBarPrompt: "命令:",
+        .commandBarPlaceholder: "输入命令（ls / cd / mkdir / copy / move / del / sftp / help）",
+        .fieldPassword: "密码", .fieldKeyFile: "密钥文件", .rememberPassword: "记住密码",
+        .fieldHost: "主机", .fieldPort: "端口", .fieldUser: "用户", .fieldKey: "密钥", .chooseWord: "选择",
+        .fillHost: "请填写主机", .invalidPort: "端口无效", .chooseKeyFile: "请选择密钥文件",
+        .connecting: "连接中…",
+        .fieldServer: "服务器", .fieldShare: "共享", .fieldDomain: "域",
+        .fillServerShare: "请填写服务器与共享",
+        .connectFailedPrefix: "连接失败：",
     ]
 }
