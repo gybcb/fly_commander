@@ -179,14 +179,19 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     /// 语言变更后的全量重刷：重建整份主菜单（MainMenu 为纯静态、可重入），
     /// 重设两窗格列头标题，刷新命令栏常驻文案与状态栏。对话框/告警在调用时现取
-    /// t()，本就随语言更新，无需在此重绘。Theme/Connection/SMB/Search 窗控制器缓存其 VC，
-    /// 未在此重绘（见 task-7 报告后续项）。
+    /// t()，本就随语言更新，无需在此重绘。Theme/Connection/SMB/Search 四个常驻窗口
+    /// 缓存其 VC、标签在 loadView 冻结，故各经其 WindowController 就地重刷（含窗口标题）；
+    /// 刷新只重写文本、绝不 showWindow，未显示过的窗口不会被弹出。
     private func rebuildForLanguage() {
         NSApp.mainMenu = MainMenu.build(target: self)
         leftContainer.allPaneViews.forEach { $0.retitleColumns() }
         rightContainer.allPaneViews.forEach { $0.retitleColumns() }
         commandBar!.refreshLocalizedText()
         mainWindowController?.refreshLocalizedLabels()
+        searchWindow.refreshLocalizedText()
+        connectionWindow.refreshLocalizedText()
+        smbConnectionWindow.refreshLocalizedText()
+        themeWindow.refreshLocalizedText()
         updateBars()
     }
 

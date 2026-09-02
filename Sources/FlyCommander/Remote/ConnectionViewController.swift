@@ -28,23 +28,38 @@ final class ConnectionViewController: NSViewController {
 
     private let store = ConnectionStore.shared
 
+    /// 语言切换重刷绑定：闭包捕获控件 + key，刷新时按当前语言重算 t() 回写。
+    private var localizedBindings: [() -> Void] = []
+    private func bind(_ field: NSTextField, _ key: L10nKey) {
+        localizedBindings.append { field.stringValue = L10n.t(key) }
+    }
+    private func bind(_ button: NSButton, _ key: L10nKey) {
+        localizedBindings.append { button.title = L10n.t(key) }
+    }
+
+    /// 语言变更后重刷本窗静态标签（行标签/单选/复选/按钮）。状态文本随流程覆盖，不绑定。
+    /// 视图未加载时绑定表为空 → 无操作，不强行 loadView。
+    func refreshLocalizedText() {
+        localizedBindings.forEach { $0() }
+    }
+
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
 
-        let hostRow = row(L10n.t(.fieldHost), hostField)
+        let hostRow = row(.fieldHost, hostField)
         let netRow = NSStackView(views: [
-            labeled(L10n.t(.fieldPort), portField, width: 60),
-            labeled(L10n.t(.fieldUser), userField),
+            labeled(.fieldPort, portField, width: 60),
+            labeled(.fieldUser, userField),
         ])
         netRow.spacing = 16
 
         let radioRow = NSStackView(views: [passwordRadio, keyRadio])
         radioRow.spacing = 20
 
-        passwordRow = labeled(L10n.t(.fieldPassword), passwordField)
-        keyPathRow = row(L10n.t(.fieldKey), keyPathField)
+        passwordRow = labeled(.fieldPassword, passwordField)
+        keyPathRow = row(.fieldKey, keyPathField)
         keyPathRow.addArrangedSubview(browseButton)
-        passphraseRow = labeled(L10n.t(.fieldPassphrase), passphraseField)
+        passphraseRow = labeled(.fieldPassphrase, passphraseField)
         passwordRow.isHidden = false
         keyPathRow.isHidden = true
         passphraseRow.isHidden = true
@@ -99,11 +114,21 @@ final class ConnectionViewController: NSViewController {
         connectButton.setAccessibilityIdentifier("connectButton")
         statusLabel.setAccessibilityIdentifier("connectStatus")
 
+        // 静态标签绑定（单选/复选/按钮标题——属性初始化时冻结，须显式重刷）。
+        bind(passwordRadio, .fieldPassword)
+        bind(keyRadio, .fieldKeyFile)
+        bind(browseButton, .browse)
+        bind(rememberCheckbox, .rememberPassword)
+        bind(connectButton, .connect)
+        bind(cancelButton, .cancel)
+
         view = container
     }
 
-    private func row(_ title: String, _ field: NSTextField) -> NSStackView {
-        let label = NSTextField(labelWithString: title)
+    /// 标签行（左标签 + 输入框）：标签以 key 绑定，供语言切换重刷。
+    private func row(_ key: L10nKey, _ field: NSTextField) -> NSStackView {
+        let label = NSTextField(labelWithString: L10n.t(key))
+        bind(label, key)
         label.alignment = .right
         label.widthAnchor.constraint(equalToConstant: 70).isActive = true
         field.translatesAutoresizingMaskIntoConstraints = false
@@ -113,8 +138,8 @@ final class ConnectionViewController: NSViewController {
         return r
     }
 
-    private func labeled(_ title: String, _ field: NSTextField, width: CGFloat? = nil) -> NSStackView {
-        let r = row(title, field)
+    private func labeled(_ key: L10nKey, _ field: NSTextField, width: CGFloat? = nil) -> NSStackView {
+        let r = row(key, field)
         if let width { field.widthAnchor.constraint(equalToConstant: width).isActive = true }
         return r
     }

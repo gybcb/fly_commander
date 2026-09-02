@@ -3,6 +3,8 @@ import TCCore
 
 final class SearchWindowController: NSWindowController {
     private let searchVC = SearchViewController()
+    /// 窗口标题的静态 key（init 时冻结一次，语言切换时重刷）。
+    private let titleKey: L10nKey = .searchWindowTitle
 
     var onOperation: ((OperationState) -> Void)? {
         didSet { searchVC.onOperation = onOperation }
@@ -20,6 +22,13 @@ final class SearchWindowController: NSWindowController {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// 语言变更后重刷：窗口标题 + 内容 VC 静态标签。标题为静态（init 冻结一次）；
+    /// 内容仅在已加载时刷新（`isViewLoaded`），绝不强行 loadView 打开未用过的窗口。
+    func refreshLocalizedText() {
+        window?.title = L10n.t(titleKey)
+        if searchVC.isViewLoaded { searchVC.refreshLocalizedText() }
+    }
 
     func present(root: TCPath, source: FileSource, select: @escaping (SearchHit) -> Void) {
         searchVC.prepare(root: root, source: source, onSelect: select)

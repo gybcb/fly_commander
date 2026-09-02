@@ -3,6 +3,8 @@ import TCCore
 
 final class SMBConnectionWindowController: NSWindowController {
     private let connectionVC = SMBConnectionViewController()
+    /// 窗口标题静态 key（init 冻结一次，语言切换重刷）。
+    private let titleKey: L10nKey = .smbWindowTitle
     private var pendingServer: String?
     private var pendingShare: String?
     private var pendingUser: String?
@@ -21,6 +23,13 @@ final class SMBConnectionWindowController: NSWindowController {
         super.init(window: window)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// 语言变更后重刷：窗口标题 + 内容 VC 静态标签。仅在内容已加载时刷新，绝不强行 loadView。
+    func refreshLocalizedText() {
+        window?.title = L10n.t(titleKey)
+        if connectionVC.isViewLoaded { connectionVC.refreshLocalizedText() }
+    }
+
     func present() {
         connectionVC.prepare()
         if let s = pendingServer { connectionVC.prefill(server: s, share: pendingShare, username: pendingUser) }

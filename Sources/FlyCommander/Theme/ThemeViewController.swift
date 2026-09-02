@@ -6,6 +6,21 @@ final class ThemeViewController: NSViewController {
     private var accentWell: NSColorWell!
     private var rulesStack: NSStackView!
 
+    /// 语言切换重刷绑定：闭包捕获控件 + key，刷新时按当前语言重算回写（含 segment 段标签）。
+    private var localizedBindings: [() -> Void] = []
+    private func bind(_ field: NSTextField, _ key: L10nKey) {
+        localizedBindings.append { field.stringValue = L10n.t(key) }
+    }
+    private func bind(_ button: NSButton, _ key: L10nKey) {
+        localizedBindings.append { button.title = L10n.t(key) }
+    }
+
+    /// 语言变更后重刷静态标签（外观/强调色/配色标题、三模式段标签、两按钮）。
+    /// 视图未加载时绑定表为空 → 无操作，不强行 loadView。
+    func refreshLocalizedText() {
+        localizedBindings.forEach { $0() }
+    }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 640))
 
@@ -83,6 +98,18 @@ final class ThemeViewController: NSViewController {
         ])
 
         self.view = root
+
+        bind(appearanceLabel, .appearance)
+        bind(accentLabel, .accentColorHint)
+        bind(rulesLabel, .fileColorHint)
+        bind(addBtn, .addRule)
+        bind(restoreBtn, .restoreDefaults)
+        localizedBindings.append { [weak segment] in
+            guard let segment else { return }
+            segment.setLabel(L10n.t(.followSystem), forSegment: 0)
+            segment.setLabel(L10n.t(.lightMode), forSegment: 1)
+            segment.setLabel(L10n.t(.darkMode), forSegment: 2)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }

@@ -4,6 +4,8 @@ import TCCore
 /// SFTP 连接窗控制器（仿 SearchWindowController：非模态、可多开）。
 final class ConnectionWindowController: NSWindowController {
     private let connectionVC = ConnectionViewController()
+    /// 窗口标题静态 key（init 冻结一次，语言切换重刷）。
+    private let titleKey: L10nKey = .sftpWindowTitle
     /// `sftp host[:port]` 命令预填（present 的 prepare 之后应用）。
     private var pendingHost: String?
     private var pendingPort: UInt16?
@@ -31,6 +33,12 @@ final class ConnectionWindowController: NSWindowController {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// 语言变更后重刷：窗口标题 + 内容 VC 静态标签。仅在内容已加载时刷新，绝不强行 loadView。
+    func refreshLocalizedText() {
+        window?.title = L10n.t(titleKey)
+        if connectionVC.isViewLoaded { connectionVC.refreshLocalizedText() }
+    }
 
     func present() {
         connectionVC.prepare()

@@ -54,6 +54,21 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
     private let newSearchButton = NSButton(title: L10n.t(.newSearch), target: nil, action: nil)
     private let table = HitTableView()
 
+    /// 语言切换重刷绑定：每条闭包捕获控件 + key（非成品串），刷新时按当前语言重算 t() 回写。
+    private var localizedBindings: [() -> Void] = []
+    private func bind(_ field: NSTextField, _ key: L10nKey) {
+        localizedBindings.append { field.stringValue = L10n.t(key) }
+    }
+    private func bind(_ button: NSButton, _ key: L10nKey) {
+        localizedBindings.append { button.title = L10n.t(key) }
+    }
+
+    /// 语言变更后重刷本窗所有静态标签（提示/按钮/列头）。状态文本随流程覆盖，不在此重刷。
+    /// 视图未加载时绑定表为空 → 无操作，不会强行 loadView。
+    func refreshLocalizedText() {
+        localizedBindings.forEach { $0() }
+    }
+
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 420))
         buildForm()
@@ -77,6 +92,13 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         ])
         view = container
         resultContainer.isHidden = true
+
+        // 静态标签绑定（提示/四个按钮）；根标签、状态文本随流程覆盖，不绑定。
+        bind(hintLabel, .searchHint)
+        bind(startButton, .startSearch)
+        bind(cancelButton, .cancel)
+        bind(stopButton, .stop)
+        bind(newSearchButton, .newSearch)
     }
 
     private func buildForm() {
@@ -119,6 +141,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
         column.title = L10n.t(.colFile)
         column.width = 460
         table.addTableColumn(column)
+        localizedBindings.append { column.title = L10n.t(.colFile) }   // 当前 headerView=nil（不显），仍绑定防将来启用
         table.headerView = nil
         table.dataSource = self
         table.delegate = self
