@@ -32,11 +32,13 @@ public final class OperationEngine {
         }
     }
 
+    /// - Parameter onWarning: 跨源 move 删源失败的**结构化原料**（残留文件名 + 原始错误）。
+    ///   成品警告句由调用方（持 L10n 的边界）组装；内核只产语义数据，零中文。
     public func performMove(_ items: [FileItem], to destDir: TCPath,
                             srcSource: FileSource, dstSource: FileSource,
                             prompt: ConflictPrompt? = nil,
                             progress: ((Int, Int) -> Void)? = nil,
-                            onWarning: ((String) -> Void)? = nil) throws {
+                            onWarning: ((String, TCError) -> Void)? = nil) throws {
         var overwriteAll = false, skipAll = false
         // 同源 move 失败需回滚已完成项；跨源 move 传输成功后不回滚（删源失败只记警告）。
         var rolledBack: [(from: TCPath, to: TCPath)] = []
@@ -59,7 +61,7 @@ public final class OperationEngine {
                     try checkCrossSourceDirectory(item)
                     try stream(from: srcSource, to: dstSource, src: item.path, dst: dst)
                     do { try srcSource.removeItem(at: item.path) }
-                    catch { onWarning?("源端残留：\(item.name)（\(asTCError(error).message)）") }
+                    catch { onWarning?(item.name, asTCError(error)) }
                 }
             } catch {
                 if case TCError.cancelled = asTCError(error) { throw error }

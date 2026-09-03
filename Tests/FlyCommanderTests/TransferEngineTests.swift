@@ -70,17 +70,11 @@ private final class MemSource: FileSource {
 }
 
 /// 状态记录器（引用类型，闭包与测试共享同一份数组）。
+/// Plan B：OperationState 是结构化契约（key + args + warningLines），原样存下再逐 case 断言。
 private final class StateRecorder {
-    var entries: [(label: String, progress: Double?)] = []
+    var entries: [OperationState] = []
     var finishedPanes: (FilePane, FilePane)?
-    func record(_ s: OperationState) {
-        switch s {
-        case .running(let l, let p): entries.append((l, p))
-        case .done(let m): entries.append((m, nil))
-        case .failed(let m): entries.append(("FAILED:\(m)", nil))
-        case .idle: entries.append(("IDLE", nil))
-        }
-    }
+    func record(_ s: OperationState) { entries.append(s) }
 }
 
 /// 同步线程边界的执行器 + 真实 FilePane 对（左=远端假源，右=本地假源）。
@@ -115,16 +109,23 @@ private final class Harness {
 }
 
 final class TransferEngineTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        // 警告串/状态串都经 L10n 表；固定英文默认，zh 用例内部自切自恢复。
+        L10n.current = .en
+    }
+    override func tearDown() { L10n.current = .en; super.tearDown() }
+
     func testCrossSourceCopyStreamsAndEmitsProgressAndDone() {
         let h = Harness()
         h.engine.run(true, h.left, h.right)
         XCTAssertEqual(h.local.data["/dst/a.txt"], Data("hello world".utf8))
         XCTAssertEqual(h.local.table["/dst/a.txt"]?.size, 11)
-        // 状态序：running(0) → running(1) → done
+        // 状态序：running(0) → running(1) → done（Plan B：结构化 key，非中文串）
         XCTAssertEqual(h.rec.entries.count, 3, "状态流：\(h.rec.entries)")
-        XCTAssertEqual(h.rec.entries[0].progress, 0)
-        XCTAssertEqual(h.rec.entries[1].progress, 1)
-        XCTAssertTrue(h.rec.entries[2].label.hasPrefix("复制 1 个文件 完成"), "done：\(h.rec.entries[2].label)")
+        XCTAssertEqual(h.rec.entries[0], .running(label: .opCopying, args: ["1"], progress: 0))
+        XCTAssertEqual(h.rec.entries[1], .running(label: .opCopying, args: ["1"], progress: 1))
+        XCTAssertEqual(h.rec.entries[2], .done(label: .opCopying, args: ["1"], warningLines: []))
     }
 
     func testOnFinishedReceivesBothPanes() {
@@ -180,26 +181,43 @@ final class TransferEngineTests: XCTestCase {
         h.local.table["/dst/a.txt"] = h.local.item("/dst/a.txt", size: 1)
         h.engine.prompt = { _, _ in .cancel }
         h.engine.run(true, h.left, h.right)
-        XCTAssertEqual(h.rec.entries.last?.label, "IDLE", "取消应是 idle：\(h.rec.entries)")
+        XCTAssertEqual(h.rec.entries.last, .idle, "取消应是 idle：\(h.rec.entries)")
     }
 
     func testSourceDeleteFailureOnMoveWarnsButCompletes() {
         let h = Harness()
-        h.remote.removeError = TCError.unknown("disk full")
+        h.remote.removeError = TCError.busy("x")
         h.engine.run(false, h.left, h.right)
-        guard let last = h.rec.entries.last else { return XCTFail("move 应完成：\(h.rec.entries)") }
-        XCTAssertTrue(last.label.hasPrefix("移动 1 个文件 完成"), "done 文案：\(last.label)")
-        XCTAssertTrue(last.label.contains("⚠"), "删源失败应带警告：\(last.label)")
-        XCTAssertTrue(last.label.contains("源端残留"), "警告内容：\(last.label)")
+        // Plan B：引擎产结构化原料 (name, TCError)，成品警告串在 AppKit 边界（L10n）组装。
+        guard case .done(let label, let args, let warns)? = h.rec.entries.last else {
+            return XCTFail("move 应完成：\(h.rec.entries)")
+        }
+        XCTAssertEqual(label, .opMoving)
+        XCTAssertEqual(args, ["1"])
+        XCTAssertEqual(warns, ["Source leftover: a.txt (Busy: x)"], "警告成品串：\(warns)")
         // 传输本身成功
         XCTAssertEqual(h.local.data["/dst/a.txt"], Data("hello world".utf8))
     }
 
+    /// 警告串随语言：zh 下 TransferEngine 组装的是中文模板（全角 ：（））。
+    func testSourceDeleteWarningFollowsLanguage() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        let h = Harness()
+        h.remote.removeError = TCError.busy("x")
+        h.engine.run(false, h.left, h.right)
+        guard case .done(_, _, let warns)? = h.rec.entries.last else {
+            return XCTFail("move 应完成：\(h.rec.entries)")
+        }
+        XCTAssertEqual(warns, ["源端残留：a.txt（忙碌/被占用：x）"], "zh 警告：\(warns)")
+    }
+
     func testEngineFailureSurfacesFailedState() {
         let h = Harness()
-        h.remote.data = [:]   // openReader 抛 "no file: /src/a.txt"
+        h.remote.data = [:]   // openReader 抛 TCError.unknown("no file: /src/a.txt")
         h.engine.run(true, h.left, h.right)
-        XCTAssertEqual(h.rec.entries.last?.label, "FAILED:no file: /src/a.txt", "应透出源端错误：\(h.rec.entries)")
+        XCTAssertEqual(h.rec.entries.last, .failed(.unknown("no file: /src/a.txt")),
+                       "应透出源端错误（结构化 TCError）：\(h.rec.entries)")
     }
 
     func testNoTargetsDoesNothing() {

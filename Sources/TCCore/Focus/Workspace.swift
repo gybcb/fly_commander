@@ -1,10 +1,17 @@
 import Foundation
 
+/// 操作状态通道（Plan B：结构 key 化）。
+///
+/// 内核/传输层**只发 `L10nKey` + 结构化参数**，不再产中文成品串：
+/// - `label`/`args` → 显示边界（`MainViewController.statusText(for:)`）用 `t(label, args…)` 展开；
+/// - `warningLines` → 已由边界组装好的**成品串**（警告在引擎深层逐条产生，穿三层只为最终 join
+///   收益不抵成本，故结构化原料 `(name, TCError)` 在 CommandRouter/TransferEngine 就地组装）；
+/// - `failed` → 携带 `TCError` 本体，显示时经 `tcErrorDisplay` 现取，天然随语言。
 public enum OperationState: Equatable {
     case idle
-    case running(label: String, progress: Double)
-    case done(String)
-    case failed(String)
+    case running(label: L10nKey, args: [String], progress: Double)
+    case done(label: L10nKey, args: [String], warningLines: [String])
+    case failed(TCError)
 }
 
 public final class Workspace {

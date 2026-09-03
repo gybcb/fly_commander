@@ -233,7 +233,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
                     DispatchQueue.main.async {
                         guard self.isSearching else { return }
                         self.statusLabel.stringValue = L10n.t(.searchingChecked, "\(n)")
-                        self.onOperation?(.running(label: "搜索", progress: 0))
+                        self.onOperation?(.running(label: .opSearchRunning, args: [], progress: 0))
                     }
                 },
                 isCancelled: { [weak self] in
@@ -254,7 +254,7 @@ final class SearchViewController: NSViewController, NSTableViewDataSource, NSTab
                     self.onOperation?(.idle)
                 } else {
                     self.statusLabel.stringValue = L10n.t(.searchSummary, "\(found.count)", "\(visited)")
-                    self.onOperation?(.done("搜索完成，\(found.count) 个结果"))
+                    self.onOperation?(.done(label: .opSearchDone, args: ["\(found.count)"], warningLines: []))
                 }
                 if found.isEmpty && !wasCancelled {
                     self.statusLabel.stringValue = L10n.t(.searchNone, "\(visited)")

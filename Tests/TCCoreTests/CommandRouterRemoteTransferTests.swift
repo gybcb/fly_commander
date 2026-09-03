@@ -153,9 +153,10 @@ final class CommandRouterRemoteTransferTests: XCTestCase {
         ws.onOperationState = { last = $0 }
         router.execute(.copy)
         XCTAssertEqual(remote.copyCalls, ["/S/a.txt"], "未注入钩子时应走同步快路径")
-        guard case .failed(let msg) = last else {
+        guard case .failed(let error) = last else {
             return XCTFail("快路径失败应同步上报 .failed，得到 \(String(describing: last))")
         }
-        XCTAssertTrue(msg.contains("boom-remote"), "应透出源端错误：\(msg)")
+        // Plan B：.failed 携带结构化 TCError（源端原样抛出的错误），不再传文本。
+        XCTAssertEqual(error, .unknown("boom-remote"), "应透出源端错误：\(error)")
     }
 }

@@ -46,7 +46,8 @@ final class TransferEngine {
     func run(_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) {
         let targets = srcPane.operationTargets
         guard !targets.isEmpty else { return }
-        let label = (isCopy ? "复制" : "移动") + " \(targets.count) 个文件"
+        let label: L10nKey = isCopy ? .opCopying : .opMoving
+        let args = ["\(targets.count)"]
         let srcSource = srcPane.source
         let dstSource = dstPane.source
         let dstDir = dstPane.path
@@ -56,28 +57,33 @@ final class TransferEngine {
         let onMain = self.onMain
 
         runInBackground {
-            onMain { state?(.running(label: label, progress: 0)) }
-            var warnings: [String] = []
+            onMain { state?(.running(label: label, args: args, progress: 0)) }
+            var warnings: [(String, TCError)] = []
             do {
                 if isCopy {
                     try engine.performCopy(targets, to: dstDir, srcSource: srcSource, dstSource: dstSource,
                                             prompt: prompt) { d, c in
-                        onMain { state?(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c))) }
+                        onMain { state?(.running(label: label, args: args, progress: c == 0 ? 0 : Double(d) / Double(c))) }
                     }
                 } else {
                     try engine.performMove(targets, to: dstDir, srcSource: srcSource, dstSource: dstSource,
                                             prompt: prompt,
                                             progress: { d, c in
-                        onMain { state?(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c))) }
+                        onMain { state?(.running(label: label, args: args, progress: c == 0 ? 0 : Double(d) / Double(c))) }
                     },
-                                            onWarning: { warnings.append($0) })
+                                            onWarning: { warnings.append(($0, $1)) })
                 }
-                let note = warnings.isEmpty ? "" : "　⚠ \(warnings.joined(separator: "；"))"
-                onMain { state?(.done("\(label) 完成\(note)")) }
+                // 警告成品串（"源端残留：X（…）"）在本层（持 L10n 的 AppKit 边界）组装，
+                // 与 CommandRouter 的 warnFormatter 注入同级；放进 onMain 块内，
+                // 保证 L10n 表只在主线程读（语言切换也在主线程）。
+                onMain {
+                    let lines = warnings.map { L10n.t(.warnSourceLeftover, $0.0, tcErrorDisplay($0.1)) }
+                    state?(.done(label: label, args: args, warningLines: lines))
+                }
             } catch let e as TCError {
-                onMain { state?(e == .cancelled ? .idle : .failed(e.message)) }
+                onMain { state?(e == .cancelled ? .idle : .failed(e)) }
             } catch {
-                onMain { state?(.failed(error.localizedDescription)) }
+                onMain { state?(.failed(.unknown(error.localizedDescription))) }
             }
             onMain { self.onFinished?(srcPane, dstPane) }
         }

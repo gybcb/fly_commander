@@ -152,12 +152,15 @@ final class OperationEngineRoutingTests: XCTestCase {
     func testCrossSourceMoveSourceDeleteFailureWarnsNotThrows() throws {
         a.readerChunks = [Data("x".utf8)]
         a.removeError = TCError.unknown("disk full")
-        var warnings: [String] = []
+        // Plan B：内核只产**结构化原料**（残留文件名 + 原始 TCError），
+        // 成品警告句由 AppKit 边界（持 L10n）组装，内核零中文。
+        var warnings: [(name: String, error: TCError)] = []
         XCTAssertNoThrow(try engine.performMove([fakeItem("f.txt", in: "/s")], to: TCPath("/d"),
                                                 srcSource: a, dstSource: b,
-                                                onWarning: { warnings.append($0) }))
+                                                onWarning: { warnings.append(($0, $1)) }))
         XCTAssertEqual(warnings.count, 1)
-        XCTAssertTrue(warnings[0].contains("源端残留"))
+        XCTAssertEqual(warnings[0].name, "f.txt")
+        XCTAssertEqual(warnings[0].error, .unknown("disk full"))
     }
 
     // MARK: - 跨源目录明确报错（C1：目录不得静默当空文件流过去）

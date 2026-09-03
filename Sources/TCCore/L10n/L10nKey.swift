@@ -66,5 +66,10 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case errNotFound, errPermissionDenied, errBusy, errInvalidPath, errCancelled
     case errAlreadyExists, errAlreadyExistsBare, errDirExists, errCrossSourceDir
     case errNoSpace, errSFTPNotExecuted, errSMBMountFailed, errPutBackFailed, errUnknown
+    // —— OperationState 通道（Plan B：内核只发 key，边界组装）——
+    // running 标签复用 Plan A 现键（rename / newDirectory）；done 成品句用 op*Done。
+    case opCopying, opMoving, opDeleteRunning, opDeleteDone
+    case opRenameDone, opMkdirDone, opSearchRunning, opSearchDone
+    case statusRunning, statusDone, statusDoneWarn, warnSourceLeftover
     // …（各任务按 key 清单增补本 enum）
 }

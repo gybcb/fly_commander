@@ -86,16 +86,17 @@ final class CommandRouterTests: XCTestCase {
 
     func testRenameFailureSurfacesTCErrorMessage() {
         // a.txt already exists, so renaming z.txt -> a.txt must fail. The
-        // user-facing message must be the normalized TCError.message (Chinese),
+        // user-facing message must be the normalized TCError (English),
         // not a localized-Error boilerplate string.
         workspace.activePane.moveFocus(to: 1, mode: .simple) // focus z.txt
         var last: OperationState?
         workspace.onOperationState = { last = $0 }
         router.rename(to: "a.txt")
-        guard case .failed(let message)? = last else {
+        guard case .failed(let error)? = last else {
             return XCTFail("expected .failed, got \(String(describing: last))")
         }
-        XCTAssertTrue(message.hasPrefix("Already exists"), "got: \(message)")
+        // Plan B：.failed 携带结构化 TCError（边界再翻译），不再是文本串。
+        XCTAssertEqual(error, .alreadyExists("a.txt"))
     }
 
     func testDeleteDelegatesToOnDelete() {

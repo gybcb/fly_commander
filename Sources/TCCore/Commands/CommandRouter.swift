@@ -12,6 +12,10 @@ public final class CommandRouter {
     /// 交给它后台执行（主线程不阻塞）。未注入或双端皆本地 → 走本地快路径（同步）。
     /// 参数：(isCopy, 活动窗格=源, 另一窗格=目标)。
     public var onRemoteTransfer: ((_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) -> Void)?
+    /// 警告成品串组装器（app 层注入，与 `conflictPrompt` 同款）：内核只产
+    /// `(残留文件名, TCError)` 结构化原料，本地化在持 L10n 的装配处做。
+    /// nil（纯内核测试环境）→ 兜底内部英文串 `"\(name) (\(err.message))"`。
+    public var warnFormatter: ((String, TCError) -> String)?
 
     public init(workspace: Workspace, engine: OperationEngine = OperationEngine()) {
         self.workspace = workspace
@@ -62,27 +66,27 @@ public final class CommandRouter {
 
     public func rename(to newName: String) {
         guard let item = workspace.activePane.focusedItem else { return }
-        workspace.operationState(.running(label: "重命名", progress: 0))
+        workspace.operationState(.running(label: .rename, args: [], progress: 0))
         do {
             try engine.performRename(item, to: newName, source: workspace.activePane.source)
             reloadPane(workspace.activePane)
-            workspace.operationState(.done("已重命名"))
+            workspace.operationState(.done(label: .opRenameDone, args: [], warningLines: []))
         } catch {
             reloadPane(workspace.activePane)
-            workspace.operationState(.failed(asTCError(error).message))
+            workspace.operationState(.failed(asTCError(error)))
         }
     }
 
     public func makeDirectory(named name: String) {
         let a = workspace.activePane
-        workspace.operationState(.running(label: "新建目录", progress: 0))
+        workspace.operationState(.running(label: .newDirectory, args: [], progress: 0))
         do {
             _ = try engine.performMakeDirectory(name, in: a.path, source: a.source)
             reloadPane(a)
-            workspace.operationState(.done("已新建目录"))
+            workspace.operationState(.done(label: .opMkdirDone, args: [], warningLines: []))
         } catch {
             reloadPane(a)
-            workspace.operationState(.failed(asTCError(error).message))
+            workspace.operationState(.failed(asTCError(error)))
         }
     }
 
@@ -103,39 +107,45 @@ public final class CommandRouter {
         let t = workspace.inactivePane
         let targets = a.operationTargets
         guard !targets.isEmpty else { return }
-        let label = (isCopy ? "复制" : "移动") + " \(targets.count) 个文件"
+        let label: L10nKey = isCopy ? .opCopying : .opMoving
+        let args = ["\(targets.count)"]
         let ws = workspace
         let eng = engine
         let src = a.source
         let dst = t.source
-        var warnings: [String] = []
-        ws.operationState(.running(label: label, progress: 0))
+        var warnings: [(String, TCError)] = []
+        ws.operationState(.running(label: label, args: args, progress: 0))
         do {
             if isCopy {
                 try eng.performCopy(targets, to: t.path, srcSource: src, dstSource: dst,
                                     prompt: conflictPrompt) { d, c in
-                    ws.operationState(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c)))
+                    ws.operationState(.running(label: label, args: args, progress: c == 0 ? 0 : Double(d) / Double(c)))
                 }
             } else {
                 try eng.performMove(targets, to: t.path, srcSource: src, dstSource: dst,
                                     prompt: conflictPrompt,
                                     progress: { d, c in
-                    ws.operationState(.running(label: label, progress: c == 0 ? 0 : Double(d) / Double(c)))
+                    ws.operationState(.running(label: label, args: args, progress: c == 0 ? 0 : Double(d) / Double(c)))
                 },
-                                    onWarning: { warnings.append($0) })
+                                    onWarning: { warnings.append(($0, $1)) })
             }
             a.load()
             t.load()
-            let note = warnings.isEmpty ? "" : "　⚠ \(warnings.joined(separator: "；"))"
-            workspace.operationState(.done("\(label) 完成\(note)"))
+            workspace.operationState(.done(label: label, args: args, warningLines: formatted(warnings)))
         } catch let e as TCError {
             a.load()
             t.load()
-            workspace.operationState(e == .cancelled ? .idle : .failed(e.message))
+            workspace.operationState(e == .cancelled ? .idle : .failed(e))
         } catch {
             a.load()
             t.load()
-            workspace.operationState(.failed(error.localizedDescription))
+            workspace.operationState(.failed(.unknown(error.localizedDescription)))
         }
+    }
+
+    /// 警告原料 → 成品串（注入的 `warnFormatter`；未注入落内部英文）。
+    private func formatted(_ warnings: [(String, TCError)]) -> [String] {
+        let fmt = warnFormatter
+        return warnings.map { fmt?($0, $1) ?? "\($0) (\($1.message))" }
     }
 }

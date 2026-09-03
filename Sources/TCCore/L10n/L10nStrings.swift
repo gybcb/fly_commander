@@ -119,6 +119,14 @@ public enum L10nTable {
         .errSMBMountFailed: "SMB mount failed (exit {0}): {1}",
         .errPutBackFailed: "Put-back mount failed (exit {0}): {1}",
         .errUnknown: "Error: {0}",
+        // —— OperationState 通道（Plan B；running 标签复用 .rename/.newDirectory）——
+        .opCopying: "Copying {0} item(s)", .opMoving: "Moving {0} item(s)",
+        .opDeleteRunning: "Deleting {0} item(s)", .opDeleteDone: "Deleted {0} item(s)",
+        .opRenameDone: "Renamed", .opMkdirDone: "Directory created",
+        .opSearchRunning: "Searching", .opSearchDone: "Search complete, {0} result(s)",
+        .statusRunning: "{0} {1}%", .statusDone: "{0} complete",
+        .statusDoneWarn: "{0} ⚠ {1}",
+        .warnSourceLeftover: "Source leftover: {0} ({1})",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -239,5 +247,13 @@ public enum L10nTable {
         .errSMBMountFailed: "SMB 挂载失败（exit {0}）：{1}",
         .errPutBackFailed: "挂回原处失败（exit {0}）：{1}",
         .errUnknown: "错误：{0}",
+        // —— OperationState 通道（zh 逐字搬被替换中文现码；全角 ：（）　⚠ ）——
+        .opCopying: "复制 {0} 个文件", .opMoving: "移动 {0} 个文件",
+        .opDeleteRunning: "删除 {0} 个文件", .opDeleteDone: "已删除 {0} 个文件",
+        .opRenameDone: "已重命名", .opMkdirDone: "已新建目录",
+        .opSearchRunning: "搜索", .opSearchDone: "搜索完成，{0} 个结果",
+        .statusRunning: "{0} {1}%", .statusDone: "{0} 完成",
+        .statusDoneWarn: "{0}　⚠ {1}",
+        .warnSourceLeftover: "源端残留：{0}（{1}）",
     ]
 }

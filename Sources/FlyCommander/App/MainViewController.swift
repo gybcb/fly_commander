@@ -60,6 +60,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         router.onView = { [weak self] item in self?.showPreview(item) }
         router.onEdit = { [weak self] item in self?.openForEdit(item) }
         router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
+        // 警告成品串（"源端残留：X（…）"）在本地化边界组装——内核只给 (文件名, TCError)。
+        router.warnFormatter = { name, err in L10n.t(.warnSourceLeftover, name, tcErrorDisplay(err)) }
 
         // 远端传输：router 检测到任一端 isRemote 时委托后台执行器（主线程不冻结）。
         transferEngine = TransferEngine(engine: engine)
@@ -281,13 +283,37 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     }
 
     private func operationStateChanged(_ s: OperationState) {
+        setStatus(Self.statusText(for: s) ?? "")
+    }
+
+    /// OperationState → 状态栏成品串（Plan B：唯一的文案组装边界）。
+    ///
+    /// 纯函数（无 UI 依赖）故可直接单测。`opCopying`/`opMoving` 是"进度标签"，
+    /// done 时套 `statusDone`/`statusDoneWarn` 成 "X 完成"；`opRenameDone`/`opMkdirDone`/
+    /// `opDeleteDone`/`opSearchDone` 本身就是成品句（"已重命名"…），逐字显示不再套"完成"。
+    /// `warningLines` 已是成品串（`warnFormatter`/TransferEngine 组装），此处只负责 join + ⚠。
+    /// 返回 nil = 无内容（idle），调用方清空状态栏。
+    static func statusText(for s: OperationState) -> String? {
         switch s {
-        case .running(let label, let progress): setStatus("\(label) \(Int(progress * 100))%")
-        case .done(let m): setStatus(m)
-        case .failed(let m): setStatus(L10n.t(.statusErrorPrefix) + m)
-        case .idle: setStatus("")
+        case .idle:
+            return nil
+        case .running(let label, let args, let progress):
+            return L10n.t(.statusRunning, args: [L10n.t(label, args: args), "\(Int(progress * 100))"])
+        case .done(let label, let args, let warningLines):
+            let expanded = L10n.t(label, args: args)
+            let base = Self.appendCompleteLabels.contains(label) ? L10n.t(.statusDone, expanded) : expanded
+            guard !warningLines.isEmpty else { return base }
+            return L10n.t(.statusDoneWarn, args: [base, warningLines.joined(separator: "；")])
+        case .failed(let error):
+            // 注意：`.unknown` 的显示模板 `errUnknown` 本身已带 "Error: "/"错误：" 前缀，
+            // 故非语义错误在状态栏会呈现 "Error: Error: <系统文本>"（双重前缀）。
+            // 是否去掉 statusErrorPrefix 或把 errUnknown 模板改为裸 "{0}" 属 T1 契约决策，见任务报告。
+            return L10n.t(.statusErrorPrefix) + tcErrorDisplay(error)
         }
     }
+
+    /// done 时需要再套"X 完成"模板的标签键（其余 done 标签本身即成品句）。
+    private static let appendCompleteLabels: Set<L10nKey> = [.opCopying, .opMoving]
 
     /// 工具栏右侧的状态文本（操作进度/结果/已选 N 项）。
     private var statusLabel: NSTextField?
@@ -510,7 +536,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         NSWorkspace.shared.recycle(urls) { [weak self] _, _ in
             DispatchQueue.main.async {
                 pane.load()
-                self?.workspace.operationState(.done("已删除 \(targets.count) 个文件"))
+                self?.workspace.operationState(.done(label: .opDeleteDone, args: ["\(targets.count)"],
+                                                     warningLines: []))
             }
         }
     }
@@ -528,7 +555,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         let source = pane.source
         let engine = self.engine
         let state = { [weak self] s in self?.workspace.operationState(s) }
-        state(.running(label: "删除 \(targets.count) 个文件", progress: 0))
+        state(.running(label: .opDeleteRunning, args: ["\(targets.count)"], progress: 0))
         // 系统预建全局队列执行（不新建 DispatchQueue——SDK 约束）。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result: Result<Void, Error>
@@ -537,9 +564,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             DispatchQueue.main.async {
                 switch result {
                 case .success:
-                    state(.done("已删除 \(targets.count) 个文件"))
+                    state(.done(label: .opDeleteDone, args: ["\(targets.count)"], warningLines: []))
                 case .failure(let error):
-                    state(.failed((error as? TCError)?.message ?? error.localizedDescription))
+                    state(.failed(asTCError(error)))
                 }
                 self?.reloadPane(pane)
             }
