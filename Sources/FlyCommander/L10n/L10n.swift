@@ -34,11 +34,27 @@ enum L10n {
         t(k, args: args)
     }
     /// 数组重载：供 TCError.l10nArgs 等结构化参数直接传入（variadic 版委托它）。
+    /// 单趟扫描替换：只替换**模板**里的 `{i}`，arg 的**内容**（Plan B 可能是远端文件名/
+    /// Traversio message，含 `{1}` 字面量）不参与二次扫描——防逐 arg 顺序替换的污染。
     static func t(_ k: L10nKey, args: [String]) -> String {
         let table = current == .en ? L10nTable.en : L10nTable.zh
-        var s = table[k] ?? L10nTable.en[k] ?? k.rawValue
-        for (i, a) in args.enumerated() { s = s.replacingOccurrences(of: "{\(i)}", with: a) }
-        return s
+        let tmpl = table[k] ?? L10nTable.en[k] ?? k.rawValue
+        guard !args.isEmpty else { return tmpl }
+        var out = ""
+        var i = tmpl.startIndex
+        while i < tmpl.endIndex {
+            if tmpl[i] == "{",
+               let close = tmpl[i...].firstIndex(of: "}"),
+               let idx = Int(tmpl[tmpl.index(after: i)..<close]),
+               idx >= 0, idx < args.count {
+                out += args[idx]
+                i = tmpl.index(after: close)
+            } else {
+                out.append(tmpl[i])
+                i = tmpl.index(after: i)
+            }
+        }
+        return out
     }
     /// 注册切换回调，返回 token 供 unobserve。
     static func observe(_ cb: @escaping () -> Void) -> Int {

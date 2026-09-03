@@ -39,7 +39,7 @@ public struct SMBConnectionRecord: Codable, Equatable {
 
     public var sourceID: String { "smb://\(server)/\(share)" }
     public var credentialAccount: String { "\(server)|\(domain ?? "")|\(share)|\(username)" }
-    public var displayName: String { "\(server)/\(share)（\(username)）" }
+    public var displayName: String { "\(server)/\(share) (\(username))" }   // ASCII 括号（全角标点=非本地化残留，终审 I-1；本字段暂无 UI 读者，接 UI 时若需本地化再键化）
     public func config() -> SMBConnectionConfig {
         SMBConnectionConfig(server: server, share: share, domain: domain, username: username)
     }

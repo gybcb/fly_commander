@@ -40,21 +40,21 @@ public final class SFTPSource: FileSource {
     /// 连接并解析远端 home 目录（SFTP REALPATH "."），失败抛 TCError。
     /// 连接成功后连接保持复用；供连接窗取起始路径。
     public func resolveHome() throws -> String {
-        try mapped { try conn().performSync { try await $0.realPath(".") } }.filename
+        try mapped("") { try conn().performSync { try await $0.realPath(".") } }.filename
     }
 
     // MARK: - 错误映射（所有出口统一过这里）
 
     /// 统一映射出口。`path` = 出错操作的目标远端绝对路径（有主体则 .notFound/.permissionDenied 携真路径，
-    /// 无主体的操作（连接/认证/home）传 ""→落泛化占位）。
-    private func mapped<T>(_ path: String = "", _ body: () throws -> T) throws -> T {
+    /// 无主体的操作（连接/认证/home）显式传 ""）。**无默认值=新增 FileSource 方法漏传 path 必编译失败**（终审 M-1）。
+    private func mapped<T>(_ path: String, _ body: () throws -> T) throws -> T {
         do { return try body() }
         catch {
             throw (error as? SSHClientError)?.sftpMappedTCError(path: path) ?? asTCError(error)
         }
     }
 
-    private func call<T>(_ path: String = "",
+    private func call<T>(_ path: String,
                          _ op: @escaping @Sendable (SFTPClient) async throws -> T) throws -> T {
         try mapped(path) { try conn().performSync(op) }
     }

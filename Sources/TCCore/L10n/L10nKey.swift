@@ -73,5 +73,4 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case opCopying, opMoving, opDeleteRunning, opDeleteDone
     case opRenameDone, opMkdirDone, opSearchRunning, opSearchDone
     case statusRunning, statusDone, statusDoneWarn, warnSourceLeftover
-    // …（各任务按 key 清单增补本 enum）
 }

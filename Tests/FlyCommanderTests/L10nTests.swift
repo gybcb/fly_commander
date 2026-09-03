@@ -14,7 +14,32 @@ final class L10nTests: XCTestCase {
 
     func testDefaultIsEnglishWhenNoPreference() {
         UserDefaults.standard.removeObject(forKey: "appLanguage")
+        // 局限记录（终审 M-3，不改）：`_current` 是进程级缓存，任何前序 setUp 的
+        // `L10n.current = .en` 都已把它写脏 → 冷启动"盘无值→回退 .en"分支恒不可达。
+        // 唯一诚实断法就是这条 currentResolvedForTest（读缓存值）。真穷举冷启动需把
+        // _current 暴露成测试接缝=扩产品面，不值。此测防的是"removeObject 后 setter
+        // 缓存被错误重读成 zh"这一类回归，非"证明无值回退"。
         XCTAssertEqual(L10n.currentResolvedForTest, .en)
+    }
+    // 终审 I-2：单趟替换——前一个 arg 的**内容**含 `{N}` 字面量时不得被后轮覆写。
+    // Plan B 把远端文件名/Traversio message 灌进 args，文件名恰含 "{1}" 即触发。
+    func testArgContainingPlaceholderLiteralNotReprocessed() {
+        // {0}=文件名（含 "{1}" 字面量），{1}=真实第二参
+        XCTAssertEqual(
+            L10n.t(.warnSourceLeftover, args: ["f{1}x.txt", "Busy"]),
+            "Source leftover: f{1}x.txt (Busy)")
+    }
+    // 越界占位符（{1} 但只 1 参）：**保留字面量**，与旧 replacingOccurrences 逐字一致
+    // （旧版 for enumerated 不遍历越界下标 → 同样不替换）。characterization 锁，
+    // 防未来"优化"成空串悄悄改语义。
+    func testOutOfRangePlaceholderPreservedVerbatim() {
+        XCTAssertEqual(
+            L10n.t(.warnSourceLeftover, args: ["solo"]),
+            "Source leftover: solo ({1})")
+        // 走生产 variadic 入口（委托 args: 数组版，fb-review）
+        XCTAssertEqual(
+            L10n.t(.warnSourceLeftover, "solo"),
+            "Source leftover: solo ({1})")
     }
     func testInterpolatedLookupEnglish() {
         XCTAssertEqual(L10n.t(.entered, "sftp://h:22/x"), "Entered sftp://h:22/x")
