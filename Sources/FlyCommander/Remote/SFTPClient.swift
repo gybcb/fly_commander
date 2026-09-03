@@ -232,7 +232,7 @@ final class ResultBox<T> {
 
     func take() throws -> T {
         lock.lock(); defer { lock.unlock() }
-        guard let v = value else { throw TCError.unknown("SFTP 操作未执行") }
+        guard let v = value else { throw TCError.sftpNotExecuted }
         return try v.get()
     }
 }

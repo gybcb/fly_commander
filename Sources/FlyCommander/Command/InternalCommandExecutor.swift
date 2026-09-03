@@ -143,7 +143,7 @@ final class InternalCommandExecutor {
     private func doLs() -> String? {
         let pane = workspace.activePane
         if let err = pane.lastError {
-            return L10n.t(.readFailed, err.message)
+            return L10n.t(.readFailed, tcErrorDisplay(err))
         }
         return L10n.t(.lsSummary, pane.path.displayString(), "\(pane.itemCount)")
     }
@@ -157,7 +157,7 @@ final class InternalCommandExecutor {
             pane.load()
             return L10n.t(.mkdirDone, dir.displayString())
         } catch let e as TCError {
-            return L10n.t(.mkdirFailed, e.message)
+            return L10n.t(.mkdirFailed, tcErrorDisplay(e))
         } catch {
             return L10n.t(.mkdirFailed, error.localizedDescription)
         }

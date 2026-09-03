@@ -13,6 +13,9 @@ public enum TCError: Error, Equatable {
     case sftpNotExecuted              // "SFTP 操作未执行"
     case smbMountFailed(code: Int32, diag: String)   // "SMB 挂载失败（exit N）：diag"
     case putBackFailed(code: Int32, diag: String)    // "挂回原处失败（exit N）：diag"
+    case pathOutsideShare(String)     // "路径不在共享内：X"（SMB 段边界越界）
+    case pathEscaped(String)          // "路径逃逸挂载点：X"（折叠 .. 后跑出挂载点）
+    case mountPointNotWritable(root: String)         // 多行提权指引（/Volumes 不可写）
     case unknown(String)              // 收窄：仅 locale 透传（系统 localizedDescription / Traversio message）
 
     /// 稳定英文内部 message —— 仅供日志/测试/跨模块，不进 UI 显示路径（UI 用 tcErrorDisplay）。
@@ -32,6 +35,11 @@ public enum TCError: Error, Equatable {
         case .sftpNotExecuted:          return "SFTP operation did not execute"
         case .smbMountFailed(let c, let d): return "SMB mount failed (exit \(c)): \(d.prefix(200))"
         case .putBackFailed(let c, let d):  return "Put-back mount failed (exit \(c)): \(d.prefix(200))"
+        case .pathOutsideShare(let p):      return "Path outside share: \(p)"
+        case .pathEscaped(let p):           return "Path escaped the mount point: \(p)"
+        case .mountPointNotWritable(let r):
+            return "Cannot create mount point \(r) (/Volumes not writable for current user). "
+                 + "Run this once in Terminal:\nsudo mkdir -p \(r) && sudo chown \"$(whoami)\" \(r)"
         case .unknown(let m):           return m
         }
     }
@@ -52,6 +60,9 @@ public enum TCError: Error, Equatable {
         case .sftpNotExecuted:   return .errSFTPNotExecuted
         case .smbMountFailed:    return .errSMBMountFailed
         case .putBackFailed:     return .errPutBackFailed
+        case .pathOutsideShare:  return .errPathOutsideShare
+        case .pathEscaped:       return .errPathEscaped
+        case .mountPointNotWritable: return .errMountPointHint
         case .unknown:           return .errUnknown
         }
     }
@@ -72,6 +83,10 @@ public enum TCError: Error, Equatable {
             return [x]
         case .smbMountFailed(let c, let d), .putBackFailed(let c, let d):
             return ["\(c)", String(d.prefix(200))]
+        case .pathOutsideShare(let p), .pathEscaped(let p):
+            return [p]
+        case .mountPointNotWritable(let r):
+            return [r]   // 模板内 {0} 出现 3 次，t() 全量替换
         case .unknown(let m):
             return [m]
         }

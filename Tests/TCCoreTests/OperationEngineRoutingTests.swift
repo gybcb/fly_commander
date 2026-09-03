@@ -177,10 +177,8 @@ final class OperationEngineRoutingTests: XCTestCase {
             try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
                                    srcSource: a, dstSource: b)
         ) {
-            guard case .unknown(let m) = asTCError($0) else {
-                return XCTFail("期望 unknown，实际 \(asTCError($0))")
-            }
-            XCTAssertTrue(m.contains("目录"), "错误应明确说明目录：\(m)")
+            // Plan B T3：语义 case + payload（翻转≠弱化——精确 case 取代 m.contains("目录")）。
+            XCTAssertEqual(asTCError($0), .crossSourceDir("dir"))
         }
         XCTAssertTrue(a.openReaders.isEmpty, "目录不得进流式读")
         XCTAssertTrue(b.streamWrites.isEmpty)
@@ -251,6 +249,15 @@ final class OperationEngineRoutingTests: XCTestCase {
         let p = try engine.performMakeDirectory("nd", in: TCPath("/s"), source: b)
         XCTAssertEqual(b.mkdirCalls, ["/s/nd"])
         XCTAssertEqual(p.pathString, "/s/nd")
+    }
+
+    /// Plan B T3：同名目录已存在 → 语义 case `.dirExists(名)`（此前是 unknown("目录已存在：X") 中文串）。
+    func testMakeDirectoryExistingThrowsDirExists() throws {
+        b.statTable["/s/nd"] = fakeDir("nd", in: "/s")
+        XCTAssertThrowsError(
+            try engine.performMakeDirectory("nd", in: TCPath("/s"), source: b)
+        ) { XCTAssertEqual($0 as? TCError, .dirExists("nd")) }
+        XCTAssertTrue(b.mkdirCalls.isEmpty, "已存在不得再 mkdir")
     }
 
     // MARK: - 直接删除（远端无废纸篓路径）

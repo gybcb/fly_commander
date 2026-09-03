@@ -51,6 +51,24 @@ final class TCErrorTests: XCTestCase {
         XCTAssertEqual(TCError.unknown("File exists").message, "File exists")
     }
 
+    // MARK: - 新语义 case（T3：SMB 路径/挂载点）
+
+    func testMessageForPathOutsideShare() {
+        XCTAssertEqual(TCError.pathOutsideShare("/other").message,
+                       "Path outside share: /other")
+    }
+    func testMessageForPathEscaped() {
+        XCTAssertEqual(TCError.pathEscaped("/downloads/../../etc").message,
+                       "Path escaped the mount point: /downloads/../../etc")
+    }
+    func testMessageForMountPointNotWritable() {
+        // 多行模板：含 \n + 命令行，root 出现 3 次（message 版逐字展开）。
+        XCTAssertEqual(TCError.mountPointNotWritable(root: "/Volumes/FlyCommander").message,
+                       "Cannot create mount point /Volumes/FlyCommander "
+                       + "(/Volumes not writable for current user). Run this once in Terminal:\n"
+                       + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
+    }
+
     /// diag 截断 200：message 与 l10nArgs 一致（两脸同步）。
     func testDiagTruncatedTo200() {
         let long = String(repeating: "x", count: 300)
@@ -76,6 +94,10 @@ final class TCErrorTests: XCTestCase {
         XCTAssertEqual(TCError.smbMountFailed(code: 7, diag: "boom").l10nKey, .errSMBMountFailed)
         XCTAssertEqual(TCError.putBackFailed(code: 3, diag: "nope").l10nKey, .errPutBackFailed)
         XCTAssertEqual(TCError.unknown("boom").l10nKey, .errUnknown)
+        XCTAssertEqual(TCError.pathOutsideShare("/other").l10nKey, .errPathOutsideShare)
+        XCTAssertEqual(TCError.pathEscaped("/downloads/../../etc").l10nKey, .errPathEscaped)
+        XCTAssertEqual(TCError.mountPointNotWritable(root: "/Volumes/FlyCommander").l10nKey,
+                       .errMountPointHint)
     }
     func testL10nArgs() {
         XCTAssertEqual(TCError.notFound("/a").l10nArgs, ["/a"])
@@ -92,6 +114,12 @@ final class TCErrorTests: XCTestCase {
         XCTAssertEqual(TCError.smbMountFailed(code: 7, diag: "boom").l10nArgs, ["7", "boom"])
         XCTAssertEqual(TCError.putBackFailed(code: 3, diag: "nope").l10nArgs, ["3", "nope"])
         XCTAssertEqual(TCError.unknown("boom").l10nArgs, ["boom"])
+        XCTAssertEqual(TCError.pathOutsideShare("/other").l10nArgs, ["/other"])
+        XCTAssertEqual(TCError.pathEscaped("/downloads/../../etc").l10nArgs,
+                       ["/downloads/../../etc"])
+        // mountPointNotWritable：单参数 root，模板里 {0} 出现 3 次（t() 全量替换）。
+        XCTAssertEqual(TCError.mountPointNotWritable(root: "/Volumes/FlyCommander").l10nArgs,
+                       ["/Volumes/FlyCommander"])
     }
 
     // MARK: - Equatable（流控 e == .cancelled 依赖）

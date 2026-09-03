@@ -133,10 +133,9 @@ final class SMBMountManager {
         } catch {
             // /Volumes 对当前用户不可写（root:wheel）时建目录 EACCES——
             // 给出一次性的提权命令，用户照抄即可，之后无需再 sudo。
+            // 指引文案是 `errMountPointHint` 多行模板（中英各一份），内核只出 root。
             if case .permissionDenied = asTCError(error) {
-                throw TCError.permissionDenied(
-                    "无法创建挂载点 \(Self.root)（/Volumes 对当前用户不可写）。请先在终端执行一次：\n"
-                    + "sudo mkdir -p \(Self.root) && sudo chown \"$(whoami)\" \(Self.root)")
+                throw TCError.mountPointNotWritable(root: Self.root)
             }
             throw asTCError(error)
         }
@@ -147,8 +146,9 @@ final class SMBMountManager {
         let url = args[2]   // mountArgs[2] 是 //…@server/share 挂载 URL（含密码）
         let (code, stderr) = runMount(args)
         guard code == 0, isMounted(URL(fileURLWithPath: mp)) else {
-            let diag = Self.redact(stderr, url: url, secret: secret)
-            throw TCError.unknown("SMB 挂载失败（exit \(code)）：\(diag.prefix(200))")
+            // 诊断的 200 截断由 TCError（message/l10nArgs 两脸一致）负责，这里不再手工 .prefix。
+            throw TCError.smbMountFailed(
+                code: code, diag: Self.redact(stderr, url: url, secret: secret))
         }
         return URL(fileURLWithPath: mp)
     }
@@ -171,8 +171,9 @@ final class SMBMountManager {
         let back = Self.shareMountedPoint(server: config.server, share: config.share,
                                           fromMountOutput: runList())
         guard code == 0, back == mountPoint.path else {
-            let diag = Self.redact(stderr, url: url, secret: secret)
-            throw TCError.unknown("挂回原处失败（exit \(code)）：\(diag.prefix(200))")
+            // 同上：语义 case + 结构化 exit 码，截断交 TCError。
+            throw TCError.putBackFailed(
+                code: code, diag: Self.redact(stderr, url: url, secret: secret))
         }
     }
 

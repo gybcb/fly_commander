@@ -118,7 +118,11 @@ public enum L10nTable {
         .errSFTPNotExecuted: "SFTP operation did not execute",
         .errSMBMountFailed: "SMB mount failed (exit {0}): {1}",
         .errPutBackFailed: "Put-back mount failed (exit {0}): {1}",
-        .errUnknown: "Error: {0}",
+        .errPathOutsideShare: "Path outside share: {0}",
+        .errPathEscaped: "Path escaped the mount point: {0}",
+        .errMountPointHint: "Cannot create mount point {0} (/Volumes not writable for current user). Run this once in Terminal:\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
+        // R-C1：裸 {0}——显示前缀归外层（statusErrorPrefix / 各失败模板），防状态栏双前缀。
+        .errUnknown: "{0}",
         // —— OperationState 通道（Plan B；running 标签复用 .rename/.newDirectory）——
         .opCopying: "Copying {0} item(s)", .opMoving: "Moving {0} item(s)",
         .opDeleteRunning: "Deleting {0} item(s)", .opDeleteDone: "Deleted {0} item(s)",
@@ -246,7 +250,12 @@ public enum L10nTable {
         .errSFTPNotExecuted: "SFTP 操作未执行",
         .errSMBMountFailed: "SMB 挂载失败（exit {0}）：{1}",
         .errPutBackFailed: "挂回原处失败（exit {0}）：{1}",
-        .errUnknown: "错误：{0}",
+        .errPathOutsideShare: "路径不在共享内：{0}",
+        .errPathEscaped: "路径逃逸挂载点：{0}",
+        // zh 逐字搬 SMBMountManager 被替换的中文现码（全角 ：（）与 \n、命令行原样）。
+        .errMountPointHint: "无法创建挂载点 {0}（/Volumes 对当前用户不可写）。请先在终端执行一次：\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
+        // R-C1：裸 {0}——"错误：" 前缀归 statusErrorPrefix，状态栏不再叠字。
+        .errUnknown: "{0}",
         // —— OperationState 通道（zh 逐字搬被替换中文现码；全角 ：（）　⚠ ）——
         .opCopying: "复制 {0} 个文件", .opMoving: "移动 {0} 个文件",
         .opDeleteRunning: "删除 {0} 个文件", .opDeleteDone: "已删除 {0} 个文件",

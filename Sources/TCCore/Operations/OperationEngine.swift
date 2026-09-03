@@ -87,7 +87,7 @@ public final class OperationEngine {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !trimmed.contains("/") else { throw TCError.invalidPath(name) }
         let newDir = dir.joining(trimmed)
-        if (try? source.stat(newDir)) != nil { throw TCError.unknown("目录已存在：\(trimmed)") }
+        if (try? source.stat(newDir)) != nil { throw TCError.dirExists(trimmed) }
         try source.makeDirectory(at: newDir)
         return newDir
     }
@@ -112,7 +112,7 @@ public final class OperationEngine {
     /// 明确报错（递归跨源复制另立项）。
     private func checkCrossSourceDirectory(_ item: FileItem) throws {
         if item.isDirectory {
-            throw TCError.unknown("跨源传输暂不支持目录：\(item.name)")
+            throw TCError.crossSourceDir(item.name)
         }
     }
 

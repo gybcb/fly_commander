@@ -305,9 +305,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             guard !warningLines.isEmpty else { return base }
             return L10n.t(.statusDoneWarn, args: [base, warningLines.joined(separator: "；")])
         case .failed(let error):
-            // 注意：`.unknown` 的显示模板 `errUnknown` 本身已带 "Error: "/"错误：" 前缀，
-            // 故非语义错误在状态栏会呈现 "Error: Error: <系统文本>"（双重前缀）。
-            // 是否去掉 statusErrorPrefix 或把 errUnknown 模板改为裸 "{0}" 属 T1 契约决策，见任务报告。
+            // 前缀只在这里给（statusErrorPrefix）：`errUnknown` 模板是裸 {0}，
+            // 语义 case 自带 "Not found: " 等英文/中文前缀，状态栏单层前缀不叠字。
             return L10n.t(.statusErrorPrefix) + tcErrorDisplay(error)
         }
     }

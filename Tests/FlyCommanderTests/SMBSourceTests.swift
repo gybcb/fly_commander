@@ -75,7 +75,13 @@ final class SMBSourceTests: XCTestCase {
         XCTAssertThrowsError(
             try SMBSource.toLocal(TCPath("smb://\(server)/downloadsother"),
                                   mountPoint: mount, share: share)) { error in
-            XCTAssertEqual(error as? TCError, .invalidPath("路径不在共享内：/downloadsother"))
+            // Plan B T3：语义 case + 边界中英双断（翻转≠弱化，payload=smb 路径原文）。
+            let tc = error as? TCError
+            XCTAssertEqual(tc, .pathOutsideShare("/downloadsother"))
+            XCTAssertEqual(tc.map(tcErrorDisplay), "Path outside share: /downloadsother")
+            L10n.current = .zh
+            defer { L10n.current = .en }
+            XCTAssertEqual(tc.map(tcErrorDisplay), "路径不在共享内：/downloadsother")
         }
     }
 
@@ -84,7 +90,14 @@ final class SMBSourceTests: XCTestCase {
         XCTAssertThrowsError(
             try SMBSource.toLocal(TCPath("smb://\(server)/\(share)/../../etc"),
                                   mountPoint: mount, share: share)) { error in
-            XCTAssertTrue(error is TCError)
+            // Plan B T3：精确语义 case（此前只断 error is TCError）+ 中英双断。
+            let tc = error as? TCError
+            XCTAssertEqual(tc, .pathEscaped("/downloads/../../etc"))
+            XCTAssertEqual(tc.map(tcErrorDisplay),
+                           "Path escaped the mount point: /downloads/../../etc")
+            L10n.current = .zh
+            defer { L10n.current = .en }
+            XCTAssertEqual(tc.map(tcErrorDisplay), "路径逃逸挂载点：/downloads/../../etc")
         }
     }
 
@@ -93,7 +106,7 @@ final class SMBSourceTests: XCTestCase {
         XCTAssertThrowsError(
             try SMBSource.toLocal(TCPath("smb://\(server)/other/x"),
                                   mountPoint: mount, share: share)) { error in
-            XCTAssertEqual(error as? TCError, .invalidPath("路径不在共享内：/other/x"))
+            XCTAssertEqual(error as? TCError, .pathOutsideShare("/other/x"))
         }
     }
 

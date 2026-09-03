@@ -218,7 +218,16 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP operation did not execute")
         XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB mount failed (exit 7): boom")
         XCTAssertEqual(L10n.t(.errPutBackFailed, args: ["3", "nope"]), "Put-back mount failed (exit 3): nope")
-        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "Error: File exists")
+        XCTAssertEqual(L10n.t(.errPathOutsideShare, args: ["/other"]), "Path outside share: /other")
+        XCTAssertEqual(L10n.t(.errPathEscaped, args: ["/downloads/../../etc"]),
+                       "Path escaped the mount point: /downloads/../../etc")
+        XCTAssertEqual(
+            L10n.t(.errMountPointHint, args: ["/Volumes/FlyCommander"]),
+            "Cannot create mount point /Volumes/FlyCommander "
+            + "(/Volumes not writable for current user). Run this once in Terminal:\n"
+            + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
+        // R-C1 裁决：errUnknown 模板是**裸 {0}**（状态栏前缀由 statusErrorPrefix 给，防双前缀）。
+        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "File exists")
     }
     func testErrorKeysChinese() {
         L10n.current = .zh
@@ -235,7 +244,15 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP 操作未执行")
         XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB 挂载失败（exit 7）：boom")
         XCTAssertEqual(L10n.t(.errPutBackFailed, args: ["3", "nope"]), "挂回原处失败（exit 3）：nope")
-        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "错误：File exists")
+        XCTAssertEqual(L10n.t(.errPathOutsideShare, args: ["/other"]), "路径不在共享内：/other")
+        XCTAssertEqual(L10n.t(.errPathEscaped, args: ["/downloads/../../etc"]),
+                       "路径逃逸挂载点：/downloads/../../etc")
+        XCTAssertEqual(
+            L10n.t(.errMountPointHint, args: ["/Volumes/FlyCommander"]),
+            "无法创建挂载点 /Volumes/FlyCommander（/Volumes 对当前用户不可写）。请先在终端执行一次：\n"
+            + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
+        // R-C1：zh 侧同样是裸 {0}（"错误：" 前缀归 statusErrorPrefix）。
+        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "File exists")
     }
 
     // MARK: - 边界翻译器 tcErrorDisplay
@@ -248,8 +265,16 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(tcErrorDisplay(.alreadyExists(nil)), "Target already exists")
         XCTAssertEqual(tcErrorDisplay(.smbMountFailed(code: 7, diag: "boom")),
                        "SMB mount failed (exit 7): boom")
-        // .unknown 走 errUnknown 模板前缀 "Error: "，payload 原样透传
-        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "Error: File exists")
+        XCTAssertEqual(tcErrorDisplay(.pathOutsideShare("/other")), "Path outside share: /other")
+        XCTAssertEqual(tcErrorDisplay(.pathEscaped("/downloads/../../etc")),
+                       "Path escaped the mount point: /downloads/../../etc")
+        XCTAssertEqual(
+            tcErrorDisplay(.mountPointNotWritable(root: "/Volumes/FlyCommander")),
+            "Cannot create mount point /Volumes/FlyCommander "
+            + "(/Volumes not writable for current user). Run this once in Terminal:\n"
+            + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
+        // R-C1：.unknown 走**裸 {0}** 模板——前缀由外层（statusErrorPrefix 等）负责，边界不叠字。
+        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "File exists")
     }
     func testTCErrorDisplayChinese() {
         L10n.current = .zh
@@ -260,7 +285,16 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(tcErrorDisplay(.alreadyExists(nil)), "目标已存在同名文件")
         XCTAssertEqual(tcErrorDisplay(.smbMountFailed(code: 7, diag: "boom")),
                        "SMB 挂载失败（exit 7）：boom")
-        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "错误：File exists")
+        XCTAssertEqual(tcErrorDisplay(.pathOutsideShare("/other")), "路径不在共享内：/other")
+        XCTAssertEqual(tcErrorDisplay(.pathEscaped("/downloads/../../etc")),
+                       "路径逃逸挂载点：/downloads/../../etc")
+        // zh 多行模板逐字含 \n + 命令行（{0} 出现 3 次全替换）。
+        XCTAssertEqual(
+            tcErrorDisplay(.mountPointNotWritable(root: "/Volumes/FlyCommander")),
+            "无法创建挂载点 /Volumes/FlyCommander（/Volumes 对当前用户不可写）。请先在终端执行一次：\n"
+            + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
+        // R-C1：zh 边界同为裸 payload（前缀归 statusErrorPrefix）。
+        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "File exists")
     }
 
     func testOnChangeFiresOnSwitch() {

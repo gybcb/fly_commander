@@ -14,6 +14,7 @@ private final class StubSource: FileSource {
     var table: [String: FileItem] = [:]
     var dirItems: [FileItem] = []
     var mkdirError: TCError?
+    var listError: TCError?
     var lastErrorSim: TCError?
 
     init(id: String, remote: Bool) { sourceID = id; isRemote = remote }
@@ -24,7 +25,10 @@ private final class StubSource: FileSource {
                  isHidden: false, isReadOnly: false, isExecutable: false)
     }
 
-    func listDirectory(_ path: TCPath) throws -> [FileItem] { dirItems }
+    func listDirectory(_ path: TCPath) throws -> [FileItem] {
+        if let e = listError { throw e }
+        return dirItems
+    }
     func isDirectory(_ path: TCPath) -> Bool { (try? stat(path))?.isDirectory ?? false }
     func stat(_ path: TCPath) throws -> FileItem? { table[path.pathString] }
     func copyItem(from: TCPath, to: TCPath) throws { table[to.pathString] = table[from.pathString] }
@@ -233,6 +237,42 @@ final class InternalCommandExecutorTests: XCTestCase {
         remote.mkdirError = TCError.permissionDenied("nope")
         let out = h.executor.execute(line: "mkdir nd")
         XCTAssertTrue(out?.hasPrefix("Create failed:") ?? false, "got: \(out ?? "nil")")
+    }
+
+    /// Plan B T3：显示点走 tcErrorDisplay（边界翻译），不是内部英文 message。
+    /// en 下两脸同形，故必须在 zh 下断——回退到 `e.message` 就会红。
+    func testMkdirFailureBodyIsLocalizedAtDisplayBoundary() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        let local = StubSource(id: "local", remote: false)
+        let remote = StubSource(id: "sftp://h:2222", remote: true)
+        let h = Harness(local: local, remote: remote, activeRemote: true)
+        h.seedRemote(["a.txt"])
+        remote.mkdirError = TCError.permissionDenied("nope")
+        XCTAssertEqual(h.executor.execute(line: "mkdir nd"), "新建失败：没有权限访问：nope")
+    }
+
+    /// mkdir 撞同名目录 → 语义 case `.dirExists`，回显经边界翻译为 zh 现码。
+    func testMkdirExistingDirectoryMessageIsLocalized() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        let local = StubSource(id: "local", remote: false)
+        let remote = StubSource(id: "sftp://h:2222", remote: true)
+        let h = Harness(local: local, remote: remote, activeRemote: true)
+        h.seedRemote(["a.txt"])
+        remote.table["/R/nd"] = remote.item("/R/nd", dir: true)   // 同名目录已存在
+        XCTAssertEqual(h.executor.execute(line: "mkdir nd"), "新建失败：目录已存在：nd")
+    }
+
+    /// ls 在窗格有 lastError 时回显 readFailed，错误体同样走边界翻译。
+    func testLsReadFailureBodyIsLocalized() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        let local = StubSource(id: "local", remote: false)
+        local.listError = TCError.permissionDenied("/L")
+        let h = Harness(local: local, remote: StubSource(id: "s", remote: true), activeRemote: false)
+        h.workspace.activePane.load()
+        XCTAssertEqual(h.executor.execute(line: "ls"), "目录读取失败：没有权限访问：/L")
     }
 
     func testMkdirRequiresExactlyOneArg() {

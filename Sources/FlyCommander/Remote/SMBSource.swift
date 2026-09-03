@@ -29,14 +29,14 @@ public final class SMBSource: FileSource {
         let root = "/" + share
         if s == root { return TCPath(url: mountPoint) }                 // 共享根
         guard s.hasPrefix(root + "/") else {                            // 段边界（末尾 /），排除 /downloadsother
-            throw TCError.invalidPath("路径不在共享内：\(s)")
+            throw TCError.pathOutsideShare(s)
         }
         let rel = String(s.dropFirst((root + "/").count))
         let mapped = mountPoint.appendingPathComponent(rel)
         let c = mapped.standardizedFileURL.path
         let b = mountPoint.standardizedFileURL.path
         guard c == b || c.hasPrefix(b + "/") else {                     // 折叠 .. 后仍须落在挂载点内
-            throw TCError.invalidPath("路径逃逸挂载点：\(s)")
+            throw TCError.pathEscaped(s)
         }
         return TCPath(url: mapped)
     }

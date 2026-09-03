@@ -91,13 +91,17 @@ final class OperationStatusTextTests: XCTestCase {
     func testFailedEnglish() {
         XCTAssertEqual(MainViewController.statusText(for: .failed(.busy("/x"))),
                        "Error: Busy: /x")
+        // R-C1 裁决：errUnknown 模板改裸 {0} 后双前缀消解——状态栏只有一层 "Error: "。
         XCTAssertEqual(MainViewController.statusText(for: .failed(.unknown("no file: /src/a.txt"))),
-                       "Error: Error: no file: /src/a.txt")
+                       "Error: no file: /src/a.txt")
     }
     func testFailedChinese() {
         L10n.current = .zh
         XCTAssertEqual(MainViewController.statusText(for: .failed(.busy("/x"))),
                        "错误：忙碌/被占用：/x")
+        // zh 同为单层前缀（哨兵：锁 R-C1 不回退到 "错误：错误："）。
+        XCTAssertEqual(MainViewController.statusText(for: .failed(.unknown("disk full"))),
+                       "错误：disk full")
     }
 
     func testIdleClears() {

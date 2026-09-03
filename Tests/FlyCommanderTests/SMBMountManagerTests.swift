@@ -242,15 +242,49 @@ final class SMBMountManagerTests: XCTestCase {
         XCTAssertThrowsError(
             try manager.putBackMount(URL(fileURLWithPath: "/Volumes/downloads"),
                                      config: cfg(server: "truenas._smb._tcp.local"), secret: "pw")) { error in
+            // Plan B T3：语义 case（exit 码 + 已抹凭据的诊断），取代 unknown("挂回原处失败…") 中文串。
+            XCTAssertEqual(asTCError(error), .putBackFailed(code: 32, diag: "boom"))
             let tc = asTCError(error)
-            guard case .unknown(let m) = tc else {
-                return XCTFail("期望 unknown（挂回失败），实际 \(tc)")
-            }
-            XCTAssertTrue(m.contains("挂回原处失败"), "消息应说明挂回失败：\(m)")
-            XCTAssertFalse(m.contains("pw"), "错误信息不得残留密码")
-            XCTAssertFalse(m.contains("@truenas._smb._tcp.local/downloads"), "不得残留完整挂载 URL")
+            XCTAssertFalse(tc.message.contains("pw"), "内部 message 不得残留密码：\(tc.message)")
+            XCTAssertFalse(tc.message.contains("@truenas._smb._tcp.local/downloads"),
+                           "不得残留完整挂载 URL：\(tc.message)")
         }
         XCTAssertEqual(mountArgs.last?[3], "/Volumes/downloads", "失败分支同样针对原挂载点重挂")
+    }
+
+    // MARK: - 挂载失败 / 挂载点不可写（Plan B T3 语义 case）
+
+    /// mount_smbfs 非零退出 → `.smbMountFailed(code:diag:)`：exit 码结构化、diag 已抹凭据。
+    func testMountFailureThrowsSMountFailedWithCodeAndDiag() {
+        let manager = SMBMountManager(
+            runMount: { _ in (7, "mount_smbfs: error text") },
+            runUnmount: { _ in (0, "") },
+            runList: { "" },
+            ensureDirectories: { _ in }
+        )
+        XCTAssertThrowsError(try manager.mount(cfg(), secret: "s3cret")) { error in
+            let tc = asTCError(error)
+            XCTAssertEqual(tc, .smbMountFailed(code: 7, diag: "mount_smbfs: error text"))
+            // 稳定英文内部契约（UI 走 tcErrorDisplay，见 L10nTests）
+            XCTAssertEqual(tc.message, "SMB mount failed (exit 7): mount_smbfs: error text")
+            XCTAssertFalse(tc.message.contains("s3cret"), "诊断不得残留密码：\(tc.message)")
+        }
+    }
+
+    /// 超长 diag 的 200 截断由 TCError 承担（message 与 l10nArgs 两脸一致），产点不再手工 .prefix。
+    func testMountFailureDiagTruncationLivesInTCError() {
+        let long = String(repeating: "x", count: 300)
+        let manager = SMBMountManager(
+            runMount: { _ in (1, long) },
+            runUnmount: { _ in (0, "") },
+            runList: { "" },
+            ensureDirectories: { _ in }
+        )
+        XCTAssertThrowsError(try manager.mount(cfg(), secret: nil)) { error in
+            let tc = asTCError(error)
+            XCTAssertEqual(tc.l10nArgs, ["1", String(repeating: "x", count: 200)])
+            XCTAssertTrue(tc.message.hasSuffix(String(repeating: "x", count: 200)))
+        }
     }
 
     func testMountPermissionDeniedMessageOnEnsureDirectories() {
@@ -268,12 +302,24 @@ final class SMBMountManagerTests: XCTestCase {
             }
         )
         XCTAssertThrowsError(try manager.mount(cfg(), secret: nil)) { error in
-            guard case .permissionDenied(let m) = asTCError(error) else {
-                return XCTFail("期望 permissionDenied，实际 \(asTCError(error))")
+            // Plan B T3：多行提权指引改为语义 case（模板进 errMountPointHint 键，中英各一份）。
+            guard case .mountPointNotWritable(let root) = asTCError(error) else {
+                return XCTFail("期望 mountPointNotWritable，实际 \(asTCError(error))")
             }
-            XCTAssertTrue(m.contains("sudo mkdir -p /Volumes/FlyCommander"),
-                          "应给出一次性提权命令：\(m)")
+            XCTAssertEqual(root, SMBMountManager.root)
+            XCTAssertTrue(tcErrorDisplay(asTCError(error)).contains("sudo mkdir -p /Volumes/FlyCommander"),
+                          "应给出一次性提权命令")
         }
         XCTAssertEqual(ensureCalls, 1, "无外部挂载时才建目录")
+    }
+
+    /// 提权指引在 zh 下逐字等于被替换的中文现码（含 \n 与命令行）。
+    func testMountPointNotWritableChineseIsVerbatim() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        XCTAssertEqual(
+            tcErrorDisplay(.mountPointNotWritable(root: "/Volumes/FlyCommander")),
+            "无法创建挂载点 /Volumes/FlyCommander（/Volumes 对当前用户不可写）。请先在终端执行一次：\n"
+            + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
     }
 }

@@ -277,7 +277,7 @@ final class ConnectionViewController: NSViewController {
                     self.view.window?.close()
                     onConnected?(source, home)
                 case .failure(let error):
-                    let message = (error as? TCError)?.message ?? error.localizedDescription
+                    let message = (error as? TCError).map(tcErrorDisplay) ?? error.localizedDescription
                     self.statusLabel.stringValue = L10n.t(.connectFailedPrefix) + message
                 }
             }

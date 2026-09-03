@@ -212,6 +212,20 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertEqual(warns, ["源端残留：a.txt（忙碌/被占用：x）"], "zh 警告：\(warns)")
     }
 
+    /// R-C1 哨兵：警告原料是 `.unknown`（locale 透传文本）时，内嵌串必须是**裸 payload**——
+    /// errUnknown 模板改裸 {0} 后不得再出现 "（错误：disk full）" 的层内前缀。
+    func testSourceDeleteWarningWithUnknownIsBarePayload() {
+        L10n.current = .zh
+        defer { L10n.current = .en }
+        let h = Harness()
+        h.remote.removeError = TCError.unknown("disk full")
+        h.engine.run(false, h.left, h.right)
+        guard case .done(_, _, let warns)? = h.rec.entries.last else {
+            return XCTFail("move 应完成：\(h.rec.entries)")
+        }
+        XCTAssertEqual(warns, ["源端残留：a.txt（disk full）"], "zh 警告：\(warns)")
+    }
+
     func testEngineFailureSurfacesFailedState() {
         let h = Harness()
         h.remote.data = [:]   // openReader 抛 TCError.unknown("no file: /src/a.txt")
