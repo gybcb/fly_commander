@@ -120,6 +120,8 @@ public enum L10nTable {
         .errPutBackFailed: "Put-back mount failed (exit {0}): {1}",
         .errPathOutsideShare: "Path outside share: {0}",
         .errPathEscaped: "Path escaped the mount point: {0}",
+        .errAuthRejected: "Authentication rejected ({0})",
+        .errSFTPConnectFailed: "SFTP connection failed",
         .errMountPointHint: "Cannot create mount point {0} (/Volumes not writable for current user). Run this once in Terminal:\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——显示前缀归外层（statusErrorPrefix / 各失败模板），防状态栏双前缀。
         .errUnknown: "{0}",
@@ -252,6 +254,8 @@ public enum L10nTable {
         .errPutBackFailed: "挂回原处失败（exit {0}）：{1}",
         .errPathOutsideShare: "路径不在共享内：{0}",
         .errPathEscaped: "路径逃逸挂载点：{0}",
+        .errAuthRejected: "认证被拒绝（{0}）",
+        .errSFTPConnectFailed: "SFTP 连接失败",
         // zh 逐字搬 SMBMountManager 被替换的中文现码（全角 ：（）与 \n、命令行原样）。
         .errMountPointHint: "无法创建挂载点 {0}（/Volumes 对当前用户不可写）。请先在终端执行一次：\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——"错误：" 前缀归 statusErrorPrefix，状态栏不再叠字。

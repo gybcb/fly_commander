@@ -40,20 +40,23 @@ public final class SFTPSource: FileSource {
     /// 连接并解析远端 home 目录（SFTP REALPATH "."），失败抛 TCError。
     /// 连接成功后连接保持复用；供连接窗取起始路径。
     public func resolveHome() throws -> String {
-        try map { try conn().performSync { try await $0.realPath(".") } }.filename
+        try mapped { try conn().performSync { try await $0.realPath(".") } }.filename
     }
 
     // MARK: - 错误映射（所有出口统一过这里）
 
-    private func map<T>(_ body: () throws -> T) throws -> T {
+    /// 统一映射出口。`path` = 出错操作的目标远端绝对路径（有主体则 .notFound/.permissionDenied 携真路径，
+    /// 无主体的操作（连接/认证/home）传 ""→落泛化占位）。
+    private func mapped<T>(_ path: String = "", _ body: () throws -> T) throws -> T {
         do { return try body() }
         catch {
-            throw (error as? SSHClientError)?.sftpMappedTCError ?? asTCError(error)
+            throw (error as? SSHClientError)?.sftpMappedTCError(path: path) ?? asTCError(error)
         }
     }
 
-    private func call<T>(_ op: @escaping @Sendable (SFTPClient) async throws -> T) throws -> T {
-        try map { try conn().performSync(op) }
+    private func call<T>(_ path: String = "",
+                         _ op: @escaping @Sendable (SFTPClient) async throws -> T) throws -> T {
+        try mapped(path) { try conn().performSync(op) }
     }
 
     // MARK: - 路径映射
@@ -89,7 +92,7 @@ public final class SFTPSource: FileSource {
 
     public func listDirectory(_ path: TCPath) throws -> [FileItem] {
         let dir = remotePath(path)
-        return try call { sftp in
+        return try call(dir) { sftp in
             let entries = try await sftp.listDirectory(dir)
             return entries
                 .filter { $0.filename != "." && $0.filename != ".." }
@@ -113,7 +116,7 @@ public final class SFTPSource: FileSource {
         let p = remotePath(path)
         let attrs: SSHSFTPFileAttributes
         do {
-            attrs = try call { try await $0.stat(p) }
+            attrs = try call(p) { try await $0.stat(p) }
         } catch let e as TCError {
             if case .notFound = e { return nil }
             throw e
@@ -127,7 +130,7 @@ public final class SFTPSource: FileSource {
 
     public func copyItem(from src: TCPath, to dst: TCPath) throws {
         let from = remotePath(src), to = remotePath(dst)
-        try map { try conn().copyFile(from: from, to: to) }
+        try mapped(to) { try conn().copyFile(from: from, to: to) }
     }
 
     public func moveItem(from: TCPath, to: TCPath) throws {
@@ -136,41 +139,43 @@ public final class SFTPSource: FileSource {
 
     public func renameItem(at: TCPath, to: TCPath) throws {
         let from = remotePath(at), to = remotePath(to)
-        try call { try await $0.rename(from, to: to) }
+        try call(to) { try await $0.rename(from, to: to) }
     }
 
     public func makeDirectory(at: TCPath) throws {
         let p = remotePath(at)
-        try call { try await $0.makeDirectory(p) }
+        try call(p) { try await $0.makeDirectory(p) }
     }
 
     /// 递归删除：removeDirectory 只删空目录 → 先删子项再删自身。
     public func removeItem(at: TCPath) throws {
         let p = remotePath(at)
-        let attrs = try call { try await $0.lstat(p) }
+        let attrs = try call(p) { try await $0.lstat(p) }
         let isDir = (attrs.permissions ?? 0) & 0o170000 == 0o040000
         if isDir {
-            let children = try call { try await $0.listDirectory(p) }
+            let children = try call(p) { try await $0.listDirectory(p) }
                 .filter { $0.filename != "." && $0.filename != ".." }
             for child in children {
                 try removeItem(at: makePath(dir: p, name: child.filename))
             }
-            try call { try await $0.removeDirectory(p) }
+            try call(p) { try await $0.removeDirectory(p) }
         } else {
-            try call { try await $0.removeFile(p) }
+            try call(p) { try await $0.removeFile(p) }
         }
     }
 
     // MARK: - 流式
 
     public func openReader(_ path: TCPath) throws -> ReadHandle {
-        try map { try conn().openReader(remotePath(path)) }
+        let p = remotePath(path)
+        return try mapped(p) { try conn().openReader(p) }
     }
 
     public func streamWrite(_ path: TCPath, totalBytes: Int64?,
                             write: @escaping () throws -> Data) throws {
         // 跨源泵送（他源 openReader → 本方法）不会重入本连接的队列。
-        try map { try conn().streamWrite(remotePath(path), totalBytes: totalBytes, write: write) }
+        let p = remotePath(path)
+        try mapped(p) { try conn().streamWrite(p, totalBytes: totalBytes, write: write) }
     }
 
     // MARK: - 属性映射
@@ -212,20 +217,22 @@ public final class SFTPSource: FileSource {
 
 extension Error {
     /// SSHClientError → TCError（不改动 TCCore 的全局 asTCError）。
-    var sftpMappedTCError: TCError {
+    /// `path` = 出错操作的目标远端绝对路径（remotePath 恒非空，故 .notFound/.permissionDenied 携真主体；
+    /// 无主体上下文的错误——认证/连接/泛化透传——不吃 path）。
+    func sftpMappedTCError(path: String = "") -> TCError {
         switch self {
         case let e as SSHClientError:
             if case .authenticationRejected(let method, _, _, _) = e {
-                return .permissionDenied("认证被拒绝（\(method)）")
+                return .authRejected(method: method)
             }
             if case .connectionFailed = e {
-                return .unknown("SFTP 连接失败")
+                return .sftpConnectFailed
             }
             if SFTPSource.isSFTPNotFound(e) {
-                return .notFound("远端路径")
+                return .notFound(path)
             }
             if SFTPSource.isSFTPPermissionDenied(e) {
-                return .permissionDenied("远端路径")
+                return .permissionDenied(path)
             }
             if case .operationFailed(let f) = e {
                 return .unknown(f.message)

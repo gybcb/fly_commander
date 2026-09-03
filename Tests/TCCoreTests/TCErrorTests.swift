@@ -69,6 +69,24 @@ final class TCErrorTests: XCTestCase {
                        + "sudo mkdir -p /Volumes/FlyCommander && sudo chown \"$(whoami)\" /Volumes/FlyCommander")
     }
 
+    // MARK: - 新语义 case（T4：SFTP 认证/连接）
+
+    func testMessageForAuthRejected() {
+        XCTAssertEqual(TCError.authRejected(method: "password").message,
+                       "Authentication rejected (password)")
+    }
+    func testMessageForSFTPConnectFailed() {
+        XCTAssertEqual(TCError.sftpConnectFailed.message, "SFTP connection failed")
+    }
+    func testL10nKeyForSFTPCases() {
+        XCTAssertEqual(TCError.authRejected(method: "password").l10nKey, .errAuthRejected)
+        XCTAssertEqual(TCError.sftpConnectFailed.l10nKey, .errSFTPConnectFailed)
+    }
+    func testL10nArgsForSFTPCases() {
+        XCTAssertEqual(TCError.authRejected(method: "password").l10nArgs, ["password"])
+        XCTAssertEqual(TCError.sftpConnectFailed.l10nArgs, [])
+    }
+
     /// diag 截断 200：message 与 l10nArgs 一致（两脸同步）。
     func testDiagTruncatedTo200() {
         let long = String(repeating: "x", count: 300)

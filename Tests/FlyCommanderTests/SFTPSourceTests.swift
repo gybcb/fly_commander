@@ -225,13 +225,34 @@ final class SFTPSourceTests: XCTestCase {
                                    hostKeyStore: SFTPHostKeyStore(defaults: defaults))
         defer { badSource.closeConnection() }
         XCTAssertThrowsError(try badSource.listDirectory(p("/"))) { error in
-            let tc = asTCError(error)
-            switch tc {
-            case .permissionDenied(let m):
-                XCTAssertTrue(m.contains("认证被拒绝"), "应映射为认证拒绝：\(m)")
-            default:
-                XCTFail("期望 permissionDenied，实际 \(tc)")
+            let tc = error as? TCError
+            // Plan B T4：语义 case（此前是 permissionDenied + 泛化中文 payload）。
+            guard case .authRejected(let method)? = tc else {
+                return XCTFail("期望 authRejected，实际 \(String(describing: tc))")
             }
+            XCTAssertFalse(method.isEmpty, "authRejected 应携带被拒方法名")
+            // 中英双断边界显示（payload=方法名，非泛化中文串）。
+            XCTAssertEqual(tc.map(tcErrorDisplay), "Authentication rejected (\(method))")
+            L10n.current = .zh
+            defer { L10n.current = .en }
+            XCTAssertEqual(tc.map(tcErrorDisplay), "认证被拒绝（\(method)）")
+        }
+    }
+
+    /// 缺失文件 → notFound 携真实远端路径（此前塞泛化占位"远端路径"）。
+    func testMissingFileCarriesRealPathInTCError() throws {
+        let base = server.remoteBase.path
+        let missing = base + "/no_such_\(UUID().uuidString).txt"
+        XCTAssertThrowsError(try source.openReader(p(missing))) { error in
+            let tc = error as? TCError
+            guard case .notFound(let path)? = tc else {
+                return XCTFail("期望 notFound，实际 \(String(describing: tc))")
+            }
+            XCTAssertEqual(path, missing, "notFound 应携真实远端路径而非泛化占位")
+            XCTAssertEqual(tc.map(tcErrorDisplay), "Not found: \(missing)")
+            L10n.current = .zh
+            defer { L10n.current = .en }
+            XCTAssertEqual(tc.map(tcErrorDisplay), "找不到：\(missing)")
         }
     }
 
@@ -271,5 +292,27 @@ final class SFTPPathMappingTests: XCTestCase {
         XCTAssertTrue(item.path.isRemote)
         XCTAssertEqual(item.path.pathString, "/home/My Docs/a b.txt")
         XCTAssertEqual(item.id, "/home/My Docs/a b.txt")
+    }
+}
+
+/// 纯映射单测（不依赖 sshd）：`sftpMappedTCError(path:)` 直连。
+/// SSHClientError 各 case 里只有 `authenticationRejected` 的关联值全公开可合成
+/// （operationFailed/connectionFailed 的 failure struct 无 public init）——故 notFound
+/// 携真路径走 e2e（见 testMissingFileCarriesRealPathInTCError），这里锁 authRejected 语义。
+final class SFTPErrorMappingTests: XCTestCase {
+    func testAuthRejectedMapsToSemanticCase() {
+        let err = SSHClientError.authenticationRejected(
+            methodName: "password", availableMethods: ["publickey"], partialSuccess: false)
+        let tc = err.sftpMappedTCError(path: "/x/y")
+        XCTAssertEqual(tc, .authRejected(method: "password"))
+        XCTAssertEqual(tc.l10nKey, .errAuthRejected)
+        XCTAssertEqual(tc.l10nArgs, ["password"])
+        XCTAssertEqual(tc.message, "Authentication rejected (password)")
+    }
+
+    func testDefaultAsTCErrorStillPassesThroughMapped() {
+        // 非 SSHClientError → 落全局 asTCError（不吞语义）。
+        let tc = TCError.busy("/z").sftpMappedTCError()
+        XCTAssertEqual(tc, .busy("/z"))
     }
 }

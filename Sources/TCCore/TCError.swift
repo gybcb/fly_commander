@@ -16,6 +16,8 @@ public enum TCError: Error, Equatable {
     case pathOutsideShare(String)     // "路径不在共享内：X"（SMB 段边界越界）
     case pathEscaped(String)          // "路径逃逸挂载点：X"（折叠 .. 后跑出挂载点）
     case mountPointNotWritable(root: String)         // 多行提权指引（/Volumes 不可写）
+    case authRejected(method: String) // "认证被拒绝（method）"（SFTP SSHClientError.authenticationRejected）
+    case sftpConnectFailed            // "SFTP 连接失败"（SFTP SSHClientError.connectionFailed）
     case unknown(String)              // 收窄：仅 locale 透传（系统 localizedDescription / Traversio message）
 
     /// 稳定英文内部 message —— 仅供日志/测试/跨模块，不进 UI 显示路径（UI 用 tcErrorDisplay）。
@@ -37,6 +39,8 @@ public enum TCError: Error, Equatable {
         case .putBackFailed(let c, let d):  return "Put-back mount failed (exit \(c)): \(d.prefix(200))"
         case .pathOutsideShare(let p):      return "Path outside share: \(p)"
         case .pathEscaped(let p):           return "Path escaped the mount point: \(p)"
+        case .authRejected(let m):          return "Authentication rejected (\(m))"
+        case .sftpConnectFailed:            return "SFTP connection failed"
         case .mountPointNotWritable(let r):
             return "Cannot create mount point \(r) (/Volumes not writable for current user). "
                  + "Run this once in Terminal:\nsudo mkdir -p \(r) && sudo chown \"$(whoami)\" \(r)"
@@ -62,6 +66,8 @@ public enum TCError: Error, Equatable {
         case .putBackFailed:     return .errPutBackFailed
         case .pathOutsideShare:  return .errPathOutsideShare
         case .pathEscaped:       return .errPathEscaped
+        case .authRejected:      return .errAuthRejected
+        case .sftpConnectFailed: return .errSFTPConnectFailed
         case .mountPointNotWritable: return .errMountPointHint
         case .unknown:           return .errUnknown
         }
@@ -85,6 +91,10 @@ public enum TCError: Error, Equatable {
             return ["\(c)", String(d.prefix(200))]
         case .pathOutsideShare(let p), .pathEscaped(let p):
             return [p]
+        case .authRejected(let m):
+            return [m]
+        case .sftpConnectFailed:
+            return []
         case .mountPointNotWritable(let r):
             return [r]   // 模板内 {0} 出现 3 次，t() 全量替换
         case .unknown(let m):
