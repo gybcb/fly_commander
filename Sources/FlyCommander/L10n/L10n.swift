@@ -31,6 +31,10 @@ enum L10n {
 
     /// 查表 + 位置插值（{0}、{1}…）。zh 缺 key 落 en，仍缺落 rawValue。
     static func t(_ k: L10nKey, _ args: String...) -> String {
+        t(k, args: args)
+    }
+    /// 数组重载：供 TCError.l10nArgs 等结构化参数直接传入（variadic 版委托它）。
+    static func t(_ k: L10nKey, args: [String]) -> String {
         let table = current == .en ? L10nTable.en : L10nTable.zh
         var s = table[k] ?? L10nTable.en[k] ?? k.rawValue
         for (i, a) in args.enumerated() { s = s.replacingOccurrences(of: "{\(i)}", with: a) }

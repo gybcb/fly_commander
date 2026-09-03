@@ -201,6 +201,68 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.smbWindowTitle), "SMB 连接")
         XCTAssertEqual(L10n.t(.searchWindowTitle), "搜索文件")
     }
+    // MARK: - 错误模板键（err*）英文
+
+    func testErrorKeysEnglish() {
+        XCTAssertEqual(L10n.t(.errNotFound, args: ["/a"]), "Not found: /a")
+        XCTAssertEqual(L10n.t(.errPermissionDenied, args: ["/a"]), "Permission denied: /a")
+        XCTAssertEqual(L10n.t(.errBusy, args: ["/x"]), "Busy: /x")
+        XCTAssertEqual(L10n.t(.errInvalidPath, args: ["a/b"]), "Invalid path: a/b")
+        XCTAssertEqual(L10n.t(.errCancelled, args: []), "Cancelled")
+        XCTAssertEqual(L10n.t(.errAlreadyExists, args: ["a.txt"]), "Already exists: a.txt")
+        XCTAssertEqual(L10n.t(.errAlreadyExistsBare, args: []), "Target already exists")
+        XCTAssertEqual(L10n.t(.errDirExists, args: ["nd"]), "Directory already exists: nd")
+        XCTAssertEqual(L10n.t(.errCrossSourceDir, args: ["sub"]),
+                       "Cross-source directory transfer unsupported: sub")
+        XCTAssertEqual(L10n.t(.errNoSpace, args: []), "No space left on device")
+        XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP operation did not execute")
+        XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB mount failed (exit 7): boom")
+        XCTAssertEqual(L10n.t(.errPutBackFailed, args: ["3", "nope"]), "Put-back mount failed (exit 3): nope")
+        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "Error: File exists")
+    }
+    func testErrorKeysChinese() {
+        L10n.current = .zh
+        XCTAssertEqual(L10n.t(.errNotFound, args: ["/a"]), "找不到：/a")
+        XCTAssertEqual(L10n.t(.errPermissionDenied, args: ["/a"]), "没有权限访问：/a")
+        XCTAssertEqual(L10n.t(.errBusy, args: ["/x"]), "忙碌/被占用：/x")
+        XCTAssertEqual(L10n.t(.errInvalidPath, args: ["a/b"]), "无效路径：a/b")
+        XCTAssertEqual(L10n.t(.errCancelled, args: []), "已取消")
+        XCTAssertEqual(L10n.t(.errAlreadyExists, args: ["a.txt"]), "已存在同名：a.txt")
+        XCTAssertEqual(L10n.t(.errAlreadyExistsBare, args: []), "目标已存在同名文件")
+        XCTAssertEqual(L10n.t(.errDirExists, args: ["nd"]), "目录已存在：nd")
+        XCTAssertEqual(L10n.t(.errCrossSourceDir, args: ["sub"]), "跨源传输暂不支持目录：sub")
+        XCTAssertEqual(L10n.t(.errNoSpace, args: []), "磁盘空间不足")
+        XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP 操作未执行")
+        XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB 挂载失败（exit 7）：boom")
+        XCTAssertEqual(L10n.t(.errPutBackFailed, args: ["3", "nope"]), "挂回原处失败（exit 3）：nope")
+        XCTAssertEqual(L10n.t(.errUnknown, args: ["File exists"]), "错误：File exists")
+    }
+
+    // MARK: - 边界翻译器 tcErrorDisplay
+
+    func testTCErrorDisplayEnglish() {
+        XCTAssertEqual(tcErrorDisplay(.notFound("/a")), "Not found: /a")
+        XCTAssertEqual(tcErrorDisplay(.cancelled), "Cancelled")
+        XCTAssertEqual(tcErrorDisplay(.noSpace), "No space left on device")
+        XCTAssertEqual(tcErrorDisplay(.alreadyExists("a.txt")), "Already exists: a.txt")
+        XCTAssertEqual(tcErrorDisplay(.alreadyExists(nil)), "Target already exists")
+        XCTAssertEqual(tcErrorDisplay(.smbMountFailed(code: 7, diag: "boom")),
+                       "SMB mount failed (exit 7): boom")
+        // .unknown 走 errUnknown 模板前缀 "Error: "，payload 原样透传
+        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "Error: File exists")
+    }
+    func testTCErrorDisplayChinese() {
+        L10n.current = .zh
+        XCTAssertEqual(tcErrorDisplay(.notFound("/a")), "找不到：/a")
+        XCTAssertEqual(tcErrorDisplay(.cancelled), "已取消")
+        XCTAssertEqual(tcErrorDisplay(.noSpace), "磁盘空间不足")
+        XCTAssertEqual(tcErrorDisplay(.alreadyExists("a.txt")), "已存在同名：a.txt")
+        XCTAssertEqual(tcErrorDisplay(.alreadyExists(nil)), "目标已存在同名文件")
+        XCTAssertEqual(tcErrorDisplay(.smbMountFailed(code: 7, diag: "boom")),
+                       "SMB 挂载失败（exit 7）：boom")
+        XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "错误：File exists")
+    }
+
     func testOnChangeFiresOnSwitch() {
         var fired = 0
         let token = L10n.observe { fired += 1 }

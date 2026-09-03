@@ -75,7 +75,7 @@ public final class OperationEngine {
         guard !trimmed.isEmpty, !trimmed.contains("/") else { throw TCError.invalidPath(newName) }
         guard let parent = item.path.parent else { throw TCError.invalidPath(item.path.pathString) }
         let dst = parent.joining(trimmed)
-        if (try? source.stat(dst)) != nil { throw TCError.unknown("已存在同名：\(trimmed)") }
+        if (try? source.stat(dst)) != nil { throw TCError.alreadyExists(trimmed) }
         try source.renameItem(at: item.path, to: dst)
     }
 

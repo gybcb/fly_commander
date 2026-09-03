@@ -62,5 +62,9 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case helpHeader, helpCd, helpLs, helpMkdir, helpCopy, helpMove, helpDel
     case helpView, helpEdit, helpSftp, helpSmb, helpTabNew, helpTabClose
     case helpTheme, helpHelp, helpLang
+    // —— 错误模板（TCError.l10nKey 映射；en 为内部稳定串镜像，zh 逐字搬原中文）——
+    case errNotFound, errPermissionDenied, errBusy, errInvalidPath, errCancelled
+    case errAlreadyExists, errAlreadyExistsBare, errDirExists, errCrossSourceDir
+    case errNoSpace, errSFTPNotExecuted, errSMBMountFailed, errPutBackFailed, errUnknown
     // …（各任务按 key 清单增补本 enum）
 }

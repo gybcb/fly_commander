@@ -95,7 +95,7 @@ final class CommandRouterTests: XCTestCase {
         guard case .failed(let message)? = last else {
             return XCTFail("expected .failed, got \(String(describing: last))")
         }
-        XCTAssertTrue(message.hasPrefix("已存在同名"), "got: \(message)")
+        XCTAssertTrue(message.hasPrefix("Already exists"), "got: \(message)")
     }
 
     func testDeleteDelegatesToOnDelete() {

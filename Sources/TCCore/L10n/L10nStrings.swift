@@ -104,6 +104,21 @@ public enum L10nTable {
         .helpTheme: "  theme                Open the theme window (appearance/accent/file-type colors)",
         .helpHelp: "  help                 Show this help",
         .helpLang: "  lang [en|zh]         Switch UI language (bare lang shows the current one)",
+        // —— 错误模板（TCError.l10nKey 映射）——
+        .errNotFound: "Not found: {0}",
+        .errPermissionDenied: "Permission denied: {0}",
+        .errBusy: "Busy: {0}",
+        .errInvalidPath: "Invalid path: {0}",
+        .errCancelled: "Cancelled",
+        .errAlreadyExists: "Already exists: {0}",
+        .errAlreadyExistsBare: "Target already exists",
+        .errDirExists: "Directory already exists: {0}",
+        .errCrossSourceDir: "Cross-source directory transfer unsupported: {0}",
+        .errNoSpace: "No space left on device",
+        .errSFTPNotExecuted: "SFTP operation did not execute",
+        .errSMBMountFailed: "SMB mount failed (exit {0}): {1}",
+        .errPutBackFailed: "Put-back mount failed (exit {0}): {1}",
+        .errUnknown: "Error: {0}",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -209,5 +224,20 @@ public enum L10nTable {
         .helpTheme: "  theme                打开主题窗（外观/强调色/文件类型配色）",
         .helpHelp: "  help                 显示本帮助",
         .helpLang: "  lang [en|zh]          切换界面语言（缺省 lang 回显当前语言）",
+        // —— 错误模板（zh 逐字搬被替换的中文现码，全角 ：（））——
+        .errNotFound: "找不到：{0}",
+        .errPermissionDenied: "没有权限访问：{0}",
+        .errBusy: "忙碌/被占用：{0}",
+        .errInvalidPath: "无效路径：{0}",
+        .errCancelled: "已取消",
+        .errAlreadyExists: "已存在同名：{0}",
+        .errAlreadyExistsBare: "目标已存在同名文件",
+        .errDirExists: "目录已存在：{0}",
+        .errCrossSourceDir: "跨源传输暂不支持目录：{0}",
+        .errNoSpace: "磁盘空间不足",
+        .errSFTPNotExecuted: "SFTP 操作未执行",
+        .errSMBMountFailed: "SMB 挂载失败（exit {0}）：{1}",
+        .errPutBackFailed: "挂回原处失败（exit {0}）：{1}",
+        .errUnknown: "错误：{0}",
     ]
 }
