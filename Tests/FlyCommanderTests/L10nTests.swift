@@ -3,7 +3,13 @@ import XCTest
 @testable import TCCore
 
 final class L10nTests: XCTestCase {
-    override func setUp() { super.setUp(); L10n.current = .en }
+    override func setUp() {
+        super.setUp()
+        // 先清盘再置 .en：防 --parallel/调度到 zh 用例后残留偏好造成假红/假绿
+        //（L10n.current=.en 只写盘不清除，其他不显式 removeObject 的 setUp 路径会读到脏值）。
+        UserDefaults.standard.removeObject(forKey: "appLanguage")
+        L10n.current = .en
+    }
     override func tearDown() { L10n.current = .en; super.tearDown() }
 
     func testDefaultIsEnglishWhenNoPreference() {

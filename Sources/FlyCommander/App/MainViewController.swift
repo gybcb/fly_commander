@@ -312,7 +312,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     }
 
     /// done 时需要再套"X 完成"模板的标签键（其余 done 标签本身即成品句）。
-    private static let appendCompleteLabels: Set<L10nKey> = [.opCopying, .opMoving]
+    /// internal（非 private）：暴露给结构守卫测，锁"成品句误投"不变量。
+    static let appendCompleteLabels: Set<L10nKey> = [.opCopying, .opMoving]
 
     /// 工具栏右侧的状态文本（操作进度/结果/已选 N 项）。
     private var statusLabel: NSTextField?
