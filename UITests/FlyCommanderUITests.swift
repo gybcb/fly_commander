@@ -30,7 +30,10 @@ final class FlyCommanderUITests: XCTestCase {
         app.terminate()   // 清掉上一用例可能残留的进程
         // 强制默认英文：UserDefaults 注册域参数，键 "appLanguage"（L10n 读取），
         // 使断言不受用户持久化的 zh 偏好影响（UI 定位符已全按英文标题匹配）。
-        app.launchArguments = ["-appLanguage", "en"]
+        // 再叠 -flyDisableSessionRestore YES 兜底关闭会话恢复：本类用例只给 FLY_START_DIR
+        // （契约上已禁读写），这层开关防止将来新增用例漏设 FLY_START_DIR 时把测试夹具
+        // 目录写进开发者真实 UserDefaults（污染下次正常启动）。
+        app.launchArguments = ["-appLanguage", "en", "-flyDisableSessionRestore", "YES"]
         app.launchEnvironment = ["FLY_START_DIR": fixture.path]
         app.launch()
         // 主窗两个表格出现（启动 + 列目录耗时）

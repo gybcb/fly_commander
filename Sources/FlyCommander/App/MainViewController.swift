@@ -3,7 +3,8 @@ import TCCore
 
 final class MainViewController: NSViewController, NSSplitViewDelegate {
     // 隐式解包：本工具链禁止在 loadView 里直接给 `let` 存储属性赋值
-    private var workspace: Workspace!
+    // （workspace/viewOfPane 为 internal 而非 private：接线测试需经 @testable 访问）
+    var workspace: Workspace!
     private var router: CommandRouter!
     private var leftContainer: SidePaneContainer!
     private var rightContainer: SidePaneContainer!
@@ -22,37 +23,90 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// 主窗控制器弱引用（语言切换时重刷工具栏 label；强引用会成循环——window 持 contentVC）。
     private weak var mainWindowController: MainWindowController?
 
+    /// 会话记忆（左右窗格目录 + 活动侧）的持久化门面；可注入（单测/UI 测试用独立 suite）。
+    private let sessionStore: SessionStore
+    /// 启动期在 loadView 创建，此后恒非 nil。
+    private var recorder: SessionRecorder!
+    /// 是否允许写回记忆：显式起始目录 / 参数域禁用 / 注入快照时关闭。
+    private var recordingEnabled = false
+    /// 启动期初始 load 进行中：避免把"正在恢复"当作用户操作写回。
+    private var isRestoring = false
+
     /// AppDelegate 建窗后注入回链。
     func attachMainWindowController(_ wc: MainWindowController) { mainWindowController = wc }
 
-    init() {
+    init(sessionStore: SessionStore = .shared) {
+        self.sessionStore = sessionStore
         super.init(nibName: nil, bundle: nil)
     }
 
-    /// 启动目录：`--start-dir <路径>` 参数或 FLY_START_DIR 环境变量优先（供 UI 测试
-    /// 指向已知夹具目录），缺省为用户主目录。
+    /// 显式起始目录：`--start-dir <路径>` 参数优先，其次 FLY_START_DIR 环境变量
+    /// （供 UI 测试指向已知夹具目录）；空串/缺值一律忽略并回落下一来源，最终 nil。
+    static func explicitStartPath(arguments: [String], environment: [String: String]) -> String? {
+        if let i = arguments.firstIndex(of: "--start-dir"), i + 1 < arguments.count,
+           !arguments[i + 1].isEmpty {
+            return arguments[i + 1]
+        }
+        if let dir = environment["FLY_START_DIR"], !dir.isEmpty { return dir }
+        return nil
+    }
+
+    /// 启动目录：显式起始目录优先，缺省为用户主目录。
     static var startPath: TCPath {
-        let args = CommandLine.arguments
-        if let i = args.firstIndex(of: "--start-dir"), i + 1 < args.count {
-            return TCPath(args[i + 1])
-        }
-        if let dir = ProcessInfo.processInfo.environment["FLY_START_DIR"] {
-            return TCPath(dir)
-        }
-        return TCPath("~")
+        TCPath(explicitStartPath(arguments: CommandLine.arguments,
+                                 environment: ProcessInfo.processInfo.environment) ?? "~")
+    }
+
+    /// 启动期目录探测（启动路径上唯一的 IO）：能列出即视为可用，否则由 SessionRestore
+    /// 逐级上溯。已删除/无权限/被卸载的目录都走这条降级路，绝不抛到调用方。
+    private static func localDirectoryProbe(_ s: String) -> Bool {
+        let p = TCPath(s)
+        guard !p.isRemote else { return false }
+        return (try? LocalFileSource().listDirectory(p)) != nil
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override func loadView() {
-        let home = Self.startPath
+        // 启动决策（纯函数 + 一次快照读取，无网络、无阻塞）：显式起始目录 > 注入快照
+        // （UI 测试）> 恢复快照 > 默认 ~。候选不可用则由 SessionRestore 逐级上溯。
+        let explicit = Self.explicitStartPath(arguments: CommandLine.arguments,
+                                              environment: ProcessInfo.processInfo.environment)
+        let restore = SessionPolicy.restoreEnabled(
+            explicitStartPath: explicit,
+            argumentDisabled: SessionStore.disabledByArgumentDomain)
+        let injected = SessionStore.injectedSnapshot()
+        let hasInjected = SessionStore.hasInjectedSnapshot
+        recordingEnabled = SessionPolicy.recordingEnabled(restoreEnabled: restore,
+                                                          hasInjectedSnapshot: hasInjected)
+        let snapshot = SessionPolicy.snapshotToUse(restoreEnabled: restore,
+                                                   hasInjectedSnapshot: hasInjected,
+                                                   injected: injected, stored: sessionStore.snapshot)
+        let fallback = explicit ?? "~"
+        let leftResolved: String
+        let rightResolved: String
+        if let snapshot = snapshot {
+            leftResolved = SessionRestore.resolve(candidate: snapshot.leftPath, fallback: fallback,
+                                                  probe: Self.localDirectoryProbe)
+            rightResolved = SessionRestore.resolve(candidate: snapshot.rightPath, fallback: fallback,
+                                                   probe: Self.localDirectoryProbe)
+        } else {
+            leftResolved = fallback
+            rightResolved = fallback
+        }
+        // candidate 传快照原始串（含 nil），**不是** fallback——degraded 语义靠它守护。
+        recorder = SessionRecorder(startups: [
+            .left: SessionRecorder.SideStartup(resolved: leftResolved, candidate: snapshot?.leftPath),
+            .right: SessionRecorder.SideStartup(resolved: rightResolved, candidate: snapshot?.rightPath),
+        ])
+
         let source = LocalFileSource()
-        let leftPane = FilePane(id: .left, source: source, startPath: home)
-        let rightPane = FilePane(id: .right, source: source, startPath: home)
+        let leftPane = FilePane(id: .left, source: source, startPath: TCPath(leftResolved))
+        let rightPane = FilePane(id: .right, source: source, startPath: TCPath(rightResolved))
         workspace = Workspace(left: TabGroup(side: .left, panes: [leftPane]),
                               right: TabGroup(side: .right, panes: [rightPane]),
-                              active: .left)
+                              active: snapshot?.active == "right" ? .right : .left)
 
         router = CommandRouter(workspace: workspace, engine: engine)
         router.conflictPrompt = { [weak self] src, dst in self?.promptConflict(src, dst) ?? .overwrite }
@@ -171,10 +225,13 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             self.split.setPosition(self.split.bounds.width / 2, ofDividerAt: 0)
         }
 
+        // 恢复期的初始 load：包在 isRestoring 里，避免把恢复本身当用户操作写回记忆。
+        isRestoring = true
         leftPane.load()
         rightPane.load()
         applyActiveState()
         updateBars()
+        isRestoring = false
 
         // 语言切换 → 重刷所有"建一次即常驻"的 UI（整份菜单/列头/命令栏/状态栏）。
         // 回调在 L10n.current 的 setter 内同步触发（菜单动作在主线程 → 重建亦在主线程）。
@@ -212,9 +269,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         container.tabBar.onCloseTab = { [weak self] i in _ = self?.closeTab(in: side, at: i) }
     }
 
-    /// 窗口的初始第一响应者：左窗格（键盘事件落点），供 window.initialFirstResponder 使用。
+    /// 窗口的初始第一响应者：**活动侧**当前标签的窗格，供 window.initialFirstResponder 使用。
+    /// 必须按 workspace.active 取：loadView 期的 makeFirstResponder 因 window==nil 是 no-op，
+    /// 恢复会话后活动侧可能是右——若恒取左，会出现"方向键动左窗格、F5/回车动右窗格"的脑裂。
     var initialKeyView: NSView {
-        leftContainer.activePaneView ?? leftContainer.allPaneViews.first!
+        viewOfPane(workspace.activePane) ?? leftContainer.activePaneView ?? leftContainer.allPaneViews.first!
     }
 
     // MARK: - Core callbacks
@@ -237,6 +296,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     }
 
     private func refresh(_ pane: FilePane) {
+        // 首条：导航/刷新即更新记忆。后台标签 reload 也走此路，但记录的是该侧**活动**标签。
+        recordSessionIfChanged()
         guard let pv = viewOfPane(pane) else { return }
         pv.reload()
         // 导航改了 pane.path → 该侧标签条标题须同步（show 依 pane.path 重建标签按钮）；
@@ -249,7 +310,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         updateBars()
     }
 
-    private func viewOfPane(_ pane: FilePane) -> PaneTableView? {
+    /// internal（非 private）：接线测试经 @testable 访问，验证"记录的是活动标签"。
+    func viewOfPane(_ pane: FilePane) -> PaneTableView? {
         leftContainer.paneView(pane) ?? rightContainer.paneView(pane)
     }
 
@@ -262,15 +324,40 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             view.window?.makeFirstResponder(av)
         }
         updateBars()
+        recordSessionIfChanged()   // 末条：活动侧变化也要落盘
+    }
+
+    /// 把两侧**活动标签**的当前目录写回记忆（相等则 saveIfChanged 静默跳过）。
+    /// 用 workspace.<side>Tabs.activePane 而非回调传入的 pane：后台标签的 reload
+    /// 不得污染记忆（记的是该侧活动标签的目录，不是刚加载完的那个后台标签）。
+    private func recordSessionIfChanged() {
+        guard recordingEnabled, !isRestoring else { return }
+        let left = workspace.leftTabs.activePane
+        let right = workspace.rightTabs.activePane
+        let snap = SessionSnapshot(
+            version: 1,
+            leftPath: recorder.valueToRecord(side: .left, current: left.path.pathString,
+                                             isRemote: left.source.isRemote),
+            rightPath: recorder.valueToRecord(side: .right, current: right.path.pathString,
+                                              isRemote: right.source.isRemote),
+            active: workspace.active == .left ? "left" : "right")
+        sessionStore.saveIfChanged(snap)
     }
 
     // MARK: - Tab 增删 / 切换
 
-    private func newTab(in side: PaneID? = nil) {
+    /// 新标签继承**该侧当前标签的目录**（TC 行为）。用当前目录而非 `startPath` 不只是手感：
+    /// 会话恢复的 degraded 侧（候选目录不可用、已上溯到祖先）若开新标签落回 `~`，随后的
+    /// 记录就会把真实记忆覆盖成 `~`——继承当前目录则 `current == resolved`，degraded 保护成立。
+    /// 远端标签的路径不是本地路径（SMB 的 `/share/dir` 与本地无法区分），故回落默认起始目录。
+    /// internal（非 private）供接线测试直接驱动：`@testable` 可见，仅模块内。
+    func newTab(in side: PaneID? = nil) {
         let s = side ?? workspace.active
         let tab = (s == .left) ? workspace.leftTabs : workspace.rightTabs
         let container = (s == .left) ? leftContainer! : rightContainer!
-        let pane = FilePane(id: s, source: LocalFileSource(), startPath: Self.startPath)
+        let current = tab.activePane
+        let startPath = current.source.isRemote ? Self.startPath : current.path
+        let pane = FilePane(id: s, source: LocalFileSource(), startPath: startPath)
         tab.add(pane)                                   // core：追加并激活
         wirePaneCallbacks(pane)
         container.addTab(pane: pane, workspace: workspace, router: router)
