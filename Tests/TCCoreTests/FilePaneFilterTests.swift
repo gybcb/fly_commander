@@ -118,6 +118,26 @@ final class FilePaneFilterTests: XCTestCase {
         XCTAssertEqual(pane.visibleCount, 2)
     }
 
+    /// setFilter 因**标记剪枝**（焦点未变）而发 onSelectionChange —— Task 3 的
+    /// `updateBars` 计数依赖此回调契约（只剪标记、焦点原地也必须通知）。
+    /// 变异：把 setFilter 的 diff 改成只比焦点（`before.focusID != selection.focusID`）
+    /// → 标记剪枝不再发回调，本用例红。
+    func testSetFilterNotifiesWhenOnlyMarksPruned() {
+        let pane = makePane(["a.pdf", "b.txt", "c.md"])
+        pane.moveFocus(to: 1, mode: .simple)     // 焦点 b.txt
+        pane.toggleMark(at: 0)                   // 标记 a.pdf
+        pane.toggleMark(at: 2)                   // 标记 c.md
+        XCTAssertEqual(names(pane.selection.markedIDs), ["a.pdf", "c.md"])
+        var reloads = 0, selChanges = 0
+        pane.onReload = { _ in reloads += 1 }
+        pane.onSelectionChange = { _ in selChanges += 1 }
+        pane.setFilter("txt")                    // 可见仅 b.txt：焦点未动，两枚标记被剪掉
+        XCTAssertEqual(pane.focusedItem?.name, "b.txt", "焦点未被移动")
+        XCTAssertTrue(pane.selection.marked.isEmpty, "标记已被剪枝")
+        XCTAssertEqual(selChanges, 1, "标记剪枝也是选择态变化，须恰好通知一次")
+        XCTAssertEqual(reloads, 0, "仍不得发 onReload")
+    }
+
     // MARK: - 空可见集
 
     /// 无命中：operationTargets == []、focusedItem == nil、selectAll 标空、计数 0。
@@ -189,6 +209,19 @@ final class FilePaneFilterTests: XCTestCase {
         pane.setFilter("pdf")                  // 可见 a.pdf(0), c.pdf(2)
         pane.moveFocus(to: pane.itemCount - 1, mode: .simple)   // .end = 索引 3（隐藏）
         XCTAssertEqual(pane.focusedItem?.name, "c.pdf")
+    }
+
+    /// `revealItem` 目标被筛掉：仍返回 true（id 确实在 items 里），但焦点被收口到
+    /// 最近可见项——**「焦点可见优先」的已披露取舍，不是缺陷**（决策 5 的不变量）。
+    /// 变异：去掉 enforceVisibleInvariants 里的焦点收口 → focusID 停在隐藏的 a.pdf
+    /// （focusedItem 因门禁变 nil），本用例红。
+    func testRevealFilteredOutItemKeepsFocusVisible() {
+        let pane = makePane(["a.pdf", "b.txt", "c.md"])
+        pane.setFilter("txt")                  // 可见仅 b.txt，焦点落在 b.txt(1)
+        let hiddenID = pane.page!.items.first { $0.name == "a.pdf" }!.id
+        XCTAssertTrue(pane.revealItem(id: hiddenID), "目标仍在 items 里 → 返回 true")
+        XCTAssertEqual(pane.selection.focusID, pane.page!.items[1].id, "焦点被收口到可见的 b.txt")
+        XCTAssertEqual(pane.focusedItem?.name, "b.txt", "被筛掉的项不得成为焦点")
     }
 
     // MARK: - 导航清空 / 刷新保留

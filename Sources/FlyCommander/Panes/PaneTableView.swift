@@ -23,7 +23,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var tableView: ClickForwardingTableView!
     private var scrollView: NSScrollView!
 
-    /// display 顺序（item id 列表），与 pane.selection.items 一一对应。
+    /// display 顺序（item id 列表）；正常路径与 `pane.selection.items` 同源，
+    /// 防御路径下可能少项（`sortedIDs` 跳过 items 字典里缺失的 id）。
     private var displayIDs: [String] = []
     private var sortKey: SortKey = .name
     private var sortDirection: SortDirection = .ascending
