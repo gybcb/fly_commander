@@ -39,7 +39,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
     /// 筛选行高度约束（收起 0 / 展开 28）——行隐藏时不占垂直空间。
     private var filterRowHeight: NSLayoutConstraint!
     private var filterRow: NSView!
-    private var filterInput: FilterInputField!
+    /// private(set)：接线测试需直接对真实输入框 `makeFirstResponder`。
+    private(set) var filterInput: FilterInputField!
     private var filterClearButton: NSButton!
     private var filterCountLabel: NSTextField!
 
@@ -159,7 +160,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             clear.heightAnchor.constraint(equalToConstant: 20),
             count.trailingAnchor.constraint(equalTo: frow.trailingAnchor, constant: -4),
             count.centerYAnchor.constraint(equalTo: frow.centerYAnchor),
-            count.widthAnchor.constraint(equalToConstant: 56),
+            // 下限 56 而非定宽：大目录下 "12345/67890" 不该被压成省略号（本特性的主场景）。
+            count.widthAnchor.constraint(greaterThanOrEqualToConstant: 56),
             // 表格顶边改钉筛选行底边（其余三边不变）：行收起时表格上移占满。
             sv.topAnchor.constraint(equalTo: frow.bottomAnchor),
             sv.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -734,21 +736,19 @@ final class ClickForwardingTableView: NSTableView {
 }
 
 /// 筛选输入框：Esc 走 cancelOperation（原生 NSTextField 不处理 Esc，需覆写）；
-/// ⌃⇥ 自行转交切标签——`FlyWindow.sendEvent` 把 ⌃⇥ 直接喂给 firstResponder，
-/// 输入框聚焦时若不转交，该键就被输入框吃掉、切标签失效。转交时带上 ⇧ 态，
+/// ⌃⇥ 由 `FlyWindow` 解到 field editor 的 delegate 后经 `ControlTabRouting` 投递到此
+/// （输入框聚焦时 firstResponder 是 field editor，覆写自身 keyDown 到不了——探针实证），
 /// 方向与 `KeyDispatcher` 的约定一致（⌃⇧⇥ = 上一标签）。
-final class FilterInputField: NSTextField {
+final class FilterInputField: NSTextField, ControlTabRouting {
     var onEscape: (() -> Void)?
     /// 参数 = 是否按下 ⇧。
     var onControlTab: ((Bool) -> Void)?
 
     override func cancelOperation(_ sender: Any?) { onEscape?() }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 48, event.modifierFlags.contains(.control) {
-            onControlTab?(event.modifierFlags.contains(.shift))
-            return
-        }
-        super.keyDown(with: event)
+    func handleControlTab(shift: Bool) -> Bool {
+        guard let onControlTab else { return false }
+        onControlTab(shift)
+        return true
     }
 }

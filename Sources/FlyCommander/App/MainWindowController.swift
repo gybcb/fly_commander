@@ -13,6 +13,13 @@ extension NSToolbarItem.Identifier {
     static let selectionStatus = NSToolbarItem.Identifier("selectionStatus")
 }
 
+/// 文本输入控件需要接管 ⌃⇥ 时的可选协议。输入框聚焦时 firstResponder 是 field editor
+/// （NSTextView），事件到不了输入框自身，故由 FlyWindow 解到其 delegate 再投递（探针实证）。
+protocol ControlTabRouting: NSResponder {
+    /// 返回 true = 已消费该键。
+    func handleControlTab(shift: Bool) -> Bool
+}
+
 /// 主窗口：拦下 Ctrl+Tab / Ctrl+Shift+Tab（keyCode 48 + .control），转发给第一响应者的
 /// keyDown 并消费掉，避免 macOS 原生 window tabbing 在 sendEvent 层吞掉它。
 ///
@@ -27,6 +34,13 @@ final class FlyWindow: NSWindow {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.keyCode == 48,
            event.modifierFlags.contains(.control) {
+            // 输入框聚焦时 firstResponder 是 field editor（NSTextView），⌃⇥ 到不了输入框
+            // 自身；解到其 delegate，若它 opt-in 了 ControlTabRouting 就投递给它
+            // （方向从 event 本体取，不用 NSApp.currentEvent——测试直调 sendEvent 时其为 nil）。
+            if let routed = (firstResponder as? NSTextView)?.delegate as? ControlTabRouting,
+               routed.handleControlTab(shift: event.modifierFlags.contains(.shift)) {
+                return
+            }
             firstResponder?.keyDown(with: event)   // PaneTableView 处理 .nextTab/.prevTab
             return                                  // 消费掉，不交给 super（原生 tabbing 会吞）
         }

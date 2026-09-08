@@ -256,24 +256,56 @@ final class FilterBarWiringTests: XCTestCase {
         XCTAssertEqual(item.action, #selector(MainViewController.menuFilter(_:)))
     }
 
-    // MARK: - 10. T-F1：⌃⇥ 转交带 ⇧ 态
+    // MARK: - 10. T-F1：⌃⇥ 经真实响应者链投递且带方向
 
-    /// 变异：`FilterInputField.keyDown` 里传参写死 `false`（或漏传 modifierFlags）→ 本用例红。
-    func testFilterInputForwardsControlTabWithShiftState() {
-        let field = FilterInputField()
-        var received: [Bool] = []
-        field.onControlTab = { received.append($0) }
+    private func controlTabEvent(shift: Bool, windowNumber: Int = 0) -> NSEvent {
+        var flags: NSEvent.ModifierFlags = [.control]
+        if shift { flags.insert(.shift) }
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                timestamp: 0, windowNumber: windowNumber, context: nil,
+                                characters: "\t", charactersIgnoringModifiers: "\t",
+                                isARepeat: false, keyCode: 48)!
+    }
 
-        func keyEvent(_ flags: NSEvent.ModifierFlags) -> NSEvent {
-            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
-                             timestamp: 0, windowNumber: 0, context: nil,
-                             characters: "\t", charactersIgnoringModifiers: "\t",
-                             isARepeat: false, keyCode: 48)!
+    /// 真实窗口 + 真实 sendEvent + 真实接线：输入框聚焦时 firstResponder 是 field editor
+    /// （NSTextView），⌃⇥ 到不了输入框自身的 keyDown——必须由 FlyWindow 解到其 delegate
+    /// 经 ControlTabRouting 投递。断言方向：⌃⇥ = 下一标签，⌃⇧⇥ = 上一标签。
+    /// 变异：① 接线写死 `.nextTab` → 第二次断言红；② 删 FlyWindow 的 routed 分支 → 两次都红。
+    /// **须 ≥3 个标签**：2 个标签时 ⌃⇥ 按两次会 wrap 回 0，方向变异测不出来（假绿）。
+    func testControlTabRoutesThroughRealResponderChainWithDirection() throws {
+        // 左标签组加到 3 个标签（切标签需要目标）；add 会激活新标签，先回到第 0 个。
+        for _ in 0..<2 {
+            let extra = FilePane(id: .left, source: LocalFileSource(), startPath: TCPath(url: dir))
+            extra.load()
+            workspace.leftTabs.add(extra)
         }
-        field.keyDown(with: keyEvent([.control, .shift]))
-        field.keyDown(with: keyEvent([.control]))
-        XCTAssertEqual(received, [true, false],
-                       "⌃⇧⇥ 应转交 true（上一标签），⌃⇥ 应转交 false（下一标签）")
+        XCTAssertEqual(workspace.leftTabs.activeIndex, 2, "前置：add 激活新标签")
+        workspace.leftTabs.step(-2)
+        XCTAssertEqual(workspace.leftTabs.activeIndex, 0, "前置：回到第 0 个标签")
+
+        let win = FlyWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        win.contentView = host
+        host.addSubview(paneView)
+        NSLayoutConstraint.activate([
+            paneView.topAnchor.constraint(equalTo: host.topAnchor),
+            paneView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            paneView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            paneView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        win.makeKeyAndOrderFront(nil)
+        defer { win.orderOut(nil) }
+
+        paneView.setFilterRowVisible(true)
+        XCTAssertTrue(win.makeFirstResponder(paneView.filterInput), "输入框应可成为第一响应者")
+        XCTAssertTrue(win.firstResponder is NSTextView,
+                      "前置：输入框聚焦时 firstResponder 是 field editor（否则本用例失败原因会被误读）")
+
+        win.sendEvent(controlTabEvent(shift: false, windowNumber: win.windowNumber))
+        XCTAssertEqual(workspace.leftTabs.activeIndex, 1, "⌃⇥ 应切到下一标签")
+        win.sendEvent(controlTabEvent(shift: true, windowNumber: win.windowNumber))
+        XCTAssertEqual(workspace.leftTabs.activeIndex, 0, "⌃⇧⇥ 应切回上一标签")
     }
 
     // MARK: - 11. T-F2：可见性变化走唯一收口（Esc 路径）
@@ -297,5 +329,16 @@ final class FilterBarWiringTests: XCTestCase {
         input.cancelOperation(nil)
         XCTAssertFalse(pv.isFilterRowVisible, "Esc 应收起筛选行")
         XCTAssertFalse(container.tabBar.isFilterActive, "Esc 收起后按钮须关（唯一收口回写）")
+    }
+
+    // MARK: - 12. R10：计数标签宽度是下限而非定宽
+
+    /// 变异：改回 `equalToConstant(56)` → 本用例红。
+    func testFilterCountLabelWidthIsLowerBoundNotFixed() {
+        guard let width = filterCount.constraints.first(where: { $0.firstAttribute == .width }) else {
+            return XCTFail("计数标签缺宽度约束")
+        }
+        XCTAssertEqual(width.relation, .greaterThanOrEqual,
+                       "大目录计数（如 12345/67890）不该被压成省略号")
     }
 }
