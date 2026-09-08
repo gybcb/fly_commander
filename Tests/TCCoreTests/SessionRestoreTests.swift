@@ -76,6 +76,19 @@ final class SessionRestoreTests: XCTestCase {
         XCTAssertEqual(probed, 0)
     }
 
+    // MARK: - normalizedCandidate（写者与 resolve 共用的合法尺）
+
+    /// 写者（SessionRecorder 回吐候选）必须与 resolve 用同一把尺：合法 → trim 后的串；非法 → nil。
+    func testNormalizedCandidateAcceptsOnlyLocalAbsoluteOrTilde() {
+        XCTAssertEqual(SessionRestore.normalizedCandidate("/a/b"), "/a/b")
+        XCTAssertEqual(SessionRestore.normalizedCandidate(" /a/b \n"), "/a/b", "trim 后返回")
+        XCTAssertEqual(SessionRestore.normalizedCandidate("~/dev"), "~/dev")
+        XCTAssertEqual(SessionRestore.normalizedCandidate("~"), "~")
+        for bad in [nil, "", "   ", "relative/path", "~foo", "sftp://h:22/a", "smb://s/share/a"] {
+            XCTAssertNil(SessionRestore.normalizedCandidate(bad), "非法候选不得写回：\(bad ?? "nil")")
+        }
+    }
+
     // MARK: - SessionSnapshot 容错解码
 
     func testDecodesAllFields() throws {

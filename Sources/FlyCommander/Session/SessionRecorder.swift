@@ -36,7 +36,10 @@ final class SessionRecorder {
             degraded.remove(side)          // 用户已离开上溯落点 → 一次性语义结束
             return current
         }
-        return s.candidate ?? current
+        // 回吐候选前再过一次同款合法性校验（与 resolve 同一把尺）：快照里若有手改/旧版遗留的
+        // 远端串、空串、相对路径或 "~foo"，绝不能原样写回——那会让垃圾永久留在记忆里。
+        // 非法 → 写回当前（= 上溯落点），下次启动由 resolve 正常回落，垃圾随之自愈。
+        return SessionRestore.normalizedCandidate(s.candidate) ?? current
     }
 }
 

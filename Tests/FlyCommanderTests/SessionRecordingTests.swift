@@ -44,6 +44,19 @@ final class SessionRecordingTests: XCTestCase {
                        "回到同一祖先不得再回吐旧候选（degraded 已清除）")
     }
 
+    /// 候选侧（快照里手改/旧版遗留的垃圾串）也必须被拦下：degraded 回吐分支原先会把远端串
+    /// 原样写回，让垃圾永久留在记忆里。非法候选 → 写回当前（上溯落点），垃圾随之自愈。
+    func testDegradedWithIllegalCandidateWritesCurrentInstead() {
+        for garbage in ["sftp://h:22/a", "smb://s/share/a", "", "   ", "relative/path", "~foo"] {
+            let r = SessionRecorder(startups: [.left: startup(resolved: "/a", candidate: garbage)])
+            XCTAssertEqual(r.valueToRecord(side: .left, current: "/a", isRemote: false), "/a",
+                           "非法候选不得写回：\(garbage)")
+        }
+        // 合法候选仍照旧回吐（未被这次收紧误伤），且首尾空白被 trim。
+        let ok = SessionRecorder(startups: [.left: startup(resolved: "/a", candidate: " /a/b/c \n")])
+        XCTAssertEqual(ok.valueToRecord(side: .left, current: "/a", isRemote: false), "/a/b/c")
+    }
+
     func testSidesAreIndependent() {
         let r = SessionRecorder(startups: [
             .left: startup(resolved: "/a", candidate: "/a/b"),

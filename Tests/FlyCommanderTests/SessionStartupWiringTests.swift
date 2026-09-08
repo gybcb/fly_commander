@@ -37,6 +37,30 @@ final class SessionStartupWiringTests: XCTestCase {
                        "恢复期不得把上溯结果写回记忆")
         XCTAssertEqual(store.snapshot?.active, "right")
         XCTAssertNotNil(vc.initialKeyView, "活动侧为右时第一响应者仍须存在")
+        // 恢复本身也要断言（否则"整体关闭恢复"时本用例照样绿）：左侧无记录 → 回落 home；
+        // 右侧候选 /no-such-dir-… 不存在 → 上溯到根。
+        XCTAssertEqual(vc.workspace.leftTabs.activePane.path.pathString, TCPath(home).pathString)
+        XCTAssertEqual(vc.workspace.rightTabs.activePane.path.pathString,
+                       TCPath(missing).parent!.pathString)
+    }
+
+    /// 左窗格必须按快照的 leftPath 恢复（种子用与 home 不同的真实目录，否则与 fallback 无法区分）。
+    func testLoadViewRestoresLeftPaneFromSnapshot() {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fly_left_restore_\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let target = TCPath(tmp.path).pathString
+        XCTAssertNotEqual(target, TCPath(home).pathString, "前置条件：种子目录 != 默认回落")
+
+        let store = SessionStore(defaults: suite)
+        store.saveIfChanged(SessionSnapshot(version: 1, leftPath: target,
+                                            rightPath: home, active: "left"))
+        let vc = MainViewController(sessionStore: store)
+        _ = vc.view
+        XCTAssertEqual(vc.workspace.leftTabs.activePane.path.pathString, target,
+                       "左侧须按快照 leftPath 恢复，而非回落默认目录")
+        XCTAssertEqual(vc.workspace.rightTabs.activePane.path.pathString, TCPath(home).pathString)
     }
 
     /// 无快照（首启）：建出视图，且初始 load 本身不写盘——首次记忆由用户首次操作触发。
@@ -86,6 +110,15 @@ final class SessionStartupWiringTests: XCTestCase {
         XCTAssertEqual(store.snapshot?.leftPath, home)
         XCTAssertEqual(store.snapshot?.rightPath, missing,
                        "未离开上溯落点 → 写回原候选，而非上溯后的祖先")
+    }
+
+    /// 活动侧写回：左 → 右切侧后必须记 "right"（把写死的 "left" 变异体下此用例即红）。
+    func testSwitchingToRightPaneRecordsRight() {
+        let store = SessionStore(defaults: suite)
+        let vc = MainViewController(sessionStore: store)
+        _ = vc.view
+        vc.menuSwitchPane(nil)            // 活动侧左 → 右，触发 applyActiveState → 记录
+        XCTAssertEqual(store.snapshot?.active, "right")
     }
 
     /// 候选不存在时确实落在真实祖先目录上（而非不存在的候选），且一旦离开该祖先，
