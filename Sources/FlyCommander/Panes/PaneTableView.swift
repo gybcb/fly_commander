@@ -99,7 +99,9 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     // MARK: - Public
 
     func reload() {
-        displayIDs = PaneTableView.sortedIDs(pane.selection.items,
+        // 输入是**可见集**（筛选态下为命中项，无筛选时 == selection.items）：显示投影
+        // 只呈现可见项；排序照旧由视图层做，故 displayIDs 仍是「可见 ∩ 已排序」。
+        displayIDs = PaneTableView.sortedIDs(pane.visibleItemIDs,
                                              items: pane.itemByID,
                                              key: sortKey,
                                              direction: sortDirection)
@@ -440,6 +442,9 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     enum Edge { case home, end }
 
     func navigate(delta: Int, mode: SelectionModel.MoveMode) {
+        // 空可见集（筛选零命中）必须 no-op：targetSelectionIndex 空表返回 0，会让焦点
+        // 落到被筛掉的 items[0]（隐藏项）。
+        guard !displayIDs.isEmpty else { return }
         let target = PaneTableView.targetSelectionIndex(displayIDs: displayIDs,
                                                         items: pane.selection.items,
                                                         focusID: pane.selection.focusID,
@@ -448,6 +453,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func navigate(toEdge edge: Edge, mode: SelectionModel.MoveMode) {
+        // 同 navigate(delta:)：空可见集下 targetSelectionIndex 返回 0 会误改焦点。
+        guard !displayIDs.isEmpty else { return }
         let target = PaneTableView.targetSelectionIndex(displayIDs: displayIDs,
                                                         items: pane.selection.items,
                                                         edge: edge)
