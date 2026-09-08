@@ -3,7 +3,7 @@ import TCCore
 
 /// 原生 NSTableView 窗格：视图层排序（焦点/标记按 id 存储，不受排序影响）、
 /// 表级列宽 autosave、两级系统色高亮、鼠标/键盘全部翻译成 core 调用。
-final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     enum SortKey { case name, size, date }
     enum SortDirection { case ascending, descending }
 
@@ -23,12 +23,22 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var tableView: ClickForwardingTableView!
     private var scrollView: NSScrollView!
 
-    /// display 顺序（item id 列表）；正常路径与 `pane.selection.items` 同源，
-    /// 防御路径下可能少项（`sortedIDs` 跳过 items 字典里缺失的 id）。
+    /// display 顺序（item id 列表）：`pane.visibleItemIDs`（无筛选时 = `selection.items`）
+    /// 经视图层排序后的投影——筛选态下即「可见 ∩ 已排序」，被筛掉的项不在此列。
     private var displayIDs: [String] = []
     private var sortKey: SortKey = .name
     private var sortDirection: SortDirection = .ascending
     private(set) var isActive = false
+
+    /// 筛选行（TabBar 常驻按钮展开的 28pt 行）是否可见；SidePaneContainer 据此同步
+    /// 标签条按钮的开关态。
+    private(set) var isFilterRowVisible = false
+    /// 筛选行高度约束（收起 0 / 展开 28）——行隐藏时不占垂直空间。
+    private var filterRowHeight: NSLayoutConstraint!
+    private var filterRow: NSView!
+    private var filterInput: FilterInputField!
+    private var filterClearButton: NSButton!
+    private var filterCountLabel: NSTextField!
 
     /// type-ahead 前缀缓冲（pane 模式下累积字母，1 秒无输入自动清空）。
     private var typeAheadBuffer = ""
@@ -71,9 +81,37 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         sv.autohidesScrollers = true
         sv.documentView = tv
 
+        // 筛选行：常驻但默认收起（高度 0 + isHidden）。行内子视图只钉 leading/trailing/
+        // centerY + 固定高度——**不**钉 top/bottom，否则行高 0 时会与固有高度冲突。
+        let frow = NSView()
+        frow.wantsLayer = true
+        frow.setAccessibilityIdentifier("paneFilterRow")
+
+        let input = FilterInputField()
+        input.placeholderString = L10n.t(.filterPlaceholder)
+        input.font = .systemFont(ofSize: 12)
+        input.setAccessibilityIdentifier("paneFilterInput")
+
+        // 标题用文案而非 "×"：标签条关闭按钮已占 "×"，AX 树里会撞车（污染既有 XCUITest）。
+        let clear = NSButton(title: L10n.t(.filterClearTip), target: nil, action: nil)
+        clear.isBordered = false
+        clear.font = .systemFont(ofSize: 11)
+        clear.toolTip = L10n.t(.filterClearTip)
+        clear.setAccessibilityIdentifier("paneFilterClear")
+
+        let count = NSTextField(labelWithString: "")
+        count.alignment = .right
+        count.font = .systemFont(ofSize: 11)
+        count.textColor = .secondaryLabelColor
+        count.setAccessibilityIdentifier("paneFilterCount")
+
         super.init(frame: .zero)
         tableView = tv
         scrollView = sv
+        filterRow = frow
+        filterInput = input
+        filterClearButton = clear
+        filterCountLabel = count
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         tv.delegate = self
@@ -81,10 +119,44 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tv.onRowClick = { [weak self] row, event, double in
             self?.handleMouseClick(row: row, event: event, doubleClick: double)
         }
+        input.delegate = self
+        input.target = self
+        input.action = #selector(filterFieldReturn(_:))
+        input.onEscape = { [weak self] in self?.cancelFilterEditing() }
+        // ⌃⇥ 在输入框聚焦时自行转交（FlyWindow.sendEvent 把它喂给 firstResponder，
+        // 不转交则输入框吃掉该键、切标签失效）。
+        input.onControlTab = { [weak self] in self?.router.execute(.nextTab) }
+        clear.target = self
+        clear.action = #selector(filterClearClicked(_:))
+
+        addSubview(frow)
+        frow.translatesAutoresizingMaskIntoConstraints = false
+        [input, clear, count].forEach {
+            frow.addSubview($0)
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
         addSubview(sv)
         sv.translatesAutoresizingMaskIntoConstraints = false
+        filterRowHeight = frow.heightAnchor.constraint(equalToConstant: 0)
+        frow.isHidden = true
         NSLayoutConstraint.activate([
-            sv.topAnchor.constraint(equalTo: topAnchor),
+            frow.topAnchor.constraint(equalTo: topAnchor),
+            frow.leadingAnchor.constraint(equalTo: leadingAnchor),
+            frow.trailingAnchor.constraint(equalTo: trailingAnchor),
+            filterRowHeight,
+            input.leadingAnchor.constraint(equalTo: frow.leadingAnchor, constant: 4),
+            input.trailingAnchor.constraint(equalTo: clear.leadingAnchor, constant: -4),
+            input.centerYAnchor.constraint(equalTo: frow.centerYAnchor),
+            input.heightAnchor.constraint(equalToConstant: 20),
+            clear.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -4),
+            clear.centerYAnchor.constraint(equalTo: frow.centerYAnchor),
+            clear.widthAnchor.constraint(equalToConstant: 36),
+            clear.heightAnchor.constraint(equalToConstant: 20),
+            count.trailingAnchor.constraint(equalTo: frow.trailingAnchor, constant: -4),
+            count.centerYAnchor.constraint(equalTo: frow.centerYAnchor),
+            count.widthAnchor.constraint(equalToConstant: 56),
+            // 表格顶边改钉筛选行底边（其余三边不变）：行收起时表格上移占满。
+            sv.topAnchor.constraint(equalTo: frow.bottomAnchor),
             sv.leadingAnchor.constraint(equalTo: leadingAnchor),
             sv.trailingAnchor.constraint(equalTo: trailingAnchor),
             sv.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -99,6 +171,11 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     // MARK: - Public
 
     func reload() {
+        // 导航/切源后内核可能已清空筛选（clearFilter），输入框须同步——否则界面显示着
+        // 筛选串而列表已是全量。无筛选时两值同为空串，本分支不动作。
+        if pane.filterText.isEmpty && filterInput.stringValue != pane.filterText {
+            filterInput.stringValue = pane.filterText
+        }
         // 输入是**可见集**（筛选态下为命中项，无筛选时 == selection.items）：显示投影
         // 只呈现可见项；排序照旧由视图层做，故 displayIDs 仍是「可见 ∩ 已排序」。
         displayIDs = PaneTableView.sortedIDs(pane.visibleItemIDs,
@@ -106,7 +183,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                                              key: sortKey,
                                              direction: sortDirection)
         tableView.reloadData()
+        refreshFilterCount()
         DispatchQueue.main.async { [weak self] in self?.scrollFocusRowIntoView() }
+    }
+
+    /// 筛选计数标签：可见数/总数（无筛选时留空）。
+    private func refreshFilterCount() {
+        filterCountLabel.stringValue = pane.isFiltering
+            ? L10n.t(.filterMatchCount, "\(pane.visibleCount)", "\(pane.itemCount)")
+            : ""
     }
 
     /// 选择态快路（方向键/空格/单击）：内容未变，只 focus/marks 变。全量 reload 的
@@ -151,6 +236,57 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tableView.headerView?.needsLayout = true
         tableView.tile()
         tableView.reloadData()   // 让 dateLabel 按当前 locale 重渲染（④ formatter locale）
+        // 筛选行常驻文案（构造时只设一次，语言切换须在此重刷）。
+        filterInput.placeholderString = L10n.t(.filterPlaceholder)
+        filterClearButton.title = L10n.t(.filterClearTip)
+        filterClearButton.toolTip = L10n.t(.filterClearTip)
+        refreshFilterCount()
+    }
+
+    // MARK: - Filter row（TabBar 常驻筛选按钮的展开行）
+
+    func toggleFilterRow() { setFilterRowVisible(!isFilterRowVisible) }
+
+    /// 展开/收起筛选行。收起时清空输入与内核筛选（列表回全量）；展开时把焦点交给
+    /// 输入框、光标置尾。`setFilter` 自身不发 onReload，故此处显式 `reload()`。
+    func setFilterRowVisible(_ visible: Bool) {
+        isFilterRowVisible = visible
+        filterRowHeight.constant = visible ? 28 : 0
+        filterRow.isHidden = !visible
+        if !visible { filterInput.stringValue = "" }
+        pane.setFilter(visible ? filterInput.stringValue : "")
+        reload()
+        guard visible else { return }
+        window?.makeFirstResponder(filterInput)
+        if let editor = filterInput.currentEditor() {
+            editor.selectedRange = NSRange(location: (filterInput.stringValue as NSString).length, length: 0)
+        }
+    }
+
+    /// 输入变化 → 内核筛选 + 视图重投影（每键击一次，不重排标签条/不写会话）。
+    func controlTextDidChange(_ obj: Notification) {
+        pane.setFilter(filterInput.stringValue)
+        reload()
+    }
+
+    /// Esc：清空筛选并收起筛选行，焦点回窗格（继续方向键导航全量列表）。
+    private func cancelFilterEditing() {
+        filterInput.stringValue = ""
+        setFilterRowVisible(false)
+        window?.makeFirstResponder(self)
+    }
+
+    /// 回车：保留筛选、行保持展开，焦点回窗格（继续方向键导航命中项）。
+    @objc private func filterFieldReturn(_ sender: Any?) {
+        window?.makeFirstResponder(self)
+    }
+
+    /// 清空按钮：清输入 + 内核筛选，行**保持展开**，焦点留在输入框继续输入。
+    @objc private func filterClearClicked(_ sender: Any?) {
+        filterInput.stringValue = ""
+        pane.setFilter("")
+        reload()
+        window?.makeFirstResponder(filterInput)
     }
 
     // MARK: - Data source
@@ -586,5 +722,23 @@ final class ClickForwardingTableView: NSTableView {
         let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return }
         onRowClick?(row, event, event.clickCount >= 2)
+    }
+}
+
+/// 筛选输入框：Esc 走 cancelOperation（原生 NSTextField 不处理 Esc，需覆写）；
+/// ⌃⇥ 自行转交切标签——`FlyWindow.sendEvent` 把 ⌃⇥ 直接喂给 firstResponder，
+/// 输入框聚焦时若不转交，该键就被输入框吃掉、切标签失效。
+final class FilterInputField: NSTextField {
+    var onEscape: (() -> Void)?
+    var onControlTab: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48, event.modifierFlags.contains(.control) {
+            onControlTab?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }

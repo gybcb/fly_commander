@@ -52,6 +52,7 @@ enum MainMenu {
         add(viewMenu, L10n.t(.preview), #selector(MainViewController.menuPreview(_:)), "", target)
         add(viewMenu, L10n.t(.editItem), #selector(MainViewController.menuEdit(_:)), "", target)
         add(viewMenu, L10n.t(.switchPane), #selector(MainViewController.menuSwitchPane(_:)), "", target)
+        add(viewMenu, L10n.t(.filterButtonTip), #selector(MainViewController.menuFilter(_:)), "f", target, [.command, .shift])
         add(viewMenu, L10n.t(.parentDirectory), #selector(MainViewController.menuGoToParent(_:)), "", target)
         add(viewMenu, L10n.t(.themeEllipsis), #selector(MainViewController.menuTheme(_:)), "", target)
 

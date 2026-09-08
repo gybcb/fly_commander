@@ -430,7 +430,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private func updateBars() {
         let a = workspace.activePane
         view.window?.title = a.path.displayString()
-        let op = a.selection.operationIDs.count
+        // operationTargets（可见感知）：筛选无命中时 marked 已被内核剪空、focusID 仍指向
+        // 隐藏项，operationIDs 会回退成 [focusID]——用它状态栏会谎报「已选 1 项」。
+        let op = a.operationTargets.count
         statusLabel?.stringValue = op > 0 ? L10n.t(.selectedCount, "\(op)") : ""
     }
 
@@ -468,6 +470,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     @objc func menuMoveToOtherPane(_ sender: Any?) { router.execute(.move) }
 
     @objc func menuSearch(_ sender: Any?) { router.execute(.search) }
+
+    /// ⌘⇧F：展开/收起活动窗格的筛选行（与标签条右端常驻按钮同一入口）。
+    @objc func menuFilter(_ sender: Any?) {
+        viewOfPane(workspace.activePane)?.toggleFilterRow()
+    }
 
     @objc func menuConnect(_ sender: Any?) { beginConnection() }
 

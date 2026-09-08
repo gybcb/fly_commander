@@ -80,4 +80,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case menuOpen, openWithMenu, showInFinder, share
     /// 远端文件回车打开：先下载到本地缓存（网络 RTT，状态栏提示）。
     case remoteDownloading
+    // —— 窗格筛选（TabBar 常驻按钮 + 展开的筛选行）——
+    /// filterMatchCount 的两个参数是 **可见数 / 总数**。
+    case filterButtonTip, filterPlaceholder, filterClearTip, filterMatchCount
 }

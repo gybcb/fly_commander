@@ -136,6 +136,8 @@ public enum L10nTable {
         .warnSourceLeftover: "Source leftover: {0} ({1})",
         .menuOpen: "Open", .openWithMenu: "Open With", .showInFinder: "Show in Finder",
         .share: "Share", .remoteDownloading: "Downloading…",
+        .filterButtonTip: "Filter", .filterPlaceholder: "Filter by name…",
+        .filterClearTip: "Clear", .filterMatchCount: "{0}/{1}",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -274,5 +276,7 @@ public enum L10nTable {
         .warnSourceLeftover: "源端残留：{0}（{1}）",
         .menuOpen: "打开", .openWithMenu: "打开方式", .showInFinder: "在 Finder 中显示",
         .share: "共享", .remoteDownloading: "正在下载…",
+        .filterButtonTip: "筛选", .filterPlaceholder: "输入筛选字符…",
+        .filterClearTip: "清空", .filterMatchCount: "{0}/{1}",
     ]
 }

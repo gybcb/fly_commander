@@ -29,6 +29,7 @@ final class SidePaneContainer: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabBar)
         addSubview(content)
+        tabBar.onToggleFilter = { [weak self] in self?.toggleFilterOnActivePane() }
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: topAnchor),
             tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -84,6 +85,14 @@ final class SidePaneContainer: NSView {
         }
         tabBar.rebuild(titles: tabGroup.panes.map { Self.tabTitle($0.path) },
                        activeIndex: idx, isActiveSide: isActiveSide)
+        tabBar.isFilterActive = activePaneView?.isFilterRowVisible ?? false
+    }
+
+    /// 标签条常驻筛选按钮的落点：切活动窗格的筛选行，再把按钮开关态同步成实际状态
+    /// （切标签/导航后各窗格各有自己的筛选行可见性，按钮不能只做乐观翻转）。
+    private func toggleFilterOnActivePane() {
+        activePaneView?.toggleFilterRow()
+        tabBar.isFilterActive = activePaneView?.isFilterRowVisible ?? false
     }
 
     /// 纯函数：标签标题。本地=目录名（根="/"）；远端=host:port+路径（根=host:port）。

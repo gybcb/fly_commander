@@ -9,9 +9,18 @@ final class TabBarView: NSView {
     var onSwitchTab: ((Int) -> Void)?
     var onNewTab: (() -> Void)?
     var onCloseTab: ((Int) -> Void)?
+    /// 右端常驻筛选按钮：点击展开/收起活动窗格的筛选行。
+    var onToggleFilter: (() -> Void)?
+    /// 筛选行当前是否展开（开关态由 SidePaneContainer 同步）。
+    var isFilterActive: Bool = false {
+        didSet { filterButton.state = isFilterActive ? .on : .off }
+    }
 
     private let scroll = NSScrollView()
     private let stack = NSStackView()
+    /// 常驻筛选按钮：**scroll 的兄弟视图**，绝不入 stack——`rebuild` 开头清空
+    /// stack.arrangedSubviews，放进去每次导航都会被销毁。
+    private let filterButton = NSButton()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -30,11 +39,27 @@ final class TabBarView: NSView {
         stack.edgeInsets = NSEdgeInsets(top: 2, left: 4, bottom: 2, right: 4)
         scroll.documentView = stack
 
+        // 标题用 🔍 而非文案：固定 24pt 宽放不下中英文长词，且与 ⌘⇧F 菜单项标题
+        // （L10n.t(.filterButtonTip)）同串会污染 AX 定位；语义走 toolTip。
+        filterButton.title = "🔍"
+        filterButton.bezelStyle = .recessed
+        filterButton.font = .systemFont(ofSize: 11)
+        filterButton.toolTip = L10n.t(.filterButtonTip)
+        filterButton.setAccessibilityIdentifier("paneFilterButton")
+        filterButton.target = self
+        filterButton.action = #selector(filterClicked(_:))
+        filterButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(filterButton)
+
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: filterButton.leadingAnchor, constant: -4),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            filterButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            filterButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            filterButton.widthAnchor.constraint(equalToConstant: 24),
+            filterButton.heightAnchor.constraint(equalToConstant: 18),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
@@ -74,11 +99,16 @@ final class TabBarView: NSView {
         plus.font = .systemFont(ofSize: 11, weight: .bold)
         plus.toolTip = L10n.t(.newTabTip)
         stack.addArrangedSubview(plus)
+
+        // 常驻筛选按钮不在 stack 里，rebuild 不重建它——但 toolTip 在此重刷，
+        // 语言切换走的正是 rebuild 这条路。
+        filterButton.toolTip = L10n.t(.filterButtonTip)
     }
 
     @objc private func tabClicked(_ sender: NSButton) { onSwitchTab?(sender.tag) }
     @objc private func closeClicked(_ sender: NSButton) { onCloseTab?(sender.tag) }
     @objc private func plusClicked(_ sender: NSButton) { onNewTab?() }
+    @objc private func filterClicked(_ sender: NSButton) { onToggleFilter?() }
 
     /// 纯函数：字符级截断（>max 保留前 max-1 字符 + "…"）。供单测。
     static func truncate(_ s: String, max: Int) -> String {
