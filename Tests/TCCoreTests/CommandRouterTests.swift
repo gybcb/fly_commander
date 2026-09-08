@@ -33,6 +33,48 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(workspace.activePane.selection.focusIndex, 1)
     }
 
+    // MARK: - .enter 分流（目录→进入；文件→onOpen 默认程序打开）
+
+    /// 焦点在目录上按回车：进目录，不触发 onOpen。
+    func testEnterOnDirectoryNavigatesNotOpens() {
+        try! FileManager.default.createDirectory(
+            at: leftDir.appendingPathComponent("sub"), withIntermediateDirectories: false)
+        let left = workspace.leftTabs.activePane
+        left.load()
+        let subIdx = left.selection.items.firstIndex { $0.hasSuffix("/sub") }!
+        left.moveFocus(to: subIdx, mode: .simple)
+        var opened: [FileItem] = []
+        router.onOpen = { opened.append($0) }
+        router.execute(.enter)
+        XCTAssertEqual(left.path.url.lastPathComponent, "sub", "回车进目录")
+        XCTAssertTrue(opened.isEmpty, "目录不该触发 onOpen")
+    }
+
+    /// 焦点在文件上按回车：触发 onOpen（AppKit 层接默认程序打开），不改 path。
+    func testEnterOnFileFiresOnOpen() {
+        let left = workspace.leftTabs.activePane
+        let fileIdx = left.selection.items.firstIndex { $0.hasSuffix("a.txt") }!
+        left.moveFocus(to: fileIdx, mode: .simple)
+        var opened: [FileItem] = []
+        router.onOpen = { opened.append($0) }
+        let before = left.path
+        router.execute(.enter)
+        XCTAssertEqual(opened.map(\.name), ["a.txt"], "文件回车须发 onOpen")
+        XCTAssertEqual(left.path, before, "onOpen 不改路径")
+    }
+
+    /// 空目录回车：两者皆不触发（无 focusedItem 不 crash）。
+    func testEnterOnEmptyPaneIsNoop() {
+        workspace.leftTabs.activePane.moveFocus(to: 2, mode: .simple)  // 越界钳回，仍有项
+        let right = workspace.rightTabs.activePane                     // 空目录
+        var opened: [FileItem] = []
+        router.onOpen = { opened.append($0) }
+        workspace.switchActive()
+        router.execute(.enter)
+        XCTAssertTrue(opened.isEmpty)
+        _ = right
+    }
+
     func testCopyToInactivePane() {
         router.execute(.copy)
         XCTAssertTrue(FileManager.default.fileExists(atPath: rightDir.appendingPathComponent("a.txt").path))

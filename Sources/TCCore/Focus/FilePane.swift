@@ -12,6 +12,11 @@ public final class FilePane {
     public private(set) var lastError: TCError?
 
     public var onReload: ((FilePane) -> Void)?
+    /// 选择态变化快路（方向键/空格/单击焦点）：内容（page/selection.items）未变、
+    /// 只有 focus/marks 变时触发。消费方走局部刷新即可——onReload 的全量路要重排
+    /// sortedIDs（大目录实测 37ms/键）+ 重建标签条，是"方向键慢半拍"的根因。
+    /// before/after diff 无实际变化（末行再下移等）→ 一个回调都不发，零渲染。
+    public var onSelectionChange: ((FilePane) -> Void)?
 
     private var loadToken = 0
     /// 远端 navigate 的在途 stat 校验（新导航/setSource 使旧 hop 失效）。
@@ -43,8 +48,7 @@ public final class FilePane {
     @discardableResult
     public func revealItem(id: String) -> Bool {
         guard let idx = selection.items.firstIndex(of: id) else { return false }
-        selection.setFocus(to: idx)
-        onReload?(self)
+        mutateSelection { $0.setFocus(to: idx) }
         return true
     }
 
@@ -174,17 +178,23 @@ public final class FilePane {
         if let p = path.parent { navigate(to: p, focusID: leftID) }
     }
 
+    /// 纯选择态变更统一走此路：mutate 后与快照 diff，无变化不发回调（末行继续
+    /// 按↓ = 零渲染零滚动），有变化只发 onSelectionChange（快路），不发 onReload。
+    private func mutateSelection(_ mutate: (inout SelectionModel) -> Void) {
+        let before = selection
+        mutate(&selection)
+        if before != selection { onSelectionChange?(self) }
+    }
+
     public func moveFocus(to index: Int, mode: SelectionModel.MoveMode) {
-        selection.moveFocus(to: index, mode: mode)
-        onReload?(self)
+        mutateSelection { $0.moveFocus(to: index, mode: mode) }
     }
     public func moveFocusBy(delta: Int, mode: SelectionModel.MoveMode) {
-        selection.moveFocusBy(delta: delta, mode: mode)
-        onReload?(self)
+        mutateSelection { $0.moveFocusBy(delta: delta, mode: mode) }
     }
-    public func setFocus(to index: Int) { selection.setFocus(to: index); onReload?(self) }
-    public func toggleMark() { selection.toggleMark(); onReload?(self) }
-    public func toggleMark(at index: Int) { selection.toggleMark(at: index); onReload?(self) }
-    public func selectAll() { selection.selectAll(); onReload?(self) }
-    public func clearMarks() { selection.clearMarks(); onReload?(self) }
+    public func setFocus(to index: Int) { mutateSelection { $0.setFocus(to: index) } }
+    public func toggleMark() { mutateSelection { $0.toggleMark() } }
+    public func toggleMark(at index: Int) { mutateSelection { $0.toggleMark(at: index) } }
+    public func selectAll() { mutateSelection { $0.selectAll() } }
+    public func clearMarks() { mutateSelection { $0.clearMarks() } }
 }

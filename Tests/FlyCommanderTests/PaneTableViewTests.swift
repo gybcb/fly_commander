@@ -3,6 +3,24 @@ import AppKit
 import TCCore
 @testable import FlyCommander
 
+/// 远端 fake：isRemote=true，listDirectory 返回预置条目（右键菜单远端禁用测试用）。
+private final class RemoteStubFileSource: FileSource {
+    let items: [FileItem]
+    init(items: [FileItem]) { self.items = items }
+    var sourceID: String { "sftp://stub:22" }
+    var isRemote: Bool { true }
+    func listDirectory(_ path: TCPath) throws -> [FileItem] { items }
+    func isDirectory(_ path: TCPath) -> Bool { false }
+    func stat(_ path: TCPath) throws -> FileItem? { items.first { $0.id == path.pathString } }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at: TCPath) throws {}
+    func removeItem(at: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle { { _ in nil } }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+}
+
 final class PaneTableViewTests: XCTestCase {
     private var dir: URL!
     private var pane: FilePane!
@@ -257,6 +275,91 @@ final class PaneTableViewTests: XCTestCase {
         XCTAssertEqual(pane.focusedItem?.name, "b.dat", "End 应到显示末行 b.dat")
         paneView.navigate(toEdge: .home, mode: .sticky)
         XCTAssertEqual(pane.focusedItem?.name, "a.txt", "Home 应到显示首行 a.txt")
+    }
+
+    /// 右键菜单（本地文件）：条目齐全、全部可用；"打开方式"带子菜单。
+    func testContextMenuLocalFileItems() {
+        let item = pane.page!.items.first { $0.name == "a.txt" }!
+        let menu = paneView.contextMenu(for: item)
+        let titles = menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+        XCTAssertEqual(titles, [
+            L10n.t(.menuOpen), L10n.t(.openWithMenu), L10n.t(.showInFinder),
+            L10n.t(.preview), L10n.t(.editItem),
+            L10n.t(.copyToOtherPane), L10n.t(.moveToOtherPane),
+            L10n.t(.rename), L10n.t(.moveToTrash),
+            L10n.t(.newDirectory), L10n.t(.share),
+        ])
+        XCTAssertTrue(menu.items.allSatisfy { $0.isEnabled || $0.isSeparatorItem },
+                      "本地文件条目应全部可用")
+        XCTAssertNotNil(menu.items.first { $0.title == L10n.t(.openWithMenu) }?.submenu,
+                        "打开方式须挂子菜单")
+    }
+
+    /// 右键菜单（本地目录）：打开方式/预览/编辑/复制/移动禁用；重命名/删除/新建目录可用。
+    func testContextMenuDirectoryDisablesFileOnlyItems() throws {
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("sub"),
+                                                withIntermediateDirectories: true)
+        pane.load(); paneView.reload()
+        let item = pane.page!.items.first { $0.name == "sub" }!
+        let menu = paneView.contextMenu(for: item)
+        func enabled(_ key: L10nKey) -> Bool {
+            menu.items.first { $0.title == L10n.t(key) }?.isEnabled ?? false
+        }
+        XCTAssertFalse(enabled(.preview)); XCTAssertFalse(enabled(.editItem))
+        XCTAssertFalse(enabled(.copyToOtherPane)); XCTAssertFalse(enabled(.moveToOtherPane))
+        XCTAssertFalse(enabled(.openWithMenu))
+        XCTAssertTrue(enabled(.rename)); XCTAssertTrue(enabled(.moveToTrash))
+        XCTAssertTrue(enabled(.newDirectory)); XCTAssertTrue(enabled(.menuOpen))
+    }
+
+    /// 右键菜单（远端）：打开方式/显示在 Finder/共享禁用（无本地 url）；
+    /// 打开/预览/编辑/复制/移动/重命名/删除照常（远端各有后台路径）。
+    func testContextMenuRemoteDisablesLocalOnlyItems() {
+        let src = RemoteStubFileSource(items: [
+            FileItem(id: "/r/f.txt", path: TCPath("/r/f.txt"), name: "f.txt",
+                     isDirectory: false, size: 1, modificationDate: .distantPast,
+                     isHidden: false, isReadOnly: false, isExecutable: false),
+        ])
+        let rPane = FilePane(id: .left, source: src, startPath: TCPath("/r"))
+        rPane.load()
+        let rv = PaneTableView(pane: rPane, workspace: workspace, router: router, id: .left)
+        rv.reload()
+        let menu = rv.contextMenu(for: rPane.page!.items[0])
+        func enabled(_ key: L10nKey) -> Bool {
+            menu.items.first { $0.title == L10n.t(key) }?.isEnabled ?? false
+        }
+        XCTAssertFalse(enabled(.openWithMenu))
+        XCTAssertFalse(enabled(.showInFinder))
+        XCTAssertFalse(enabled(.share))
+        XCTAssertTrue(enabled(.menuOpen))
+        XCTAssertTrue(enabled(.rename))
+        XCTAssertTrue(enabled(.moveToTrash))
+    }
+
+    /// 选择语义①：右键落在**未选**行 → 只选该行（清其余标记，焦点移过去）。
+    func testContextMenuSelectsUnselectedRowOnly() {
+        pane.moveFocus(to: 1, mode: .simple)                       // 焦点 b.dat
+        pane.toggleMark(at: 0)                                     // 再标 a.txt
+        let zID = pane.selection.items.first { $0.hasSuffix("z.txt") }!
+        let zItem = pane.itemByID[zID]!
+        _ = paneView.contextMenu(for: zItem)
+        paneView.applyContextMenuSelection(to: zItem)
+        XCTAssertEqual(pane.selection.focusID, zID, "右键未选行 → 焦点移过去")
+        XCTAssertEqual(pane.selection.markedIDs, [], "清其余标记")
+    }
+
+    /// 选择语义②：右键落在**已标记**行 → 保持整组多选原样（标记与焦点都不动；
+    /// 单项操作经 representedObject 携带右键项，不依赖焦点）。
+    func testContextMenuKeepsMultiSelectionOnMarkedRow() {
+        pane.moveFocus(to: 1, mode: .simple)    // b.dat
+        pane.toggleMark()                        // mark b.dat
+        pane.moveFocus(to: 2, mode: .sticky)     // z.txt（焦点走，b 标记留）
+        pane.toggleMark()                        // mark z.txt
+        let focusBefore = pane.selection.focusID
+        let bItem = pane.itemByID[pane.selection.items[1]]!
+        paneView.applyContextMenuSelection(to: bItem)
+        XCTAssertEqual(pane.selection.markedIDs.count, 2, "已标记行右键不清多选")
+        XCTAssertEqual(pane.selection.focusID, focusBefore, "选择集原样不动")
     }
 
     /// 纯函数 targetSelectionIndex：乱序映射 + clamp 边界。

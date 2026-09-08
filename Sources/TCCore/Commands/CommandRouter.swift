@@ -7,6 +7,9 @@ public final class CommandRouter {
     public var onDelete: ((FilePane, [FileItem]) -> Void)?
     public var onView: ((FileItem) -> Void)?
     public var onEdit: ((FileItem) -> Void)?
+    /// 回车/双击落在**文件**上：交 AppKit 层用默认程序打开（内核不知 NSWorkspace）。
+    /// 目录仍走内核 enterFocusedDirectory；文件才发此钩子。空焦点两者皆不发。
+    public var onOpen: ((FileItem) -> Void)?
     public var onSearch: ((TCPath, FileSource) -> Void)?
     /// 远端传输委托（app 层注入）：复制/移动任一端是远端源且注入了此钩子时，
     /// 交给它后台执行（主线程不阻塞）。未注入或双端皆本地 → 走本地快路径（同步）。
@@ -31,7 +34,10 @@ public final class CommandRouter {
         case .pageDown: a.moveFocusBy(delta: 15, mode: moveMode)
         case .home: a.moveFocus(to: 0, mode: moveMode)
         case .end: a.moveFocus(to: a.itemCount - 1, mode: moveMode)
-        case .enter: a.enterFocusedDirectory()
+        case .enter:
+            // 目录→进入（TC 传统）；文件→交 AppKit 默认程序打开（回车/双击共用此路）。
+            if let item = a.focusedItem, !item.isDirectory { onOpen?(item) }
+            else { a.enterFocusedDirectory() }
         case .parent: a.gotoParent()
         case .switchPane: workspace.switchActive()
         case .nextTab: workspace.nextTab()

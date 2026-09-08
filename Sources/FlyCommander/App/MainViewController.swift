@@ -59,6 +59,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         router.onDelete = { [weak self] pane, targets in self?.doTrashDelete(pane: pane, targets: targets) }
         router.onView = { [weak self] item in self?.showPreview(item) }
         router.onEdit = { [weak self] item in self?.openForEdit(item) }
+        // 回车/双击落在文件上：默认程序打开（远端先下载到本地缓存，后台）。
+        router.onOpen = { [weak self] item in self?.openWithDefault(item) }
         router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
         // 警告成品串（"源端残留：X（…）"）在本地化边界组装——内核只给 (文件名, TCError)。
         router.warnFormatter = { name, err in L10n.t(.warnSourceLeftover, name, tcErrorDisplay(err)) }
@@ -118,8 +120,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         rightContainer = SidePaneContainer(side: .right)
         leftContainer.commandBar = commandBar
         rightContainer.commandBar = commandBar
-        leftPane.onReload = { [weak self] p in self?.refresh(p) }
-        rightPane.onReload = { [weak self] p in self?.refresh(p) }
+        wirePaneCallbacks(leftPane)
+        wirePaneCallbacks(rightPane)
         leftContainer.addTab(pane: leftPane, workspace: workspace, router: router)
         rightContainer.addTab(pane: rightPane, workspace: workspace, router: router)
         wireTabBar(leftContainer)
@@ -217,6 +219,18 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     // MARK: - Core callbacks
 
+    /// 每个 FilePane 的两条刷新路统一在此接（loadView/newTab/连接建标签共用）：
+    /// onReload = 内容变了（列表/导航）走全量；onSelectionChange = 只焦点/标记变了
+    /// 走快路（局部重绘 + 同步滚动，不重排 sortedIDs、不重建标签条）。
+    private func wirePaneCallbacks(_ pane: FilePane) {
+        pane.onReload = { [weak self] p in self?.refresh(p) }
+        pane.onSelectionChange = { [weak self] p in
+            guard let self else { return }
+            self.viewOfPane(p)?.refreshSelection()
+            self.updateBars()
+        }
+    }
+
     /// 操作后刷新窗格：远端源走异步加载（同步 load 会把网络 RTT 卡进主线程）。
     private func reloadPane(_ pane: FilePane) {
         if pane.source.isRemote { pane.loadAsync() } else { pane.load() }
@@ -258,7 +272,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         let container = (s == .left) ? leftContainer! : rightContainer!
         let pane = FilePane(id: s, source: LocalFileSource(), startPath: Self.startPath)
         tab.add(pane)                                   // core：追加并激活
-        pane.onReload = { [weak self] p in self?.refresh(p) }
+        wirePaneCallbacks(pane)
         container.addTab(pane: pane, workspace: workspace, router: router)
         pane.load()                                     // 本地源同步加载
         applyActiveState()
@@ -406,6 +420,55 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         PreviewWindowController.show(item: item)
     }
 
+    /// 回车/双击/右键"打开"：本地直接交默认程序；远端先下载到本地缓存（后台，
+    /// 不卡主线程），落到 Caches 临时件后再打开。缓存按 (源, 路径, 大小, mtime)
+    /// 命名，命中即复用，避免重复下载。
+    private func openWithDefault(_ item: FileItem) {
+        let source = workspace.activePane.source
+        if !source.isRemote {
+            if !NSWorkspace.shared.open(item.path.url) { setStatus(L10n.t(.cannotOpenFile)) }
+            return
+        }
+        setStatus(L10n.t(.remoteDownloading))
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FlyCommander.Remote", isDirectory: true)
+        let stamp = Int(item.modificationDate.timeIntervalSince1970)
+        let key = "\(source.sourceID)|\(item.path.pathString)|\(item.size)|\(stamp)"
+        let digest = String(key.utf8.map { String(format: "%02x", $0) }.joined()
+            .prefix(48))   // 定长十六进制，避开非法文件名字符
+        let cacheURL = cacheDir.appendingPathComponent("\(digest)-\(item.name)")
+        let path = item.path
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // 命中缓存（同 key 同大小）→ 直接开；否则 openReader 泵到临时件再改名落位。
+            if FileManager.default.fileExists(atPath: cacheURL.path),
+               (try? Data(contentsOf: cacheURL)) != nil {
+                DispatchQueue.main.async { self?.openLocal(cacheURL) }
+                return
+            }
+            do {
+                try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+                let reader = try source.openReader(path)
+                let tmp = cacheDir.appendingPathComponent(UUID().uuidString)
+                FileManager.default.createFile(atPath: tmp.path, contents: nil)
+                guard let fh = FileHandle(forWritingAtPath: tmp.path) else { throw TCError.unknown("cache open") }
+                // 64KB 块泵：reader 返回 nil=EOF，返回 Data 可能为空（0 字节须继续读，勿当 EOF）。
+                while let chunk = try reader(64 * 1024), !chunk.isEmpty {
+                    try fh.write(contentsOf: chunk)
+                }
+                try fh.close()
+                try? FileManager.default.removeItem(at: cacheURL)
+                try FileManager.default.moveItem(at: tmp, to: cacheURL)
+                DispatchQueue.main.async { self?.openLocal(cacheURL) }
+            } catch {
+                DispatchQueue.main.async { self?.setStatus(L10n.t(.cannotOpenFile)) }
+            }
+        }
+    }
+
+    private func openLocal(_ url: URL) {
+        if !NSWorkspace.shared.open(url) { setStatus(L10n.t(.cannotOpenFile)) }
+    }
+
     private func openForEdit(_ item: FileItem) {
         let url = item.path.url
         if Self.textExtensions.contains(url.pathExtension.lowercased()),
@@ -453,7 +516,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
                                          remotePath: home)
             let pane = FilePane(id: side, source: source, startPath: path)
             tab.add(pane)                                   // 新标签（保留当前活动标签）
-            pane.onReload = { [weak self] p in self?.refresh(p) }
+            wirePaneCallbacks(pane)
             container.addTab(pane: pane, workspace: self.workspace, router: self.router)
             pane.loadAsync()                                // 远端后台加载
             self.applyActiveState()
@@ -470,7 +533,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             let container = (side == .left) ? self.leftContainer! : self.rightContainer!
             let pane = FilePane(id: side, source: source, startPath: home)
             tab.add(pane)                                   // 新标签（保留当前活动标签）
-            pane.onReload = { [weak self] p in self?.refresh(p) }
+            wirePaneCallbacks(pane)
             container.addTab(pane: pane, workspace: self.workspace, router: self.router)
             pane.loadAsync()                                // 远端后台加载
             self.applyActiveState()

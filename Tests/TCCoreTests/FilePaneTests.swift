@@ -59,6 +59,51 @@ final class FilePaneTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmp)
     }
 
+    // MARK: - onSelectionChange 快路接缝（性能：方向键不触发全量重排）
+
+    /// 纯选择态变化（moveFocus/setFocus/toggleMark）→ 只发 onSelectionChange，
+    /// 不发 onReload（onReload 会走 sortedIDs 全量重排 + 标签条重建 = 慢半拍根因）。
+    func testFocusChangeFiresSelectionChangeNotReload() {
+        let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
+        pane.load()
+        var reloads = 0, selectionChanges = 0
+        pane.onReload = { _ in reloads += 1 }
+        pane.onSelectionChange = { _ in selectionChanges += 1 }
+        pane.moveFocus(to: 2, mode: .simple)
+        pane.setFocus(to: 0)
+        pane.toggleMark()
+        XCTAssertEqual(selectionChanges, 3, "选择态变化须各发一次 onSelectionChange")
+        XCTAssertEqual(reloads, 0, "选择态变化绝不触发 onReload")
+    }
+
+    /// 边界：焦点已在末行再下移（选择态实际无变化）→ 一个回调都不发（零渲染零滚动）。
+    func testNoOpFocusMoveFiresNothing() {
+        let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
+        pane.load()                                    // 3 项，焦点在 0
+        pane.moveFocus(to: 2, mode: .simple)           // 到末行（有变化，发一次）
+        var reloads = 0, selectionChanges = 0
+        pane.onReload = { _ in reloads += 1 }
+        pane.onSelectionChange = { _ in selectionChanges += 1 }
+        pane.moveFocus(to: 5, mode: .simple)           // 越界钳回 2 = 原地 → 无变化
+        pane.setFocus(to: 2)                           // 原地 → 无变化
+        XCTAssertEqual(selectionChanges, 0, "无实际变化不得回调")
+        XCTAssertEqual(reloads, 0)
+    }
+
+    /// 内容变化（load/导航）→ 仍走 onReload 全量路（且顺带刷选择态显示）。
+    func testContentChangeStillFiresReload() {
+        let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
+        var reloads = 0
+        pane.onReload = { _ in reloads += 1 }
+        pane.load()
+        XCTAssertEqual(reloads, 1)
+        pane.moveFocus(to: 0, mode: .simple)           // dir1
+        pane.enterFocusedDirectory()                   // 目录变化 = 内容路
+        XCTAssertEqual(reloads, 2)
+        pane.gotoParent()
+        XCTAssertEqual(reloads, 3)
+    }
+
     func testLoadPopulatesItemsAndSelection() {
         let pane = FilePane(id: .left, source: source, startPath: TCPath(url: tmp))
         var fired = 0

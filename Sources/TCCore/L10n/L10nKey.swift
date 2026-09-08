@@ -76,4 +76,8 @@ public enum L10nKey: String, Hashable, CaseIterable {
     /// done+警告多条 warningLines 的连接分隔符（随语言：en "; " / zh 全角"；"），
     /// 防英文状态栏里流出中文标点（原硬编码 separator 违规项）。
     case statusWarnJoin
+    // —— 右键上下文菜单（PaneTableView 弹出）——
+    case menuOpen, openWithMenu, showInFinder, share
+    /// 远端文件回车打开：先下载到本地缓存（网络 RTT，状态栏提示）。
+    case remoteDownloading
 }
