@@ -255,4 +255,47 @@ final class FilterBarWiringTests: XCTestCase {
         XCTAssertEqual(item.keyEquivalentModifierMask, [.command, .shift])
         XCTAssertEqual(item.action, #selector(MainViewController.menuFilter(_:)))
     }
+
+    // MARK: - 10. T-F1：⌃⇥ 转交带 ⇧ 态
+
+    /// 变异：`FilterInputField.keyDown` 里传参写死 `false`（或漏传 modifierFlags）→ 本用例红。
+    func testFilterInputForwardsControlTabWithShiftState() {
+        let field = FilterInputField()
+        var received: [Bool] = []
+        field.onControlTab = { received.append($0) }
+
+        func keyEvent(_ flags: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                             timestamp: 0, windowNumber: 0, context: nil,
+                             characters: "\t", charactersIgnoringModifiers: "\t",
+                             isARepeat: false, keyCode: 48)!
+        }
+        field.keyDown(with: keyEvent([.control, .shift]))
+        field.keyDown(with: keyEvent([.control]))
+        XCTAssertEqual(received, [true, false],
+                       "⌃⇧⇥ 应转交 true（上一标签），⌃⇥ 应转交 false（下一标签）")
+    }
+
+    // MARK: - 11. T-F2：可见性变化走唯一收口（Esc 路径）
+
+    /// 变异：删掉 `setFilterRowVisible` 末尾的 `onFilterRowVisibilityChange?(visible)`
+    /// 或删 `SidePaneContainer.addTab` 的接线 → 本用例红。
+    /// **刻意走 Esc 路径**（非按钮点击）：按钮路径有 `toggleFilterOnActivePane` 的显式同步兜着，
+    /// 测不出收口缺失。
+    func testFilterRowVisibilityChangeSyncsTabBarViaEscapePath() {
+        let container = SidePaneContainer(side: .left)
+        let pv = container.addTab(pane: pane, workspace: workspace, router: router)
+        container.show(tabGroup: workspace.leftTabs, isActiveSide: true)
+
+        pv.setFilterRowVisible(true)
+        XCTAssertTrue(container.tabBar.isFilterActive, "展开后按钮应开")
+
+        // Esc：FilterInputField.cancelOperation → onEscape → cancelFilterEditing → 收起行。
+        guard let input = findByAX(pv, "paneFilterInput") as? FilterInputField else {
+            return XCTFail("找不到筛选输入框")
+        }
+        input.cancelOperation(nil)
+        XCTAssertFalse(pv.isFilterRowVisible, "Esc 应收起筛选行")
+        XCTAssertFalse(container.tabBar.isFilterActive, "Esc 收起后按钮须关（唯一收口回写）")
+    }
 }

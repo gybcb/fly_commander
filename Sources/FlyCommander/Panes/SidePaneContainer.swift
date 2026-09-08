@@ -48,6 +48,12 @@ final class SidePaneContainer: NSView {
     func addTab(pane: FilePane, workspace: Workspace, router: CommandRouter) -> PaneTableView {
         let pv = PaneTableView(pane: pane, workspace: workspace, router: router, id: side)
         pv.commandBar = commandBar
+        // 筛选行可见性的唯一回写点：只有**活动**窗格能驱动标签条按钮开关态
+        // （隐藏标签的行状态变化不该改按钮）。覆盖 Esc / ⌘⇧F / 按钮 / 容器切换全部路径。
+        pv.onFilterRowVisibilityChange = { [weak self, weak pv] visible in
+            guard let self, let pv, pv === self.activePaneView else { return }
+            self.tabBar.isFilterActive = visible
+        }
         pv.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(pv)
         NSLayoutConstraint.activate([

@@ -33,6 +33,9 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
     /// 筛选行（TabBar 常驻按钮展开的 28pt 行）是否可见；SidePaneContainer 据此同步
     /// 标签条按钮的开关态。
     private(set) var isFilterRowVisible = false
+    /// 筛选行可见性变化的**唯一收口**（Esc / ⌘⇧F / 标签条按钮 / 容器切换都经此），
+    /// SidePaneContainer 据此把标签条按钮开关态回写成实际可见性。
+    var onFilterRowVisibilityChange: ((Bool) -> Void)?
     /// 筛选行高度约束（收起 0 / 展开 28）——行隐藏时不占垂直空间。
     private var filterRowHeight: NSLayoutConstraint!
     private var filterRow: NSView!
@@ -124,8 +127,10 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         input.action = #selector(filterFieldReturn(_:))
         input.onEscape = { [weak self] in self?.cancelFilterEditing() }
         // ⌃⇥ 在输入框聚焦时自行转交（FlyWindow.sendEvent 把它喂给 firstResponder，
-        // 不转交则输入框吃掉该键、切标签失效）。
-        input.onControlTab = { [weak self] in self?.router.execute(.nextTab) }
+        // 不转交则输入框吃掉该键、切标签失效）。方向沿用 KeyDispatcher 的约定：⇧ = 上一标签。
+        input.onControlTab = { [weak self] shift in
+            self?.router.execute(shift ? .prevTab : .nextTab)
+        }
         clear.target = self
         clear.action = #selector(filterClearClicked(_:))
 
@@ -249,6 +254,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     /// 展开/收起筛选行。收起时清空输入与内核筛选（列表回全量）；展开时把焦点交给
     /// 输入框、光标置尾。`setFilter` 自身不发 onReload，故此处显式 `reload()`。
+    /// 末尾发 `onFilterRowVisibilityChange`——可见性变化的唯一收口点。
     func setFilterRowVisible(_ visible: Bool) {
         isFilterRowVisible = visible
         filterRowHeight.constant = visible ? 28 : 0
@@ -256,11 +262,13 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         if !visible { filterInput.stringValue = "" }
         pane.setFilter(visible ? filterInput.stringValue : "")
         reload()
-        guard visible else { return }
-        window?.makeFirstResponder(filterInput)
-        if let editor = filterInput.currentEditor() {
-            editor.selectedRange = NSRange(location: (filterInput.stringValue as NSString).length, length: 0)
+        if visible {
+            window?.makeFirstResponder(filterInput)
+            if let editor = filterInput.currentEditor() {
+                editor.selectedRange = NSRange(location: (filterInput.stringValue as NSString).length, length: 0)
+            }
         }
+        onFilterRowVisibilityChange?(visible)
     }
 
     /// 输入变化 → 内核筛选 + 视图重投影（每键击一次，不重排标签条/不写会话）。
@@ -727,16 +735,18 @@ final class ClickForwardingTableView: NSTableView {
 
 /// 筛选输入框：Esc 走 cancelOperation（原生 NSTextField 不处理 Esc，需覆写）；
 /// ⌃⇥ 自行转交切标签——`FlyWindow.sendEvent` 把 ⌃⇥ 直接喂给 firstResponder，
-/// 输入框聚焦时若不转交，该键就被输入框吃掉、切标签失效。
+/// 输入框聚焦时若不转交，该键就被输入框吃掉、切标签失效。转交时带上 ⇧ 态，
+/// 方向与 `KeyDispatcher` 的约定一致（⌃⇧⇥ = 上一标签）。
 final class FilterInputField: NSTextField {
     var onEscape: (() -> Void)?
-    var onControlTab: (() -> Void)?
+    /// 参数 = 是否按下 ⇧。
+    var onControlTab: ((Bool) -> Void)?
 
     override func cancelOperation(_ sender: Any?) { onEscape?() }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 48, event.modifierFlags.contains(.control) {
-            onControlTab?()
+            onControlTab?(event.modifierFlags.contains(.shift))
             return
         }
         super.keyDown(with: event)
