@@ -142,7 +142,7 @@ public private(set) var page: DirectoryPage? {
 ## 6. 已知取舍
 
 1. **命令行显式 `del <id>` 在筛选期仍可命中隐藏项。** `del *` 已收窄到 `pane.visibleItemIDs`（`Sources/FlyCommander/Command/InternalCommandExecutor.swift:183-187`），但显式命名分支**故意不动**（`Sources/FlyCommander/Command/InternalCommandExecutor.swift:188-196`）：用户逐字敲出名字是明确意图，加白名单会把「按名删除」变成「按名删除但可能被静默忽略」。R4 已裁定保持此取舍（`testDelExplicitIDIgnoresFilter` 锁定）。
-2. **远端异步导航下，内核清空筛选先于筛选行 UI 收起。** `FilePane.navigate` 远端分支在回主线程改 path 时 `clearFilter()`，而 `PaneTableView` 的输入框同步发生在随后的 `reload()` 里（`Sources/FlyCommander/Panes/PaneTableView.swift:184-186` 的 `filterText.isEmpty` 分支回写 `stringValue`）。两者之间有可接受的滞后窗口。
+2. **远端异步导航下，内核清空筛选先于筛选行输入框的文本同步。** `FilePane.navigate` 远端分支在回主线程改 path 时 `clearFilter()`，而 `PaneTableView` 的输入框同步发生在随后的 `reload()` 里（`Sources/FlyCommander/Panes/PaneTableView.swift:184-186` 的 `filterText.isEmpty` 分支回写 `stringValue`）。滞后的是**输入框文本**，筛选行本身保持展开（可见性只由 `setFilterRowVisible` 改），两者之间有可接受的滞后窗口。
 3. **未做输入去抖。** 每键击一次全量投影。若大目录实测卡顿，可在 `controlTextDidChange` 加 ~100ms 去抖——纯视图层改动，内核无感（`NameFilter` 预编译已把匹配本身压到 O(1)/项）。
 4. **筛选行可见性的滞后**：非活动标签的筛选行状态变化不驱动标签条按钮（`Sources/FlyCommander/Panes/SidePaneContainer.swift:53-56` 只在 `pv === activePaneView` 时回写），切标签时由 `show()` 重算（`Sources/FlyCommander/Panes/SidePaneContainer.swift:94`）。
 5. **`del *` 的语义边界**：`del *` 删可见项、`del`（无参）删 `operationTargets`（标记 ∪ 焦点，均已可见）。两者在筛选期都只作用于可见集。

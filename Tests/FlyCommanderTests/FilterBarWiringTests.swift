@@ -258,13 +258,36 @@ final class FilterBarWiringTests: XCTestCase {
 
     // MARK: - 10. T-F1：⌃⇥ 经真实响应者链投递且带方向
 
+    /// 合成键盘事件（keyCode 用 kVK_* 原值；字符传忽略修饰后的字符）。
+    private func keyEvent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags = [],
+                          characters: String = "", windowNumber: Int = 0) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                         timestamp: 0, windowNumber: windowNumber, context: nil,
+                         characters: characters, charactersIgnoringModifiers: characters,
+                         isARepeat: false, keyCode: keyCode)!
+    }
+
     private func controlTabEvent(shift: Bool, windowNumber: Int = 0) -> NSEvent {
         var flags: NSEvent.ModifierFlags = [.control]
         if shift { flags.insert(.shift) }
-        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
-                                timestamp: 0, windowNumber: windowNumber, context: nil,
-                                characters: "\t", charactersIgnoringModifiers: "\t",
-                                isARepeat: false, keyCode: 48)!
+        return keyEvent(keyCode: 48, modifiers: flags, characters: "\t", windowNumber: windowNumber)
+    }
+
+    /// 真窗 + 把窗格钉满 contentView 并成为 key window（真响应者链用例共用）。
+    private func makeKeyWindow(containing pv: PaneTableView) -> FlyWindow {
+        let win = FlyWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        win.contentView = host
+        host.addSubview(pv)
+        NSLayoutConstraint.activate([
+            pv.topAnchor.constraint(equalTo: host.topAnchor),
+            pv.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            pv.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            pv.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        win.makeKeyAndOrderFront(nil)
+        return win
     }
 
     /// 真实窗口 + 真实 sendEvent + 真实接线：输入框聚焦时 firstResponder 是 field editor
@@ -283,18 +306,7 @@ final class FilterBarWiringTests: XCTestCase {
         workspace.leftTabs.step(-2)
         XCTAssertEqual(workspace.leftTabs.activeIndex, 0, "前置：回到第 0 个标签")
 
-        let win = FlyWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
-                            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        win.contentView = host
-        host.addSubview(paneView)
-        NSLayoutConstraint.activate([
-            paneView.topAnchor.constraint(equalTo: host.topAnchor),
-            paneView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            paneView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            paneView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        ])
-        win.makeKeyAndOrderFront(nil)
+        let win = makeKeyWindow(containing: paneView)
         defer { win.orderOut(nil) }
 
         paneView.setFilterRowVisible(true)
@@ -340,5 +352,47 @@ final class FilterBarWiringTests: XCTestCase {
         }
         XCTAssertEqual(width.relation, .greaterThanOrEqual,
                        "大目录计数（如 12345/67890）不该被压成省略号")
+    }
+
+    // MARK: - 13. F1（终局 Important-1）：收起筛选行把焦点还给窗格
+
+    /// 变异：删掉 `setFilterRowVisible` 的 `!visible` 分支里的 `window?.makeFirstResponder(self)`
+    /// → 本用例红。用户可见后果：焦点不在窗格时方向键/F 键/type-ahead 全哑——故除
+    /// firstResponder 外还断言 ↓ 真能移动焦点行（🔍 按钮 / ⌘⇧F 走 toggleFilterRow，
+    /// 没有 Esc 路径的补偿，此用例专打这条路）。
+    func testCollapsingFilterRowReturnsFocusToPaneAndArrowKeysWork() {
+        let win = makeKeyWindow(containing: paneView)
+        defer { win.orderOut(nil) }
+        paneView.setFilterRowVisible(true)
+        XCTAssertTrue(win.firstResponder is NSTextView, "前置：输入框聚焦")
+
+        paneView.toggleFilterRow()
+        XCTAssertFalse(paneView.isFilterRowVisible)
+        XCTAssertTrue(win.firstResponder === paneView, "收起后焦点须回窗格")
+
+        let before = pane.selection.focusID
+        win.sendEvent(keyEvent(keyCode: 125, characters: "\u{F701}", windowNumber: win.windowNumber))
+        XCTAssertNotEqual(pane.selection.focusID, before, "收起后 ↓ 应真的移动焦点行")
+    }
+
+    // MARK: - 14. F2（终局 Minor-1）：回车保留筛选、行保持展开、焦点回窗格
+
+    /// 变异：把 `filterFieldReturn` 改成 `setFilterRowVisible(false)` → 筛选被清、行收起 → 本用例红。
+    func testReturnKeepsFilterRowOpenAndFocusesPane() {
+        let win = makeKeyWindow(containing: paneView)
+        defer { win.orderOut(nil) }
+        paneView.setFilterRowVisible(true)
+        paneView.filterInput.stringValue = "txt"
+        paneView.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification,
+                                                   object: paneView.filterInput))
+        XCTAssertEqual(rowCount(), 2, "前置：筛选生效")
+
+        // 走真实 target/action（与单行 NSTextField 回车同一条路）。
+        _ = paneView.filterInput.sendAction(paneView.filterInput.action, to: paneView.filterInput.target)
+
+        XCTAssertEqual(pane.filterText, "txt", "回车须保留筛选")
+        XCTAssertTrue(paneView.isFilterRowVisible, "回车后行保持展开")
+        XCTAssertEqual(rowCount(), 2, "列表仍收窄")
+        XCTAssertTrue(win.firstResponder === paneView, "回车后焦点回窗格")
     }
 }

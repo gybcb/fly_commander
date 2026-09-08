@@ -255,8 +255,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     func toggleFilterRow() { setFilterRowVisible(!isFilterRowVisible) }
 
-    /// 展开/收起筛选行。收起时清空输入与内核筛选（列表回全量）；展开时把焦点交给
-    /// 输入框、光标置尾。`setFilter` 自身不发 onReload，故此处显式 `reload()`。
+    /// 展开/收起筛选行。收起时清空输入与内核筛选（列表回全量）并把焦点还给窗格；
+    /// 展开时把焦点交给输入框、光标置尾。`setFilter` 自身不发 onReload，故此处显式 `reload()`。
     /// 末尾发 `onFilterRowVisibilityChange`——可见性变化的唯一收口点。
     func setFilterRowVisible(_ visible: Bool) {
         isFilterRowVisible = visible
@@ -270,6 +270,10 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             if let editor = filterInput.currentEditor() {
                 editor.selectedRange = NSRange(location: (filterInput.stringValue as NSString).length, length: 0)
             }
+        } else {
+            // 焦点还给窗格：否则 firstResponder 落在窗口上，方向键/F 键/type-ahead 全哑
+            // （🔍 按钮与 ⌘⇧F 走 toggleFilterRow，不经过 Esc 路径）。
+            window?.makeFirstResponder(self)
         }
         onFilterRowVisibilityChange?(visible)
     }
@@ -280,11 +284,10 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         reload()
     }
 
-    /// Esc：清空筛选并收起筛选行，焦点回窗格（继续方向键导航全量列表）。
+    /// Esc：清空筛选并收起筛选行；焦点回窗格由 `setFilterRowVisible(false)` 统一负责。
     private func cancelFilterEditing() {
         filterInput.stringValue = ""
         setFilterRowVisible(false)
-        window?.makeFirstResponder(self)
     }
 
     /// 回车：保留筛选、行保持展开，焦点回窗格（继续方向键导航命中项）。

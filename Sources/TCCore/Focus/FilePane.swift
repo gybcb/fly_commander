@@ -77,7 +77,8 @@ public final class FilePane {
 
     /// 设置筛选文本。文本无变化直接返回；文本变化 → 重算可见集 → 收口不变量 →
     /// 与 `mutateSelection` 同款 before/after diff，**仅选择态真变时**发 onSelectionChange。
-    /// 绝不发 onReload：那会每键击重排 sortedIDs + 重建标签条 + 走会话写回。
+    /// 绝不发 onReload：那会每键击重建标签条（`MainViewController.refresh` → `container.show`）
+    /// + 走会话写回。省不掉 sortedIDs 重排——视图侧 `reload()` 无论如何都要重投影一次。
     public func setFilter(_ text: String) {
         guard text != filterText else { return }
         filterText = text
