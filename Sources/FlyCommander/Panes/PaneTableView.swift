@@ -127,8 +127,9 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         input.target = self
         input.action = #selector(filterFieldReturn(_:))
         input.onEscape = { [weak self] in self?.cancelFilterEditing() }
-        // ⌃⇥ 在输入框聚焦时自行转交（FlyWindow.sendEvent 把它喂给 firstResponder，
-        // 不转交则输入框吃掉该键、切标签失效）。方向沿用 KeyDispatcher 的约定：⇧ = 上一标签。
+        // ⌃⇥：输入框聚焦时 firstResponder 是 field editor（NSTextView），FlyWindow.sendEvent
+        // 解到其 delegate 后经 ControlTabRouting 投递到这里（输入框自身收不到该键）。
+        // 方向沿用 KeyDispatcher 的约定：⇧ = 上一标签。
         input.onControlTab = { [weak self] shift in
             self?.router.execute(shift ? .prevTab : .nextTab)
         }
