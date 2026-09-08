@@ -125,7 +125,7 @@ public private(set) var page: DirectoryPage? {
 
 - 文本无变化 → 直接返回（不重算、不发回调）。
 - 文本变化 → 重算可见集 → `enforceVisibleInvariants()` → 与 `mutateSelection` 同款 before/after diff，**仅选择态真变时**发 `onSelectionChange`（含「只剪标记、焦点原地」的情形，Task 3 的 `updateBars` 依赖此契约）。
-- **绝不发 `onReload`**：那会每键击重排 `sortedIDs`（2 万项 ≈ 37ms）+ 重建标签条 + 走会话写回。
+- **绝不发 `onReload`**：那会每键击重建标签条（`MainViewController.refresh` → `container.show`）+ 走会话写回（`recordSessionIfChanged`）。**省不掉** `sortedIDs` 重排——视图侧 `reload()` 无论如何都要重投影一次。
 
 ## 5. 性能
 
@@ -133,7 +133,7 @@ public private(set) var page: DirectoryPage? {
 |---|---|---|
 | 每键击逐项匹配 | `NamePattern` **构造时预编译** `private let compiled: NSRegularExpression?`，`matches` 复用 | 旧实现每次 `matches` 都重编正则，2 万项/键击不可接受；改动同时加速既有 `FileSearcher`（`Sources/TCCore/Search/FileSearcher.swift:10-40`） |
 | 子串匹配 | `range(of:options:.caseInsensitive)`，**零正则** | 元字符按字面；无编译开销 |
-| 每键击渲染 | `setFilter` 不发 `onReload`，视图自行 `reload()` 重投影 | 避免每键击重排 `sortedIDs` + 重建标签条 + 会话写回 |
+| 每键击渲染 | `setFilter` 不发 `onReload`，视图自行 `reload()` 重投影 | 避免每键击重建标签条 + 会话写回（`sortedIDs` 重排省不掉，`reload()` 必跑） |
 | 选择态刷新 | 既有 `refreshSelection()` 快路（只重建可见行 + 同步滚动） | `setFilter` 发的 `onSelectionChange` 在**旧** `displayIDs` 上做一次廉价刷新，紧随其后的 `reload()` 是权威刷新（R5 已裁定，无崩溃路径） |
 | 计数标签 | 宽度用 `greaterThanOrEqualToConstant(56)` 而非定宽 | 大目录 `12345/67890` 不该被压成省略号（本特性主场景） |
 
