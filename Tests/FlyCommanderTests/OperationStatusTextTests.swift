@@ -75,19 +75,20 @@ final class OperationStatusTextTests: XCTestCase {
     }
 
     // MARK: - done + warnings（警告是**已本地化成品串**，这里只负责拼接与 ⚠ 前后缀）
+    // join 分隔符本身也随语言（.statusWarnJoin：en "; " / zh "；"），防英文状态栏流中文标点。
 
     func testDoneWithWarningsEnglish() {
         XCTAssertEqual(
             MainViewController.statusText(for: .done(label: .opCopying, args: ["3"],
                                                      warningLines: ["w1", "w2"])),
-            "Copying 3 item(s) complete ⚠ w1；w2")
+            "Copying 3 item(s) complete ⚠ w1; w2")
     }
     func testDoneWithWarningsChinese() {
         L10n.current = .zh
-        // zh 模板含前导全角空格（照现码 "　⚠ "）
+        // zh 模板含前导全角空格（照现码 "　⚠ "）；分隔符走 zh 全角"；"。
         XCTAssertEqual(
             MainViewController.statusText(for: .done(label: .opCopying, args: ["3"],
-                                                     warningLines: ["w1；w2"])),
+                                                     warningLines: ["w1", "w2"])),
             "复制 3 个文件 完成　⚠ w1；w2")
     }
 

@@ -112,6 +112,10 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     /// 语言切换后重刷列头标题：按**稳定 identifier** 找回列（与显示标题解耦），
     /// 重设 .title 后请求表头重绘。列宽/顺序/autosave 全不受影响。
+    /// 语言切换后重刷列头标题 + 单元格本地化格式（日期列随 L10n.current）：
+    /// 按**稳定 identifier** 找回列（与显示标题解耦），重设 .title 后请求表头重绘；
+    /// 再 reloadData 让可见 cell 重跑 configure（日期串现取当前语言 locale）。
+    /// 列宽/顺序/autosave/排序全不受影响（不重排序，displayIDs 原样）。
     func retitleColumns() {
         for col in tableView.tableColumns {
             switch col.identifier.rawValue {
@@ -123,6 +127,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
         tableView.headerView?.needsLayout = true
         tableView.tile()
+        tableView.reloadData()   // 让 dateLabel 按当前 locale 重渲染（④ formatter locale）
     }
 
     // MARK: - Data source

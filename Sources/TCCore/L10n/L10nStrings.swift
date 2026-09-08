@@ -121,7 +121,7 @@ public enum L10nTable {
         .errPathOutsideShare: "Path outside share: {0}",
         .errPathEscaped: "Path escaped the mount point: {0}",
         .errAuthRejected: "Authentication rejected ({0})",
-        .errSFTPConnectFailed: "SFTP connection failed",
+        .errSFTPConnectFailed: "SSH handshake failed",
         .errMountPointHint: "Cannot create mount point {0} (/Volumes not writable for current user). Run this once in Terminal:\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——显示前缀归外层（statusErrorPrefix / 各失败模板），防状态栏双前缀。
         .errUnknown: "{0}",
@@ -132,6 +132,7 @@ public enum L10nTable {
         .opSearchRunning: "Searching", .opSearchDone: "Search complete, {0} result(s)",
         .statusRunning: "{0} {1}%", .statusDone: "{0} complete",
         .statusDoneWarn: "{0} ⚠ {1}",
+        .statusWarnJoin: "; ",
         .warnSourceLeftover: "Source leftover: {0} ({1})",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
@@ -255,7 +256,7 @@ public enum L10nTable {
         .errPathOutsideShare: "路径不在共享内：{0}",
         .errPathEscaped: "路径逃逸挂载点：{0}",
         .errAuthRejected: "认证被拒绝（{0}）",
-        .errSFTPConnectFailed: "SFTP 连接失败",
+        .errSFTPConnectFailed: "SSH 握手失败",
         // zh 逐字搬 SMBMountManager 被替换的中文现码（全角 ：（）与 \n、命令行原样）。
         .errMountPointHint: "无法创建挂载点 {0}（/Volumes 对当前用户不可写）。请先在终端执行一次：\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——"错误：" 前缀归 statusErrorPrefix，状态栏不再叠字。
@@ -267,6 +268,7 @@ public enum L10nTable {
         .opSearchRunning: "搜索", .opSearchDone: "搜索完成，{0} 个结果",
         .statusRunning: "{0} {1}%", .statusDone: "{0} 完成",
         .statusDoneWarn: "{0}　⚠ {1}",
+        .statusWarnJoin: "；",
         .warnSourceLeftover: "源端残留：{0}（{1}）",
     ]
 }

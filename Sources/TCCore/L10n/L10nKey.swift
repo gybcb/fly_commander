@@ -73,4 +73,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case opCopying, opMoving, opDeleteRunning, opDeleteDone
     case opRenameDone, opMkdirDone, opSearchRunning, opSearchDone
     case statusRunning, statusDone, statusDoneWarn, warnSourceLeftover
+    /// done+警告多条 warningLines 的连接分隔符（随语言：en "; " / zh 全角"；"），
+    /// 防英文状态栏里流出中文标点（原硬编码 separator 违规项）。
+    case statusWarnJoin
 }

@@ -328,6 +328,25 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(tcErrorDisplay(.unknown("File exists")), "File exists")
     }
 
+    // ①：warningLines 连接分隔符随语言（en "; " / zh 全角"；"），防英文状态栏流中文标点。
+    func testStatusWarnJoinSeparatorLocalized() {
+        XCTAssertEqual(L10n.t(.statusWarnJoin), "; ")
+        L10n.current = .zh
+        XCTAssertEqual(L10n.t(.statusWarnJoin), "；")
+    }
+
+    // ④：日期格式化随 L10n.current 而非系统语言（切 en/zh 输出不同的 locale 格式）。
+    func testLocalizedDateFollowsLanguage() {
+        let d = Date(timeIntervalSince1970: 1_700_000_000)   // 2023-11-14
+        L10n.current = .en
+        let en = L10n.localized(date: d)
+        L10n.current = .zh
+        let zh = L10n.localized(date: d)
+        XCTAssertNotEqual(en, zh, "日期串须随语言变化（en_US vs zh_CN locale）")
+        XCTAssertTrue(en.contains("2023"), "英文串含年份：\(en)")
+        XCTAssertTrue(zh.contains("2023"), "中文串含年份：\(zh)")
+    }
+
     func testOnChangeFiresOnSwitch() {
         var fired = 0
         let token = L10n.observe { fired += 1 }

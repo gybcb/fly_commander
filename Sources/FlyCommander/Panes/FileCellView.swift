@@ -70,7 +70,7 @@ final class FileCellView: NSTableCellView {
             iconView.isHidden = true
             nameLabel.stringValue = ""
             sizeLabel.stringValue = ""
-            dateLabel.stringValue = item.modificationDate.formatted(date: .abbreviated, time: .shortened)
+            dateLabel.stringValue = L10n.localized(date: item.modificationDate)
         }
 
         if focus {

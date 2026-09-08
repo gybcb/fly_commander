@@ -189,6 +189,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         NSApp.mainMenu = MainMenu.build(target: self)
         leftContainer.allPaneViews.forEach { $0.retitleColumns() }
         rightContainer.allPaneViews.forEach { $0.retitleColumns() }
+        // 标签条 ×/＋ tooltip 在 tabBar.rebuild 里冻结——show 是其正规入口
+        // （幂等：tab title=路径非本地化串；可见性/边框/选中态按现状态原样重设）。
+        leftContainer.show(tabGroup: workspace.leftTabs, isActiveSide: workspace.active == .left)
+        rightContainer.show(tabGroup: workspace.rightTabs, isActiveSide: workspace.active == .right)
         commandBar!.refreshLocalizedText()
         mainWindowController?.refreshLocalizedLabels()
         searchWindow.refreshLocalizedText()
@@ -303,7 +307,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             let expanded = L10n.t(label, args: args)
             let base = Self.appendCompleteLabels.contains(label) ? L10n.t(.statusDone, expanded) : expanded
             guard !warningLines.isEmpty else { return base }
-            return L10n.t(.statusDoneWarn, args: [base, warningLines.joined(separator: "；")])
+            return L10n.t(.statusDoneWarn, args: [base, warningLines.joined(separator: L10n.t(.statusWarnJoin))])
         case .failed(let error):
             // 前缀只在这里给（statusErrorPrefix）：`errUnknown` 模板是裸 {0}，
             // 语义 case 自带 "Not found: " 等英文/中文前缀，状态栏单层前缀不叠字。

@@ -56,6 +56,21 @@ enum L10n {
         }
         return out
     }
+    /// 当前语言对应的 Locale：让日期/数字格式化随 L10n.current 而非系统语言
+    /// （否则切 en 后日期列仍显 "2026/9/7" 这类系统格式）。
+    static var locale: Locale {
+        switch current {
+        case .en: return Locale(identifier: "en_US")
+        case .zh: return Locale(identifier: "zh_CN")
+        }
+    }
+    /// 日期按当前语言格式化（缩略日期 + 短时间，locale 显式钉到 L10n.current，
+    /// 不随系统语言）。FormatStyle.locale(_:) 覆盖默认 locale。
+    static func localized(date: Date) -> String {
+        date.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)
+        )
+    }
     /// 注册切换回调，返回 token 供 unobserve。
     static func observe(_ cb: @escaping () -> Void) -> Int {
         let id = nextToken; nextToken += 1; tokens[id] = cb; return id
