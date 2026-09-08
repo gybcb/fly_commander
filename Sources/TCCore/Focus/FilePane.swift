@@ -7,9 +7,23 @@ public final class FilePane {
     public private(set) var source: FileSource
     public private(set) var path: TCPath
     public private(set) var selection = SelectionModel()
-    public private(set) var page: DirectoryPage?
+    /// 可见集的**单一失效点**：`page` 的每次赋值（load/loadAsync 的成功与失败、setSource）
+    /// 都经 `didSet` 重算缓存，结构上不可能陈旧。
+    public private(set) var page: DirectoryPage? {
+        didSet { recomputeVisibility() }
+    }
     /// 最近一次加载的错误（本地源一般恒 nil；远端断连/权限错误在此暴露）。
     public private(set) var lastError: TCError?
+
+    // MARK: - 筛选状态（决策 3：仅当前目录生效，导航清空、刷新保留）
+
+    /// 当前筛选文本（空 = 无筛选）。视图筛选行每键击经 `setFilter` 写入。
+    public private(set) var filterText = ""
+    private var filter: NameFilter?
+    /// 可见项 id，**存储序**（= `page.items` 顺序）；nil = 无筛选。
+    private var visibleIDs: [String]?
+    /// 可见性门禁用集合；nil = 无筛选（门禁默认放行）。
+    private var visibleIDSet: Set<String>?
 
     public var onReload: ((FilePane) -> Void)?
     /// 选择态变化快路（方向键/空格/单击焦点）：内容（page/selection.items）未变、
@@ -37,11 +51,96 @@ public final class FilePane {
 
     public var operationTargets: [FileItem] {
         let byID = itemByID
-        return selection.operationIDs.compactMap { byID[$0] }
+        return selection.operationIDs.compactMap { id in
+            // 不变量「操作目标 ⊆ 可见」：无筛选时门禁默认放行（逐位等价旧行为）。
+            guard visibleIDSet?.contains(id) ?? true else { return nil }
+            return byID[id]
+        }
     }
 
-    public var focusedItem: FileItem? { selection.focusID.flatMap { itemByID[$0] } }
+    public var focusedItem: FileItem? {
+        selection.focusID.flatMap { id in
+            guard visibleIDSet?.contains(id) ?? true else { return nil }
+            return itemByID[id]
+        }
+    }
+
+    /// 全量条目数（`ls` 报目录总数，不受筛选影响）。
     public var itemCount: Int { page?.items.count ?? 0 }
+
+    /// 是否处于筛选态（文本非空）。
+    public var isFiltering: Bool { !filterText.isEmpty }
+
+    /// 当前可见项 id（**存储序**，即 `page.items` 顺序——视图自行排序显示）。
+    public var visibleItemIDs: [String] { visibleIDs ?? page?.items.map(\.id) ?? [] }
+    public var visibleCount: Int { visibleItemIDs.count }
+
+    /// 设置筛选文本。文本无变化直接返回；文本变化 → 重算可见集 → 收口不变量 →
+    /// 与 `mutateSelection` 同款 before/after diff，**仅选择态真变时**发 onSelectionChange。
+    /// 绝不发 onReload：那会每键击重排 sortedIDs + 重建标签条 + 走会话写回。
+    public func setFilter(_ text: String) {
+        guard text != filterText else { return }
+        filterText = text
+        filter = text.isEmpty ? nil : NameFilter(text)
+        recomputeVisibility()
+        let before = selection
+        enforceVisibleInvariants()
+        if before != selection { onSelectionChange?(self) }
+    }
+
+    /// 清空筛选（导航/切源时调用）。被剪掉的标记不恢复（破坏性剪枝）。
+    public func clearFilter() {
+        guard !filterText.isEmpty else { return }
+        filterText = ""
+        filter = nil
+        recomputeVisibility()   // filterText 空 → 两个缓存 nil
+    }
+
+    /// 可见集的唯一写入口：**从 `page.items` 派生**（不读 `selection.items`——`load()` 里
+    /// `page =` 早于 `selection.reload`，读 selection 会拿到旧值）。无筛选 → 两者 nil。
+    private func recomputeVisibility() {
+        guard !filterText.isEmpty, let filter else {
+            visibleIDs = nil
+            visibleIDSet = nil
+            return
+        }
+        let ids = (page?.items ?? []).filter { filter.matches($0.name) }.map(\.id)
+        visibleIDs = ids
+        visibleIDSet = Set(ids)
+    }
+
+    /// 三条不变量的收口点（筛选激活时恒成立）：
+    /// 1. 标记 ⊆ 可见——`restrictMarks` 破坏性剪枝（清空筛选不恢复）；
+    /// 2. 焦点可见——被筛掉则移到最近可见项；可见集为空时焦点无处可去
+    ///    （`focusIndex` 是非可选 Int），由 `operationTargets`/`focusedItem` 的可见门禁兜底；
+    /// 3. 操作目标 ⊆ 可见——由上一条 + 门禁共同保证。
+    private func enforceVisibleInvariants() {
+        guard let visibleIDSet else { return }
+        selection.restrictMarks(to: visibleIDSet)
+        if let focusID = selection.focusID, !visibleIDSet.contains(focusID),
+           let idx = nearestVisibleIndex(from: selection.focusIndex, in: visibleIDSet) {
+            selection.setFocus(to: idx)
+        }
+    }
+
+    /// 从旧索引向**后**（含自身，即索引递减）找最近可见项，找不到再向**前**（递增）。
+    /// 取「最近」而非「首个」：`.end`（`moveFocus(to: itemCount - 1)`，全量索引）在筛选下
+    /// 仍落到最后一个可见项；筛选时焦点自然停在光标附近的首个匹配。
+    private func nearestVisibleIndex(from old: Int, in visible: Set<String>) -> Int? {
+        let ids = selection.items
+        guard !ids.isEmpty else { return nil }
+        var i = min(max(old, 0), ids.count - 1)
+        while i >= 0 {
+            if visible.contains(ids[i]) { return i }
+            i -= 1
+        }
+        i = min(max(old, 0), ids.count - 1) + 1
+        while i < ids.count {
+            if visible.contains(ids[i]) { return i }
+            i += 1
+        }
+        return nil
+    }
 
     /// Focus the item with this id if it is on the current page (used after
     /// jumping to a directory from search results).
@@ -56,7 +155,7 @@ public final class FilePane {
         do {
             let items = try source.listDirectory(path)
             let ids = items.map { $0.id }
-            self.page = DirectoryPage(path: path, items: items)
+            self.page = DirectoryPage(path: path, items: items)   // didSet → 按新 items 重算可见集（筛选保留）
             if let target = focusID {
                 // 跨目录导航（回退/搜索）：清空标记，再按 id/name 定位到目标项。
                 selection.reload(with: ids)
@@ -66,14 +165,17 @@ public final class FilePane {
                 selection.reload(with: ids,
                                  previousFocusID: preserveFocus ? selection.focusID : nil)
             }
+            enforceVisibleInvariants()
             lastError = nil
         } catch let tc as TCError {
             self.page = DirectoryPage(path: path, items: [])
             selection.reload(with: [])
+            enforceVisibleInvariants()
             lastError = tc
         } catch {
             self.page = DirectoryPage(path: path, items: [])
             selection.reload(with: [])
+            enforceVisibleInvariants()
             lastError = TCError.unknown(error.localizedDescription)
         }
         onReload?(self)
@@ -106,7 +208,7 @@ public final class FilePane {
                 switch result {
                 case .success(let items):
                     let ids = items.map { $0.id }
-                    self.page = DirectoryPage(path: capturedPath, items: items)
+                    self.page = DirectoryPage(path: capturedPath, items: items)   // didSet → 重算可见集
                     if let target = focusID {
                         // 跨目录导航（回退/搜索）：清空标记，再按 id/name 定位到目标项。
                         self.selection.reload(with: ids)
@@ -116,10 +218,12 @@ public final class FilePane {
                         self.selection.reload(with: ids,
                                               previousFocusID: preserveFocus ? previousFocusID : nil)
                     }
+                    self.enforceVisibleInvariants()
                     self.lastError = nil
                 case .failure(let error):
                     self.page = DirectoryPage(path: capturedPath, items: [])
                     self.selection.reload(with: [])
+                    self.enforceVisibleInvariants()
                     self.lastError = error as? TCError
                         ?? TCError.unknown(error.localizedDescription)
                 }
@@ -128,12 +232,13 @@ public final class FilePane {
         }
     }
 
-    /// 切换数据源（SFTP 连接成功后把窗格接到远端）。
+    /// 切换数据源（SFTP 连接成功后把窗格接到远端）。切源 = 换目录语义 → 清空筛选。
     public func setSource(_ newSource: FileSource, andPath newPath: TCPath) {
         loadToken &+= 1   // 使在途的旧源加载失效
         navToken &+= 1    // 使在途的旧源导航 stat 失效
         source = newSource
         path = newPath
+        clearFilter()
         selection = SelectionModel()
         page = nil
         lastError = nil
@@ -144,6 +249,8 @@ public final class FilePane {
         }
     }
 
+    /// 导航到新目录。**导航即清空筛选**（决策 3：筛选仅当前目录生效）；
+    /// 同目录刷新走 `load`，筛选保留并重算。
     public func navigate(to newPath: TCPath, focusID: String? = nil) {
         if source.isRemote {
             // 远端 stat 有网络 RTT，不得在主线程同步执行：放进 loadQueue，
@@ -155,12 +262,14 @@ public final class FilePane {
                     || ((try? source.stat(newPath))?.isDirectory == true)
                 DispatchQueue.main.async {
                     guard token == self.navToken, isDirectory else { return }
+                    self.clearFilter()
                     self.path = newPath
                     self.loadAsync(preserveFocus: false, focusID: focusID)
                 }
             }
         } else {
             guard newPath.isRoot || (try? source.stat(newPath))?.isDirectory == true else { return }
+            clearFilter()
             path = newPath
             load(preserveFocus: false, focusID: focusID)
         }
@@ -178,11 +287,13 @@ public final class FilePane {
         if let p = path.parent { navigate(to: p, focusID: leftID) }
     }
 
-    /// 纯选择态变更统一走此路：mutate 后与快照 diff，无变化不发回调（末行继续
-    /// 按↓ = 零渲染零滚动），有变化只发 onSelectionChange（快路），不发 onReload。
+    /// 纯选择态变更统一走此路：mutate 后先收口可见性不变量（标记剪枝/焦点落可见），
+    /// 再与快照 diff，无变化不发回调（末行继续按↓ = 零渲染零滚动），有变化只发
+    /// onSelectionChange（快路），不发 onReload。
     private func mutateSelection(_ mutate: (inout SelectionModel) -> Void) {
         let before = selection
         mutate(&selection)
+        enforceVisibleInvariants()
         if before != selection { onSelectionChange?(self) }
     }
 

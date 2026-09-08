@@ -182,8 +182,11 @@ final class InternalCommandExecutor {
         if args.isEmpty {
             targets = pane.operationTargets
         } else if args == ["*"] {
-            targets = pane.page?.items ?? []
+            // 筛选期只删**可见项**（决策 5）；不过滤时 visibleItemIDs 即全量，行为不变。
+            let byID = pane.itemByID
+            targets = pane.visibleItemIDs.compactMap { byID[$0] }
         } else {
+            // 显式命名 del <id> 不按可见性过滤：用户逐字敲名是明确意图（已批准取舍）。
             let byID = pane.itemByID
             let found = args.compactMap { byID[$0] }
             if found.count != args.count {

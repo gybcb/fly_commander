@@ -86,4 +86,11 @@ public struct SelectionModel: Equatable {
 
     public mutating func selectAll() { marked = Set(items) }
     public mutating func clearMarks() { marked = []; anchor = nil }
+
+    /// 把标记集收窄到 `ids`（筛选可见集）：交集的**破坏性剪枝**——被筛掉的标记就此丢弃，
+    /// 清空筛选也不恢复（决策 5）。`marked` 是 `private(set)`，故需此写入口；
+    /// `items`/`focusIndex`/`anchor` 一律不动（可见性概念留在 FilePane 侧）。
+    public mutating func restrictMarks(to ids: Set<String>) {
+        marked.formIntersection(ids)
+    }
 }

@@ -491,28 +491,30 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     static func sortedIDs(_ ids: [String], items: [String: FileItem],
                           key: SortKey, direction: SortDirection) -> [String] {
-        guard !ids.isEmpty else { return ids }
-        func value(_ id: String) -> (String, Int64, Date) {
-            let item = items[id]!
-            return (item.name, item.isDirectory ? 0 : item.size, item.modificationDate)
+        // 缺失 id 直接跳过（第二道防线：可见集与 items 短暂不同步时不得 trap）。
+        let present = ids.compactMap { id in items[id].map { (id: id, item: $0) } }
+        guard !present.isEmpty else { return [] }
+        func value(_ e: (id: String, item: FileItem)) -> (String, Int64, Date) {
+            (e.item.name, e.item.isDirectory ? 0 : e.item.size, e.item.modificationDate)
         }
-        let sorted: [String]
+        let sorted: [(id: String, item: FileItem)]
         switch key {
         case .name:
             // 目录优先 + 名称（与内核 selection 存储序一致 → 默认序下 display==selection）
-            sorted = ids.sorted { left, right in
-                let li = items[left]!, ri = items[right]!
+            sorted = present.sorted { left, right in
+                let li = left.item, ri = right.item
                 if li.isDirectory != ri.isDirectory { return li.isDirectory && !ri.isDirectory }
                 return li.name.localizedStandardCompare(ri.name) == .orderedAscending
             }
         case .size:
-            sorted = ids.sorted { value($0).1 != value($1).1 ? value($0).1 < value($1).1
+            sorted = present.sorted { value($0).1 != value($1).1 ? value($0).1 < value($1).1
                                                              : value($0).0.localizedStandardCompare(value($1).0) == .orderedAscending }
         case .date:
-            sorted = ids.sorted { value($0).2 != value($1).2 ? value($0).2 < value($1).2
+            sorted = present.sorted { value($0).2 != value($1).2 ? value($0).2 < value($1).2
                                                              : value($0).0.localizedStandardCompare(value($1).0) == .orderedAscending }
         }
-        return direction == .descending ? Array(sorted.reversed()) : sorted
+        let ordered = sorted.map(\.id)
+        return direction == .descending ? Array(ordered.reversed()) : ordered
     }
 
     /// 把"显示位置上的第 target 行"映射回 selection 存储序的索引。

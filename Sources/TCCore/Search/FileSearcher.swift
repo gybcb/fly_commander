@@ -10,13 +10,12 @@ public struct SearchHit: Hashable {
 public struct NamePattern {
     public let pattern: String
     public let sensitive: Bool
+    /// 构造时一次性编译；`matches` 按项调用不得逐项重编（大目录逐键击筛选用）。
+    private let compiled: NSRegularExpression?
 
     public init(_ pattern: String, caseSensitive: Bool = true) {
         self.pattern = pattern
         self.sensitive = caseSensitive
-    }
-
-    public func matches(_ name: String) -> Bool {
         var regex = ""
         for scalar in pattern.unicodeScalars {
             switch scalar {
@@ -26,12 +25,14 @@ public struct NamePattern {
                 regex.append(NSRegularExpression.escapedPattern(for: String(scalar)))
             }
         }
-        let options: NSRegularExpression.Options = sensitive ? [] : [.caseInsensitive]
-        guard let re = try? NSRegularExpression(pattern: "^\(regex)$", options: options) else {
-            return false
-        }
+        let options: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
+        self.compiled = try? NSRegularExpression(pattern: "^\(regex)$", options: options)
+    }
+
+    public func matches(_ name: String) -> Bool {
+        guard let compiled else { return false }   // 编译失败仍返回 false（与旧行为一致）
         let range = NSRange(location: 0, length: name.utf16.count)
-        return re.firstMatch(in: name, options: [], range: range) != nil
+        return compiled.firstMatch(in: name, options: [], range: range) != nil
     }
 }
 

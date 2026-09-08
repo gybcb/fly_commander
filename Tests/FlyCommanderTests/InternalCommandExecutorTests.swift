@@ -316,6 +316,32 @@ final class InternalCommandExecutorTests: XCTestCase {
         XCTAssertEqual(h.deleted?.targets.map(\.name), ["a.txt"], "缺省=焦点项")
     }
 
+    /// 筛选期 `del *` 只删**可见项**（决策 5）。
+    /// 变异：把 `pane.visibleItemIDs` 改回 `pane.page?.items` → 被筛掉的 b.md 也被删，本用例红。
+    func testDelStarTargetsOnlyVisibleWhenFiltering() {
+        let local = StubSource(id: "local", remote: false)
+        let remote = StubSource(id: "s", remote: true)
+        let h = Harness(local: local, remote: remote, activeRemote: false)
+        h.seedLocal(["a.txt", "b.md", "c.txt"])
+        h.workspace.activePane.setFilter("txt")
+        h.executor.execute(line: "del *")
+        XCTAssertEqual(h.deleted?.targets.map(\.name), ["a.txt", "c.txt"],
+                       "只删可见项；不过滤时 visibleItemIDs 即全量（既有用例覆盖）")
+    }
+
+    /// 显式 `del <id>` 不受筛选影响：逐字敲名是明确意图（已批准取舍）。
+    /// 变异：给显式分支加可见门禁（改用 operationTargets 或 visibleItemIDs）→ 本用例红。
+    func testDelExplicitIDIgnoresFilter() {
+        let local = StubSource(id: "local", remote: false)
+        let remote = StubSource(id: "s", remote: true)
+        let h = Harness(local: local, remote: remote, activeRemote: false)
+        h.seedLocal(["a.txt", "b.md", "c.txt"])
+        h.workspace.activePane.setFilter("txt")     // b.md 被筛掉
+        let out = h.executor.execute(line: "del /L/b.md")
+        XCTAssertEqual(h.deleted?.targets.map(\.name), ["b.md"])
+        XCTAssertEqual(out, "Delete started for 1 item(s) (awaiting confirm)")
+    }
+
     // MARK: - view / edit 远程降级
 
     func testViewRemoteDowngrades() {

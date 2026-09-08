@@ -53,4 +53,25 @@ final class PaneSortTests: XCTestCase {
     func testEmptyInput() {
         XCTAssertEqual(PaneTableView.sortedIDs([], items: [:], key: .name, direction: .ascending), [])
     }
+
+    /// items 字典缺 id（可见集与 items 短暂不同步的第二道防线）→ 跳过该 id 不崩。
+    /// 变异：把 compactMap 改回 `items[id]!` → 本用例 trap。
+    func testSortedIDsSkipsMissingItems() {
+        let (ids, items) = context()
+        XCTAssertEqual(PaneTableView.sortedIDs(ids + ["ghost"], items: items,
+                                               key: .name, direction: .ascending),
+                       ["b", "a", "c"])
+        XCTAssertEqual(PaneTableView.sortedIDs(ids + ["ghost"], items: items,
+                                               key: .size, direction: .ascending),
+                       PaneTableView.sortedIDs(ids, items: items, key: .size, direction: .ascending))
+        XCTAssertEqual(PaneTableView.sortedIDs(ids + ["ghost"], items: items,
+                                               key: .date, direction: .ascending),
+                       PaneTableView.sortedIDs(ids, items: items, key: .date, direction: .ascending))
+    }
+
+    /// 全部 id 都缺失 → 空数组（不 trap）。
+    /// 变异：去掉 `guard !present.isEmpty` 前的 compactMap 过滤 → 本用例 trap。
+    func testSortedIDsAllMissingReturnsEmpty() {
+        XCTAssertEqual(PaneTableView.sortedIDs(["ghost"], items: [:], key: .name, direction: .ascending), [])
+    }
 }

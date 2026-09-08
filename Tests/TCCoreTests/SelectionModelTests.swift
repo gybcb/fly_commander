@@ -114,4 +114,19 @@ final class SelectionModelTests: XCTestCase {
         XCTAssertEqual(s.focusID, "c")
         XCTAssertEqual(s.markedIDs, ["b"])
     }
+
+    /// restrictMarks：标记集收窄到给定 id 集（筛选剪枝），其余破坏性丢弃。
+    /// items/focusIndex/anchor 一律不动（可见性概念留在 FilePane 侧）。
+    /// 变异：把 `formIntersection` 改成 `formUnion` → 本用例红（越剪越多）。
+    func testRestrictMarksIntersects() {
+        var s = SelectionModel()
+        s.reload(with: ["a", "b", "c"])
+        s.selectAll()
+        s.restrictMarks(to: ["a", "c"])
+        XCTAssertEqual(s.markedIDs, ["a", "c"])
+        s.restrictMarks(to: [])
+        XCTAssertTrue(s.marked.isEmpty)
+        XCTAssertEqual(s.items, ["a", "b", "c"], "不得动 items")
+        XCTAssertEqual(s.focusID, "a", "不得动 focus")
+    }
 }
