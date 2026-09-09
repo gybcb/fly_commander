@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # tag 名经 env 传入并正则校验（防 script injection：tag 语法上可含引号/分号）
+      # tag 名经 env 传入并锚定正则校验（防 script injection：tag 语法上可含引号/分号）
       - name: Resolve version
         id: ver
         env:
@@ -33,10 +33,9 @@ jobs:
           else
             V="$DISPATCH_INPUT"
           fi
-          case "$V" in
-            [0-9].[0-9].[0-9]*) ;;
-            *) echo "非法版本号: $V"; exit 1 ;;
-          esac
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "非法版本号: $V"; exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
@@ -58,16 +57,21 @@ jobs:
       # x86_64，会悄悄产出 universal，与「仅 arm64」决策及 README 安装说明矛盾。
       # 用 build 而非 test action：结构上不会触发 scheme test 段的 XCUITest。
       - name: Build (Release, ad-hoc signed, arm64)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ver.outputs.build_number }}
         run: |
           xcodebuild -project FlyCommander.xcodeproj -scheme FlyCommander \
             -configuration Release -derivedDataPath build \
-            MARKETING_VERSION=${{ steps.ver.outputs.version }} \
-            CURRENT_PROJECT_VERSION=${{ steps.ver.outputs.build_number }} \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
             build
 
       - name: Verify bundle (license / version / signature)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           APP=build/Build/Products/Release/FlyCommander.app
           test -d "$APP"
@@ -76,7 +80,7 @@ jobs:
           # 防版本漂移：产物版本必须等于 tag 解出的版本
           plutil -p "$APP/Contents/Info.plist"
           V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
-          [ "$V" = "${{ steps.ver.outputs.version }}" ] || { echo "版本不符: $V"; exit 1; }
+          [ "$V" = "$VERSION" ] || { echo "版本不符: $V"; exit 1; }
           codesign --verify --strict --verbose=2 "$APP"
 
       - name: Package dmg
@@ -135,8 +139,9 @@ jobs:
             echo "本 Release 的对应源码（可重建本二进制）： https://github.com/${REPO}/tree/${TAG}"
           } > notes.md
 
+      # 供应链加固：有 contents:write 权限的第三方 action 钉死到 commit SHA（勿用浮动 tag）
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*.dmg
           fail_on_unmatched_files: true   # 产物路径写错 → 报错，不静默空发
