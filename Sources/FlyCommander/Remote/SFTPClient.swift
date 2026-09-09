@@ -68,6 +68,9 @@ final class SFTPConnection {
     private let conn: SSHConnection
     private let lock = NSLock()
     private var closed = false
+    /// 服务器 cp 是否支持 -a（连接级缓存：nil=未知，false=BSD 方言用 -Rp）。
+    /// 类盒先例 = ReadCursor：@Sendable 闭包捕获类常量、锁内改属性。
+    private let cpFlags = CPSupport()
 
     init(config: SFTPConnectionConfig, store: SFTPHostKeyStore) throws {
         let authMethod: SSHAuthenticationMethod
@@ -148,11 +151,44 @@ final class SFTPConnection {
         }
     }
 
-    /// 同源（同一 SFTP 连接）复制：两个句柄同时打开，一个 async 块内泵完。
+    /// 同源（同一 SFTP 连接）复制：**优先服务器端 exec `cp`**（字节不出服务器，且
+    /// cp -a 天然支持目录、保留权限/时间戳/符号链接）；exec 通道被拒（chroot-only /
+    /// ForceCommand=internal-sftp 账号）时**静默回退**旧双句柄 pump（字节走
+    /// 服务器→本机→服务器，仅普通文件，目录会报错——维持 pump 时代语义）。
+    ///
+    /// 不变量：调用前 OperationEngine.resolveConflict 对「覆盖」已先 removeItem(dst)，
+    /// 故 cp 永远面对不存在的目标——无需 -f，也无「目录拷进已存在目录」歧义。
+    ///
+    /// 失败分类（设计已核实 Traversio 行为）：
+    /// - execute **抛错** = exec 通道级失败（未建立）→ 回退 pump；
+    /// - 返回 exitStatus == nil = 通道异常关闭 → 回退 pump；
+    /// - 返回非零 = cp 命令真失败（权限/磁盘满等）→ 带 stderr 抛错**不回退**
+    ///   （pump 会撞同一堵墙，回退只会把清晰诊断洗成含糊错误）。
+    ///
+    /// 语义分叉（有意）：同源（服务器端 cp）保留符号链接/权限/时间戳，
+    /// 跨源（客户端中转 pump）不保留——保真度以服务器端为基准。
     func copyFile(from src: String, to dst: String) throws {
         lock.lock()
         defer { lock.unlock() }
         try awaitBlocking {
+            // 阶段 1：exec cp。cpFlags.supportsA 是连接级缓存：不同服务器 cp 方言不同
+            // （GNU 有 -a；BSD/macOS 只有 -Rp），首次撞 unknown option 后换 flag 重试。
+            let useA = self.cpFlags.supportsA != false
+            var result = await self.runCp(src: src, dst: dst, useA: useA)
+            if case .unknownFlag = result, useA {
+                self.cpFlags.supportsA = false
+                result = await self.runCp(src: src, dst: dst, useA: false)
+            }
+            switch result {
+            case .success: return
+            case .cpFailed(let msg):
+                // 命令级失败：不回退（pump 会撞同一错误且诊断更差）。
+                throw TCError.unknown("cp: \(msg)")
+            case .channelGone, .unknownFlag:
+                break   // 落到 pump
+            }
+
+            // 阶段 2：回退 pump（原实现逐字保留）。
             let reader = try await self.sftp.openFile(src, flags: [.read])
             let writer = try await self.sftp.openFile(dst, flags: [.write, .create, .truncate])
             do {
@@ -170,6 +206,17 @@ final class SFTPConnection {
             }
             try? await reader.close()
             try? await writer.close()
+        }
+    }
+
+    /// 在 copyFile 的锁内执行一次远程 cp 并分类结果。**调用方必须已持 lock**。
+    /// execute 抛错（exec 通道被拒/连接死）归为 channelGone → 交 pump 兜底。
+    private func runCp(src: String, dst: String, useA: Bool) async -> ServerSideCopy.Result {
+        do {
+            let r = try await self.conn.execute(ServerSideCopy.command(src: src, dst: dst, useA: useA))
+            return ServerSideCopy.classify(exitStatus: r.exitStatus, stderr: ServerSideCopy.stderrText(r))
+        } catch {
+            return .channelGone
         }
     }
 
@@ -194,12 +241,66 @@ final class SFTPConnection {
     }
 }
 
+// MARK: - 服务器端复制命令（纯函数，可单测）
+
+enum ServerSideCopy {
+    /// classify 的结果：成功 / cp 命令级失败（带 stderr）/ exec 通道级失败 / cp 不认 flag。
+    enum Result: Equatable {
+        case success
+        case cpFailed(String)
+        case channelGone
+        case unknownFlag(String)
+    }
+
+    /// POSIX 单引号引用：整体包 '…'，内部单引号转成 '\''。
+    /// 单引号内 $ ` \ 等全部字面化——恶意/畸形文件名（服务器可返回任意名）的注入面就此封死。
+    static func shellQuote(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// -a = -dR --preserve=all（GNU/BusyBox）；-Rp 是 BSD 等价（无 xattr 保留）。
+    /// `--` 终止选项：路径以 - 开头时不被当 flag。
+    static func command(src: String, dst: String, useA: Bool) -> String {
+        "cp \(useA ? "-a" : "-Rp") -- \(shellQuote(src)) \(shellQuote(dst))"
+    }
+
+    static func stderrText(_ r: SSHExecResult) -> String {
+        String(decoding: r.standardError, as: UTF8.self)
+    }
+
+    /// exitStatus → 分类：
+    /// - 0 → success；
+    /// - nil（通道未报状态）或非零但 stderr 为空（受限 shell 把话说到 stdout 等）→
+    ///   channelGone：无有效诊断可保留，交 pump 兜底；
+    /// - 127（cp 不存在）→ channelGone：服务器能力缺失，与 exec 被拒同类，pump 还能干活；
+    /// - 非零且 stderr 报「不认 flag」→ unknownFlag（上层换 -Rp 重试一次）；
+    /// - 其余非零 → cpFailed（命令真失败，不回退——pump 会撞同一错误且洗掉诊断）。
+    static func classify(exitStatus: UInt32?, stderr: String) -> Result {
+        guard let status = exitStatus else { return .channelGone }
+        if status == 0 { return .success }
+        if status == 127 { return .channelGone }
+        let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if msg.isEmpty { return .channelGone }
+        if (status == 1 || status == 64)
+            && (msg.contains("invalid option") || msg.contains("illegal option")) {
+            return .unknownFlag(msg)
+        }
+        return .cpFailed(msg)
+    }
+}
+
 // MARK: - 读游标
 
 /// openReader 的句柄状态。所有读写都在同一把 NSLock 保护下，无并发。
 final class ReadCursor {
     var offset: UInt64 = 0
     var done = false
+}
+
+/// cp -a 支持缓存。类盒（同 ReadCursor 模式）：@Sendable 闭包只捕获不可变引用，
+/// 属性变更全部发生在 lock 临界区内，无并发。
+final class CPSupport {
+    var supportsA: Bool?
 }
 
 // MARK: - async → sync 桥接 helper（Task + DispatchSemaphore，不建任何队列）

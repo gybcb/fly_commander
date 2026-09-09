@@ -211,6 +211,77 @@ final class SFTPSourceTests: XCTestCase {
         XCTAssertEqual(try readAll(moved), payload)
     }
 
+    // MARK: - 服务器端对拷（exec cp；本机 sshd 允许 exec → 走真 cp 路径）
+    //
+    // 每条的可证伪性注在函数内。回退 pump 分支不给专测：需要 ForceCommand 专用
+    // sshd 夹具，代价不对称——由 runCp 的 catch→channelGone 结构 + 上方
+    // testSameSourceCopy（现跑在 exec 路径上）共同兜底；exec 若整体挂掉本组全红。
+
+    /// 目录递归复制——**回归锚**：旧双句柄 pump 对目录 openFile 必抛错（设计已核实
+    /// 同源目录复制在 exec 前就是坏的），exec `cp -a` 修复之。
+    /// 变异：去掉 exec 阶段（只留 pump）→ 本条红（copyItem 抛错）。
+    func testServerSideCopyDirectoryRecursive() throws {
+        let base = server.remoteBase.path
+        try source.makeDirectory(at: p(base + "/ssc_dir"))
+        try source.makeDirectory(at: p(base + "/ssc_dir/src"))
+        try source.makeDirectory(at: p(base + "/ssc_dir/src/sub"))
+        let inner = p(base + "/ssc_dir/src/sub/deep.txt")
+        try writeOnce(Data("deep-content".utf8), into: inner)
+        try source.copyItem(from: p(base + "/ssc_dir/src"), to: p(base + "/ssc_dir/copy"))
+        XCTAssertEqual(try readAll(p(base + "/ssc_dir/copy/sub/deep.txt")), Data("deep-content".utf8),
+                       "嵌套内容须随目录整体复制")
+        XCTAssertEqual(try source.stat(p(base + "/ssc_dir/copy"))?.isDirectory, true)
+        // 源仍在（cp 非 mv）
+        XCTAssertNotNil(try source.stat(inner))
+    }
+
+    /// 特殊文件名三连——shell 引用的端到端验证（纯函数测的是字符串，这里测真 shell）。
+    /// 变异：shellQuote 去单引号 / 漏 `--` → 对应名字红（命令被拆词或路径当 flag）。
+    func testServerSideCopySpecialFilenames() throws {
+        let base = server.remoteBase.path
+        try source.makeDirectory(at: p(base + "/ssc_names"))
+        let payload = Data("special-name-payload".utf8)
+        for name in ["hello world.txt", "it's a file.txt", "-rf.txt"] {
+            let src = p(base + "/ssc_names/\(name)")
+            try writeOnce(payload, into: src)
+            try source.copyItem(from: src, to: p(base + "/ssc_names/copy_\(name)"))
+            XCTAssertEqual(try readAll(p(base + "/ssc_names/copy_\(name)")), payload,
+                           "文件名「\(name)」复制失败 = 引用/转义回归")
+        }
+    }
+
+    /// cp -a 属性保留（有意语义改进）：可执行位须随复制保留。
+    /// 变异：exec 阶段失效退回 pump（openFile+write 不带属性）→ isExecutable 变 false 红。
+    func testServerSideCopyPreservesExecutable() throws {
+        let base = server.remoteBase.path
+        try source.makeDirectory(at: p(base + "/ssc_perm"))
+        // 本机 sshd 直接映射真实文件系统 → 用 FileManager 造 0755 源。
+        let real = base + "/ssc_perm/run.sh"
+        try "echo hi".write(toFile: real, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: real)
+        XCTAssertEqual(try source.stat(p(base + "/ssc_perm/run.sh"))?.isExecutable, true,
+                       "夹具自检：源应可执行")
+        try source.copyItem(from: p(base + "/ssc_perm/run.sh"), to: p(base + "/ssc_perm/copy.sh"))
+        XCTAssertEqual(try source.stat(p(base + "/ssc_perm/copy.sh"))?.isExecutable, true,
+                       "cp -a 应保留可执行位（pump 不保留——此断言红说明回退到了 pump）")
+    }
+
+    /// 覆盖已存在目标（引擎 resolveConflict 先删后拷的不变量端到端成立）。
+    /// 变异：若 dst 未被先删，`cp -a` 对已存在**目录**目标会把 src 拷**进去**
+    /// （dst/src 而非 dst）→ readAll(dst) 红。
+    func testServerSideCopyOverExistingDirectory() throws {
+        let base = server.remoteBase.path
+        try source.makeDirectory(at: p(base + "/ssc_over"))
+        try source.makeDirectory(at: p(base + "/ssc_over/srcdir"))
+        try writeOnce(Data("new".utf8), into: p(base + "/ssc_over/srcdir/f.txt"))
+        try source.makeDirectory(at: p(base + "/ssc_over/dstdir"))   // 已存在同名目录
+        // 模拟 resolveConflict 的「先删后拷」（引擎路径的语义镜像）。
+        try source.removeItem(at: p(base + "/ssc_over/dstdir"))
+        try source.copyItem(from: p(base + "/ssc_over/srcdir"), to: p(base + "/ssc_over/dstdir"))
+        XCTAssertEqual(try readAll(p(base + "/ssc_over/dstdir/f.txt")), Data("new".utf8),
+                       "覆盖式目录复制：目标须整体替换而非嵌入")
+    }
+
     // MARK: - 错误映射
 
     func testWrongPasswordMapsToTCError() throws {
