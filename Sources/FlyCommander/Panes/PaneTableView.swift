@@ -374,8 +374,14 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
     /// 清其余标记）。"打开/打开方式/预览/编辑/重命名"按单项目（右键命中的那一项）。
     /// 远端源禁用"打开方式/显示在 Finder/共享"（无本地 url、无默认程序关联）；
     /// "打开"对远端文件仍可用（router.onOpen 下载后开）。
+    ///
+    /// **坐标必须用 `tableView.convert`**：`event.locationInWindow` 要解析成 tableView 的
+    /// 行号，而 tableView 是 flipped 且嵌在带滚动偏移的 clipView 里，坐标系与外层
+    /// PaneTableView（非 flipped）完全不同。用 `self.convert`（= PaneTableView 坐标系）
+    /// 会把 window 点解析成错误的显示行（探针实证：右键第 5 行算成第 12 行）——表现为
+    /// 「选中乱跳」，小目录里靠下的行更会解析到越界行触发 `guard` 返回 nil「菜单不弹」。
     override func menu(for event: NSEvent) -> NSMenu? {
-        let row = tableView.row(at: convert(event.locationInWindow, from: nil))
+        let row = tableView.row(at: tableView.convert(event.locationInWindow, from: nil))
         guard row >= 0, row < displayIDs.count, let item = pane.itemByID[displayIDs[row]] else { return nil }
         window?.makeFirstResponder(self)
         if workspace.active != id { workspace.activate(id) }

@@ -391,4 +391,130 @@ final class PaneTableViewTests: XCTestCase {
         // 空表
         XCTAssertEqual(PaneTableView.targetSelectionIndex(displayIDs: [], items: [], focusID: nil, delta: 1), 0)
     }
+
+    // MARK: - 右键坐标回归（真窗）
+
+    /// 真窗 + 真右键事件：右键落在**非首行**的显示行 → 菜单非 nil，且焦点（= 菜单目标项）
+    /// 落在**被右键的那一行**，不是别的行。
+    ///
+    /// 根因：`menu(for:)` 须用 `tableView.convert`（tableView 是 flipped + 有滚动偏移，
+    /// 坐标系 ≠ 外层 PaneTableView）。旧代码用 `self.convert`（= PaneTableView 坐标系）
+    /// 把 window 点解析成**错误的显示行**。
+    ///
+    /// **参数是探针实证的「黄金分歧配置」**（40 行 / 400 高窗 / targetRow=5）：实测
+    /// `tableView.convert` 解析到第 5 行、`self.convert` 解析到第 12 行。参数退化到分歧较小时
+    /// 两坐标系会算出同一行、测试失去捕获力——故下方加「前提自检」显式断言二者分歧。
+    ///
+    /// 变异：把 `tableView.convert(...)` 改回 `convert(...)`（self）→ 焦点断言红（焦点跑到
+    /// 别的行）；小目录里还会因解析越界触发 guard 返回 nil（即用户报的「PDF 目录右键不弹」）。
+    func testContextMenuTargetsRightClickedRowNotAnother() throws {
+        // 造 40 行撑出滚动，对齐探针的黄金配置。
+        for i in 0..<40 {
+            let nm = String(format: "item%02d.txt", i)
+            try "x".write(to: dir.appendingPathComponent(nm), atomically: true, encoding: .utf8)
+        }
+        pane.load(); paneView.reload()
+
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                           styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        win.contentView = host
+        host.addSubview(paneView)
+        NSLayoutConstraint.activate([
+            paneView.topAnchor.constraint(equalTo: host.topAnchor),
+            paneView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            paneView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            paneView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        win.makeKeyAndOrderFront(nil)
+        win.layoutIfNeeded()
+        defer { win.orderOut(nil) }
+
+        let tv = paneView.tableView!
+        // 焦点先钉在第 0 行，好让「右键第 5 行后焦点移到第 5 行」与 bug 版的「焦点乱跑」区分开。
+        pane.setFocus(to: 0)
+
+        let targetRow = 5
+        guard let targetName = cell(atColumn: 0, row: targetRow)?.nameLabel.stringValue,
+              !targetName.isEmpty else {
+            return XCTFail("第 \(targetRow) 显示行未渲染出 cell——布局未就绪")
+        }
+        // 目标行中心的 window 坐标（与真实右键同一坐标）。
+        let rr = tv.rect(ofRow: targetRow)
+        let centerInTV = NSPoint(x: rr.midX, y: rr.midY)
+        let centerInWindow = tv.convert(centerInTV, to: nil)
+
+        // 前提自检:两坐标系对同一点必须算出**不同**行——否则本配置退化、回归失去捕获力
+        // （变异「self.convert」将假绿）。这正是 bug 的全部机理。
+        let rowViaCorrect = tv.row(at: tv.convert(centerInWindow, from: nil))
+        let rowViaBug = tv.row(at: paneView.convert(centerInWindow, from: nil))
+        XCTAssertEqual(rowViaCorrect, targetRow, "正确坐标路须解析到目标行")
+        XCTAssertNotEqual(rowViaBug, targetRow,
+                          "前提自检:self.convert 必须解析到别的行(否则参数退化,测试假绿)")
+
+        let event = NSEvent.mouseEvent(with: .rightMouseDown, location: centerInWindow,
+                                       modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+
+        let menu = paneView.menu(for: event)
+        XCTAssertNotNil(menu, "右键有效行须弹出菜单（bug 版坐标越界会返回 nil）")
+        XCTAssertEqual(pane.focusedItem?.name, targetName,
+                       "菜单目标须是被右键的那一行（bug 版 self.convert 会算错行、把焦点带给别的行）")
+    }
+
+    /// 真窗 + 真右键：在**小目录**（setUp 的 3 行）右键最后一个可见行 → 菜单须非 nil。
+    ///
+    /// 对应用户报的第二症状「在 pdf 文件右键不出现」：`self.convert`（非 flipped 的
+    /// PaneTableView 坐标系）会把靠下的行解析成**越界行号**，触发 `menu(for:)` 里的
+    /// `guard row < displayIDs.count` 直接返回 nil → 菜单不弹。
+    ///
+    /// 这里的分歧由**翻转方向本身**驱动（tableView flipped、PaneTableView 非 flipped），
+    /// 无需滚动偏移即成立：小目录里行数少、可显示区高，`self.convert` 把 y 从底部起算，
+    /// 解析到的行号落到首行之上（-1）→ 越界。下方「前提自检」显式断言这一越界，防止参数退化假绿。
+    ///
+    /// 变异：`menu(for:)` 的 `tableView.convert` 改回 `self.convert` → `XCTAssertNotNil(menu)` 红
+    /// （越界 → guard 返回 nil）。
+    func testContextMenuAppearsOnLastRowOfSmallDir() throws {
+        // setUp 已 load 3 个文件（a.txt / b.dat / z.txt）；直接用这个小目录。
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                           styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        win.contentView = host
+        host.addSubview(paneView)
+        NSLayoutConstraint.activate([
+            paneView.topAnchor.constraint(equalTo: host.topAnchor),
+            paneView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            paneView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            paneView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        win.makeKeyAndOrderFront(nil)
+        win.layoutIfNeeded()
+        defer { win.orderOut(nil) }
+
+        let tv = paneView.tableView!
+        let targetRow = 2  // 最后一行（z.txt）；小目录里靠下，self.convert 最易解析越界
+        guard let targetName = cell(atColumn: 0, row: targetRow)?.nameLabel.stringValue,
+              !targetName.isEmpty else {
+            return XCTFail("第 \(targetRow) 显示行未渲染出 cell——布局未就绪")
+        }
+        let rr = tv.rect(ofRow: targetRow)
+        let centerInWindow = tv.convert(NSPoint(x: rr.midX, y: rr.midY), to: nil)
+
+        // 前提自检:bug 坐标系(self.convert)须解析到**越界**行(不在 0..<rowCount 内)——
+        // 否则本配置退化、「不弹菜单」这一症状无从复现,回归失去捕获力。
+        // 小目录无滚动时实测解析为 -1（y 从底部起算→ 落到首行之上），触发 `guard row >= 0`。
+        let rowCount = tv.numberOfRows
+        let rowViaCorrect = tv.row(at: tv.convert(centerInWindow, from: nil))
+        let rowViaBug = tv.row(at: paneView.convert(centerInWindow, from: nil))
+        XCTAssertEqual(rowViaCorrect, targetRow, "正确坐标路须解析到目标行")
+        XCTAssertFalse((0..<rowCount).contains(rowViaBug),
+                       "前提自检:self.convert 须解析到越界行(否则参数退化,测试假绿)")
+
+        let event = NSEvent.mouseEvent(with: .rightMouseDown, location: centerInWindow,
+                                       modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+        let menu = paneView.menu(for: event)
+        XCTAssertNotNil(menu, "小目录最后一行右键须弹出菜单（bug 版越界 → guard 返回 nil）")
+        XCTAssertEqual(pane.focusedItem?.name, targetName, "菜单目标须是被右键的最后一行")
+    }
 }
