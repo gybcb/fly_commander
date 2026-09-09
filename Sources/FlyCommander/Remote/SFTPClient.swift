@@ -8,6 +8,19 @@ public struct SFTPConnectionConfig: Equatable {
     public enum Auth: Equatable {
         case password(String)
         case keyFile(path: String, passphrase: String? = nil)
+
+        /// AuthKind（持久化层用），由运行时认证类型映射。
+        var keyKind: SFTPConnectionRecord.AuthKind {
+            switch self {
+            case .password: return .password
+            case .keyFile:  return .keyFile
+            }
+        }
+        /// keyFile 认证时的私钥路径（password 认证时为 nil）。
+        var keyPath: String? {
+            if case .keyFile(let path, _) = self { return path }
+            return nil
+        }
     }
 
     public let host: String
@@ -71,6 +84,9 @@ final class SFTPConnection {
     /// 服务器 cp 是否支持 -a（连接级缓存：nil=未知，false=BSD 方言用 -Rp）。
     /// 类盒先例 = ReadCursor：@Sendable 闭包捕获类常量、锁内改属性。
     private let cpFlags = CPSupport()
+    /// 上一次 copyFile 实际走过的路径（锁内写，无锁读——竞态仅影响 UI 展示时机，不影响正确性）。
+    /// 供 TransferEngine 逐文件上报 CopyRoute，让 UI 显示「服务器端复制 / 本机中转（原因）」。
+    private(set) var lastCopyRoute: CopyRoute = .relayed(.channelGone)
 
     init(config: SFTPConnectionConfig, store: SFTPHostKeyStore) throws {
         let authMethod: SSHAuthenticationMethod
@@ -167,6 +183,10 @@ final class SFTPConnection {
     ///
     /// 语义分叉（有意）：同源（服务器端 cp）保留符号链接/权限/时间戳，
     /// 跨源（客户端中转 pump）不保留——保真度以服务器端为基准。
+    ///
+    /// 回退可见化：每次复制把**实际路径与原因**写进 lastCopyRoute（锁内），
+    /// 供 UI 显示「服务器端复制 / 本机中转（原因）」。pump 不是失败——它是
+    /// 受限服务器上的正解路径，只是字节过本机；用户有权知道是哪条。
     func copyFile(from src: String, to dst: String) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -174,21 +194,25 @@ final class SFTPConnection {
             // 阶段 1：exec cp。cpFlags.supportsA 是连接级缓存：不同服务器 cp 方言不同
             // （GNU 有 -a；BSD/macOS 只有 -Rp），首次撞 unknown option 后换 flag 重试。
             let useA = self.cpFlags.supportsA != false
-            var result = await self.runCp(src: src, dst: dst, useA: useA)
-            if case .unknownFlag = result, useA {
+            var outcome = await self.runCp(src: src, dst: dst, useA: useA)
+            if case .relay(.unsupportedFlags) = outcome, useA {
                 self.cpFlags.supportsA = false
-                result = await self.runCp(src: src, dst: dst, useA: false)
+                outcome = await self.runCp(src: src, dst: dst, useA: false)
             }
-            switch result {
-            case .success: return
-            case .cpFailed(let msg):
+            let relayReason: RelayReason
+            switch outcome {
+            case .ok:
+                self.lastCopyRoute = .serverSide
+                return
+            case .fail(let msg):
                 // 命令级失败：不回退（pump 会撞同一错误且诊断更差）。
                 throw TCError.unknown("cp: \(msg)")
-            case .channelGone, .unknownFlag:
-                break   // 落到 pump
+            case .relay(let reason):
+                relayReason = reason
             }
 
             // 阶段 2：回退 pump（原实现逐字保留）。
+            self.lastCopyRoute = .relayed(relayReason)
             let reader = try await self.sftp.openFile(src, flags: [.read])
             let writer = try await self.sftp.openFile(dst, flags: [.write, .create, .truncate])
             do {
@@ -210,13 +234,15 @@ final class SFTPConnection {
     }
 
     /// 在 copyFile 的锁内执行一次远程 cp 并分类结果。**调用方必须已持 lock**。
-    /// execute 抛错（exec 通道被拒/连接死）归为 channelGone → 交 pump 兜底。
+    /// execute 抛错分类逻辑委托 ServerSideCopy.relayReason(for:)：
+    /// - exec 通道被服务器拒绝（ForceCommand=internal-sftp / chroot-only）→ relay(.execRejected)；
+    /// - 其余 throw（连接断/超时/通道关闭等）→ relay(.channelGone)。
     private func runCp(src: String, dst: String, useA: Bool) async -> ServerSideCopy.Result {
         do {
             let r = try await self.conn.execute(ServerSideCopy.command(src: src, dst: dst, useA: useA))
             return ServerSideCopy.classify(exitStatus: r.exitStatus, stderr: ServerSideCopy.stderrText(r))
         } catch {
-            return .channelGone
+            return .relay(ServerSideCopy.relayReason(for: error))
         }
     }
 
@@ -243,13 +269,28 @@ final class SFTPConnection {
 
 // MARK: - 服务器端复制命令（纯函数，可单测）
 
+/// 本次复制**实际走过的路径**（回退可见化用，SFTPConnection.lastCopyRoute）。
+/// pump 不是失败——是受限服务器上的正解，只是字节过本机；用户有权知道是哪条。
+/// public：经 SFTPSource.lastCopyRoute → TransferProgressInfo.route 抵达 UI 层。
+public enum CopyRoute: Equatable {
+    case serverSide               // exec cp 成功（字节不出服务器）
+    case relayed(RelayReason)     // 本机中转（回退 pump），带原因
+}
+
+/// 回退到本机中转 pump 的原因分类。
+public enum RelayReason: Equatable {
+    case execRejected        // exec 通道被服务器拒绝（ForceCommand=internal-sftp / chroot-only）
+    case cpMissing           // 服务器无 cp（exit 127）
+    case unsupportedFlags    // -a/-Rp 都不认（罕见 cp 方言），重试后仍不行
+    case channelGone         // 通道级异常：无 exit 状态 / 空 stderr / execute 其它抛错
+}
+
 enum ServerSideCopy {
-    /// classify 的结果：成功 / cp 命令级失败（带 stderr）/ exec 通道级失败 / cp 不认 flag。
+    /// classify/runCp 的结果：成功 / cp 命令级失败（带 stderr，不回退）/ 回退 pump（带原因）。
     enum Result: Equatable {
-        case success
-        case cpFailed(String)
-        case channelGone
-        case unknownFlag(String)
+        case ok
+        case fail(String)
+        case relay(RelayReason)
     }
 
     /// POSIX 单引号引用：整体包 '…'，内部单引号转成 '\''。
@@ -269,23 +310,42 @@ enum ServerSideCopy {
     }
 
     /// exitStatus → 分类：
-    /// - 0 → success；
+    /// - 0 → ok；
+    /// - 127（cp 不存在）→ relay(.cpMissing)：服务器能力缺失，pump 还能干活；
     /// - nil（通道未报状态）或非零但 stderr 为空（受限 shell 把话说到 stdout 等）→
-    ///   channelGone：无有效诊断可保留，交 pump 兜底；
-    /// - 127（cp 不存在）→ channelGone：服务器能力缺失，与 exec 被拒同类，pump 还能干活；
-    /// - 非零且 stderr 报「不认 flag」→ unknownFlag（上层换 -Rp 重试一次）；
-    /// - 其余非零 → cpFailed（命令真失败，不回退——pump 会撞同一错误且洗掉诊断）。
+    ///   relay(.channelGone)：无有效诊断可保留，交 pump 兜底；
+    /// - 非零且 stderr 报「不认 flag」→ relay(.unsupportedFlags)（上层换 -Rp 重试一次）；
+    /// - 其余非零 → fail（命令真失败，不回退——pump 会撞同一错误且洗掉诊断）。
     static func classify(exitStatus: UInt32?, stderr: String) -> Result {
-        guard let status = exitStatus else { return .channelGone }
-        if status == 0 { return .success }
-        if status == 127 { return .channelGone }
+        guard let status = exitStatus else { return .relay(.channelGone) }
+        if status == 0 { return .ok }
+        if status == 127 { return .relay(.cpMissing) }
         let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if msg.isEmpty { return .channelGone }
+        if msg.isEmpty { return .relay(.channelGone) }
         if (status == 1 || status == 64)
             && (msg.contains("invalid option") || msg.contains("illegal option")) {
-            return .unknownFlag(msg)
+            return .relay(.unsupportedFlags)
         }
-        return .cpFailed(msg)
+        return .fail(msg)
+    }
+
+    /// execute 抛出的错误 → 回退原因。区分「服务器明确不让跑命令」与「连接/通道死了」：
+    /// - .requestFailed / .unsupportedRequest：Traversio 把 SSHConnectionError.channelRequestFailed
+    ///   映射成 code==.requestFailed（ForceCommand=internal-sftp / chroot-only 拒绝 exec 通道请求
+    ///   ——正是本机有流量的现场），归 execRejected（这不是故障，是服务器策略）；
+    /// - .channelOpenFailed：连 session 通道都不给开（最受限服务器），同归 execRejected；
+    /// - 其余（transportClosed/remoteDisconnect/timeout/POSIX…）：连接级异常，归 channelGone。
+    /// 判据经 Traversio SSHClientOperationDiagnostics.wrapConnectionOperationFailure 核对。
+    static func relayReason(for error: Error) -> RelayReason {
+        guard case SSHClientError.operationFailed(let f)? = error as? SSHClientError else {
+            return .channelGone
+        }
+        switch f.code {
+        case .requestFailed, .unsupportedRequest, .channelOpenFailed:
+            return .execRejected
+        default:
+            return .channelGone
+        }
     }
 }
 

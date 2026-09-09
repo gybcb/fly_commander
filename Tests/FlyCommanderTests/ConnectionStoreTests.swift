@@ -237,4 +237,53 @@ final class ConnectionStoreE2ETests: XCTestCase {
         XCTAssertFalse(again.0 === source, "disconnect 后重连应建新的源实例")
         _ = try again.0.stat(TCPath("sftp://127.0.0.1:\(server.port)/"))
     }
+
+    /// T2 e2e：transferSource 返回独立连接，可独立执行 copyItem，
+    /// 且关闭后不影响浏览源。
+    func testTransferSourceReturnsIndependentConnection() throws {
+        // remember: true 使凭据写入 Keychain，transferSource 能回读
+        let rememberRequest = ConnectionRequest(host: "127.0.0.1", port: UInt16(server.port),
+                                                username: server.username, auth: .keyFile,
+                                                keyPath: server.keyPath, secret: server.keyPassphrase,
+                                                remember: true)
+        let (browseSource, _) = try store.connect(rememberRequest)
+        let id = browseSource.sourceID
+        let work = server.remoteBase.path
+
+        // 先在 fixture 工作区写一个源文件
+        let srcPath = TCPath("sftp://127.0.0.1:\(server.port)\(work)/t2_src.txt")
+        var sent = false
+        try browseSource.streamWrite(srcPath, totalBytes: 6) {
+            if sent { return Data() }
+            sent = true
+            return Data("hello!".utf8)
+        }
+
+        // transferSource 应返回独立连接（非 nil，且不同于浏览源实例）
+        guard let transferSrc = store.transferSource(for: id) else {
+            return XCTFail("transferSource 应返回独立 SFTPSource（Keychain 已记住凭据）")
+        }
+        XCTAssertFalse(transferSrc === browseSource, "transferSource 必须是独立实例")
+        XCTAssertEqual(transferSrc.sourceID, browseSource.sourceID, "sourceID 应一致（同源判定用）")
+        XCTAssertEqual(transferSrc.homeDirectory, browseSource.homeDirectory, "home 应复制浏览源值")
+
+        // 用 transferSource 执行 copyItem（独立连接，证明可用）
+        let dstPath = TCPath("sftp://127.0.0.1:\(server.port)\(work)/t2_dst.txt")
+        try transferSrc.copyItem(from: srcPath, to: dstPath)
+        let items = try browseSource.listDirectory(TCPath("sftp://127.0.0.1:\(server.port)\(work)"))
+        let names = Set(items.map(\.name))
+        XCTAssertTrue(names.contains("t2_src.txt"), "源文件应存在")
+        XCTAssertTrue(names.contains("t2_dst.txt"), "copyItem 目标应存在")
+
+        // 关闭 transferSource 不影响浏览源
+        transferSrc.closeConnection()
+        let probe = try browseSource.stat(TCPath("sftp://127.0.0.1:\(server.port)\(work)/t2_src.txt"))
+        XCTAssertNotNil(probe, "transferSource.closeConnection 后浏览源仍应可用")
+    }
+
+    /// 无活动源时 transferSource 应返回 nil。
+    func testTransferSourceWithNoActiveSourceReturnsNil() {
+        XCTAssertNil(store.transferSource(for: "sftp://nonexistent:22"),
+                     "无活动源时应返回 nil")
+    }
 }

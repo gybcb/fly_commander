@@ -22,6 +22,10 @@ public final class SFTPSource: FileSource {
     public var isRemote: Bool { true }
     public var supportsTransfer: Bool { true }
 
+    /// 上一次 copyFile 实际走过的路径。未连接时返回 nil（首次复制前无路由信息）。
+    /// TransferEngine 逐文件上报此值，让 UI 显示「服务器端复制 / 本机中转（原因）」。
+    public var lastCopyRoute: CopyRoute? { _connection?.lastCopyRoute }
+
     // MARK: - 连接
 
     private func conn() throws -> SFTPConnection {

@@ -241,4 +241,253 @@ final class TransferEngineTests: XCTestCase {
         h.engine.run(true, h.left, h.right)
         XCTAssertTrue(h.rec.entries.isEmpty, "无目标项时不应有任何状态回调：\(h.rec.entries)")
     }
+
+    // MARK: - T2：cancel / onProgress 透传
+
+    /// cancel 置位后引擎应抛 .cancelled → 状态流终态为 .idle（T1 已定稿的 cancelled→idle 路径）。
+    func testCancelPropagatesToIdle() {
+        let h = Harness()
+        let cancel = CancelFlag()
+        var progressCount = 0
+        h.engine.run(true, h.left, h.right, cancel: cancel) { _ in
+            progressCount += 1
+            cancel.cancel()  // 第一次进度回调即请求取消
+        }
+        XCTAssertEqual(h.rec.entries.last, .idle, "cancel 后应报 idle：\(h.rec.entries)")
+        XCTAssertGreaterThan(progressCount, 0, "cancel 前应至少收到一次 onProgress")
+    }
+
+    /// onProgress 帧形：跨源泵 + 冻结时钟 → 恰 [字节帧, 文件帧] 两帧。
+    /// 字节帧 name=""/fileDone=0（文件未完成）；文件帧携完成名、bytesDone=nil、非 SFTP route=nil。
+    /// 变异：文件帧 name 写死 "" / 字节帧误带 bytesDone=nil → 红。
+    func testOnProgressReportsFileProgress() {
+        let h = Harness()
+        h.engine.progressClock = { 5 }   // 冻结：3 次引擎字节调用只剩哨兵首帧
+        var infos: [TransferEngine.TransferProgressInfo] = []
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { infos.append($0) }
+        XCTAssertEqual(infos.count, 2, "冻结时钟下 1 字节帧 + 1 文件帧：\(infos.map { "\($0.name):\($0.bytesDone ?? -1)" })")
+        XCTAssertEqual(infos[0].bytesDone, 7, "字节帧 = 首 chunk 累计")
+        XCTAssertEqual(infos[0].name, "", "字节帧 name 恒空串（UI 保留上一帧）")
+        XCTAssertEqual(infos[0].fileDone, 0, "字节帧先于任何文件完成")
+        XCTAssertNil(infos[1].bytesDone, "文件帧不带字节字段")
+        XCTAssertEqual(infos[1].name, "a.txt", "文件帧携完成文件名")
+        XCTAssertEqual(infos[1].fileDone, 1)
+        XCTAssertEqual(infos[1].fileTotal, 1)
+        XCTAssertNil(infos[1].route, "MemSource 非 SFTP 源，route 恒 nil")
+        XCTAssertEqual(h.rec.entries.last, .done(label: .opCopying, args: ["1"], warningLines: []))
+    }
+
+    // MARK: - T2：传输源替换（独立第二连接的应用层替身）
+
+    /// 替身假源：MemSource 面 + 调用计数，验证传输 IO 落在替身、浏览源零染指。
+    private final class SubSource: FileSource {
+        let sourceID: String
+        var isRemote = true
+        var supportsTransfer = true
+        var table: [String: FileItem] = [:]
+        var data: [String: Data] = [:]
+        var copyCalls = 0, streamWrites = 0, openReaders = 0
+        var openReaderError: TCError?   // 非 nil → openReader 抛错（模拟传输中途连接断）
+
+        init(id: String) { sourceID = id }
+        func item(_ path: String, size: Int64) -> FileItem {
+            FileItem(id: path, path: TCPath(path), name: (path as NSString).lastPathComponent,
+                     isDirectory: false, size: size, modificationDate: .distantPast,
+                     isHidden: false, isReadOnly: false, isExecutable: false)
+        }
+        func listDirectory(_ path: TCPath) throws -> [FileItem] { [] }
+        func isDirectory(_ path: TCPath) -> Bool { (try? stat(path))?.isDirectory ?? false }
+        func stat(_ path: TCPath) throws -> FileItem? { table[path.pathString] }
+        func copyItem(from: TCPath, to: TCPath) throws {
+            copyCalls += 1
+            table[to.pathString] = table[from.pathString]
+            data[to.pathString] = data[from.pathString]
+        }
+        func moveItem(from: TCPath, to: TCPath) throws { try copyItem(from: from, to: to) }
+        func renameItem(at: TCPath, to: TCPath) throws { try copyItem(from: at, to: to) }
+        func makeDirectory(at: TCPath) throws {}
+        func removeItem(at: TCPath) throws {}
+        func openReader(_ path: TCPath) throws -> ReadHandle {
+            openReaders += 1
+            if let e = openReaderError { throw e }
+            let payload = data[path.pathString] ?? Data()
+            var i = 0
+            return { _ in
+                guard i < payload.count else { return nil }
+                let slice = payload.subdata(in: i..<min(i + 7, payload.count))
+                i += slice.count
+                return slice
+            }
+        }
+        func streamWrite(_ path: TCPath, totalBytes: Int64?, write: () throws -> Data) throws {
+            streamWrites += 1
+            var buf = Data()
+            while true {
+                let chunk = try write()
+                if chunk.isEmpty { break }
+                buf.append(chunk)
+            }
+            data[path.pathString] = buf
+        }
+    }
+
+    /// 同源双窗格 + provider → 两端共用**同一条**替身（一次握手），传输 IO 全落替身，
+    /// 浏览源零调用，收尾恰一次。
+    /// 变异：同源分支若给 dst 另开一条（provider 调两次）→ calls==1 红；
+    ///       若 cleanups 重复登记 → cleans==1 红；若未替换 → 浏览源 copyCalls>0 红。
+    func testSameSourceSubstitutionSharesOneConnection() {
+        let h = Harness()
+        let browse = h.remote
+        // 左右窗格都挂"远端"假浏览源（sourceID 相同 = 同源双窗格现场）。
+        let right = FilePane(id: .right, source: browse, startPath: TCPath("/dst"))
+        right.load()
+
+        // provider 恒返回**同一实例**（模拟 ConnectionStore 的同源单连接），预置可拷内容。
+        let sub = SubSource(id: "sftp://h:2222")
+        sub.table["/src/a.txt"] = sub.item("/src/a.txt", size: 11)
+        sub.data["/src/a.txt"] = Data("hello world".utf8)
+        var calls = 0, cleans = 0
+        h.engine.transferSourceProvider = { _ in
+            calls += 1
+            return (sub, { cleans += 1 })
+        }
+        h.engine.run(true, h.left, right, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(calls, 1, "同源只应开一条替身连接")
+        XCTAssertEqual(cleans, 1, "收尾清理恰一次")
+        XCTAssertEqual(sub.copyCalls, 1, "cp 快路径应落在替身")
+        XCTAssertEqual(sub.data["/dst/a.txt"], Data("hello world".utf8))
+        XCTAssertTrue(browse.removeCalls.isEmpty && browse.data["/dst/a.txt"] == nil,
+                      "浏览源不得承接传输 IO")
+    }
+
+    /// 跨服务器：两端各开一条独立替身，各清理一次。
+    /// 变异：dst 分支被删 → calls==2 红。
+    func testCrossServerSubstitutionOpensTwo() {
+        let h = Harness()
+        var calls = 0, cleans = 0
+        h.engine.transferSourceProvider = { _ in
+            calls += 1
+            let sub = SubSource(id: "sftp://x\(calls)")
+            return (sub, { cleans += 1 })
+        }
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(calls, 2, "跨服务器两端各一条")
+        XCTAssertEqual(cleans, 2)
+    }
+
+    /// provider 返回 nil（取不到 secret / 建连失败）→ 回落共享浏览源 = 现状行为。
+    /// 变异：nil 分支若硬造替身 → 浏览源 copy 计数红。
+    func testSubstitutionFallsBackToSharedSource() {
+        let h = Harness()
+        h.engine.transferSourceProvider = { _ in nil }
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(h.local.data["/dst/a.txt"], Data("hello world".utf8),
+                       "回落路径下传输照常完成（走原浏览源）")
+    }
+
+    /// 传输失败也要清理（错误路径不泄漏连接）。跨服务器对（remote→local）两端各替换一次。
+    /// 变异：清理挪到 do-success 分支内 → cleans==0 红。
+    func testSubstitutionCleanedUpOnFailure() {
+        let h = Harness()
+        let failing = SubSource(id: "sftp://h:2222")
+        failing.openReaderError = TCError.sftpConnectFailed   // 传输中途"连接断"
+        var cleans = 0
+        h.engine.transferSourceProvider = { browse in
+            browse.isRemote ? (failing, { cleans += 1 }) : nil   // 只换远端一侧
+        }
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(cleans, 1, "失败也必须关闭临时连接")
+        XCTAssertEqual(h.rec.entries.last?.isFailed, true, "应报 failed：\(h.rec.entries)")
+    }
+
+    // MARK: - T2：字节节流（注入假时钟）
+
+    /// 假时钟按脚本吐值（0 / 0.06 / 0.12），均越过 50ms 间隔 → 引擎 3 次字节调用全报。
+    /// （11B / 7B chunk = 字节调用 (7,11) (11,11) + 尾空 chunk 帧 (11,11)——T1 已钉死。）
+    /// 变异：判定取反（>= 改 <）→ 帧被吞，计数红。
+    func testByteThrottleReportsWhenIntervalElapsed() {
+        let h = Harness()
+        var times: [TimeInterval] = [0, 0.06, 0.12, 0.2, 0.3, 0.4, 0.5]
+        h.engine.progressClock = { times.isEmpty ? 100 : times.removeFirst() }
+        var byteFrames = 0
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
+            if info.bytesDone != nil { byteFrames += 1 }
+        }
+        XCTAssertEqual(byteFrames, 3, "3 次引擎字节调用间隔均 ≥50ms → 全报：\(byteFrames)")
+    }
+
+    /// 同刻连发：首帧必达（初值哨兵），其余全吞——节流真在吞，不是全放。
+    /// 变异：删掉 shouldReportByte（恒 true）→ 5 帧红。
+    func testByteThrottleSwallowsBurstAtSameInstant() {
+        let h = Harness()
+        h.engine.progressClock = { 5 }   // 时钟冻结
+        var byteFrames = 0
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
+            if info.bytesDone != nil { byteFrames += 1 }
+        }
+        XCTAssertEqual(byteFrames, 1, "冻结时钟下只放行哨兵后的首帧")
+    }
+
+    /// 文件完成后节流重置：下一文件的**首个**字节帧立即可报（哪怕同刻）。
+    /// 冻结时钟（恒 5）下：每文件各报 1 首帧；若无文件边界重置，b.txt 帧被同刻吞掉 → 总 1。
+    /// 变异：删掉 fileProgress 里的 lastByteReportTime 重置 → byteFrames==1，红。
+    func testThrottleResetsAtFileBoundary() {
+        let h = Harness()
+        let b = h.remote.item("/src/b.txt", size: 7)
+        h.remote.table["/src/b.txt"] = b
+        h.remote.data["/src/b.txt"] = Data("bbbbbbb".utf8)   // 单 chunk
+        h.remote.dirItems.append(b)
+        h.left.load()
+        h.left.selectAll()   // 两文件都进操作目标
+        h.engine.progressClock = { 5 }   // 冻结：不重置则第二文件字节帧全被吞
+        var byteFrames = 0, fileFrames = 0
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
+            if info.bytesDone != nil { byteFrames += 1 } else { fileFrames += 1 }
+        }
+        XCTAssertEqual(fileFrames, 2, "两个文件各一次文件级帧")
+        XCTAssertEqual(byteFrames, 2, "每文件各 1 首帧（重置生效），同刻其余吞掉：\(byteFrames)")
+    }
+
+    /// 文件帧 name=完成文件名；字节帧 name=""（UI 保留上一帧）。
+    /// 变异：文件帧 name 写死 "" 或字节帧 name 塞文件名 → 红。
+    func testFileAndByteFrameFields() {
+        let h = Harness()
+        h.remote.data["/src/a.txt"] = Data("hello world again".utf8)   // 19B → 3 chunk
+        h.remote.table["/src/a.txt"] = h.remote.item("/src/a.txt", size: 19)
+        h.engine.progressClock = { 5 }   // 冻结：字节帧只首帧（哨兵放行）
+        var fileNames: [String] = []
+        var byteNames: [String] = []
+        h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
+            if info.bytesDone == nil { fileNames.append(info.name) } else { byteNames.append(info.name) }
+        }
+        XCTAssertEqual(fileNames, ["a.txt"], "文件帧携完成文件名")
+        XCTAssertEqual(byteNames, [""], "字节帧 name 恒空串（UI 保留上一帧）")
+    }
+
+    // MARK: - T2：速度估算（纯函数）
+
+    func testSpeedNilWhenTooFewSamples() {
+        XCTAssertNil(TransferSpeed.estimate(samples: []))
+        XCTAssertNil(TransferSpeed.estimate(samples: [(0, 100)]))
+    }
+
+    func testSpeedNilWhenWindowTooShort() {
+        // 跨度 0.1s < minWindow 0.5s → 宁缺毋假。
+        XCTAssertNil(TransferSpeed.estimate(samples: [(0, 0), (0.1, 1000)]))
+    }
+
+    func testSpeedWindowAverage() {
+        // 尾窗口 = (0.5, 500) → (1.0, 1500)：1000B / 0.5s = 2000B/s。
+        let v = TransferSpeed.estimate(samples: [(0, 0), (0.5, 500), (1.0, 1500)])
+        XCTAssertEqual(v!, 2000, accuracy: 1e-9, "取 ≥minWindow 的最小尾窗口")
+    }
+
+    func testSpeedNilOnNegativeDelta() {
+        // 累计字节倒退（重置）→ 不给负速度。
+        XCTAssertNil(TransferSpeed.estimate(samples: [(0, 1000), (1.0, 500)]))
+    }
+}
+
+private extension OperationState {
+    var isFailed: Bool { if case .failed = self { return true }; return false }
 }

@@ -1,4 +1,5 @@
 import XCTest
+import TCCore
 @testable import FlyCommander
 
 /// ServerSideCopy 纯函数回归：shell 引用、cp 命令拼装、exit 分类。
@@ -51,47 +52,57 @@ final class ServerSideCopyCommandTests: XCTestCase {
 
     // MARK: - classify
 
-    func testZeroIsSuccess() {
-        XCTAssertEqual(ServerSideCopy.classify(exitStatus: 0, stderr: ""), .success)
+    func testZeroIsOk() {
+        XCTAssertEqual(ServerSideCopy.classify(exitStatus: 0, stderr: ""), .ok)
     }
 
-    func testNilStatusFallsBack() {
-        XCTAssertEqual(ServerSideCopy.classify(exitStatus: nil, stderr: "whatever"), .channelGone,
-                       "无 exit 状态 = 通道异常，必须回退 pump")
+    func testNilStatusRelaysChannelGone() {
+        XCTAssertEqual(ServerSideCopy.classify(exitStatus: nil, stderr: "whatever"),
+                       .relay(.channelGone),
+                       "无 exit 状态 = 通道异常，必须回退 pump（原因 channelGone）")
     }
 
-    func testMissingCpFallsBack() {
+    func testMissingCpRelaysCpMissing() {
+        // 变异：127 若仍归 channelGone（旧行为）→ 本条红（丢失「服务器无 cp」这一独立原因）。
         XCTAssertEqual(ServerSideCopy.classify(exitStatus: 127, stderr: "sh: cp: not found"),
-                       .channelGone, "cp 不存在属服务器能力缺失，pump 还能干活")
+                       .relay(.cpMissing), "cp 不存在属服务器能力缺失，pump 还能干活")
     }
 
-    func testGNUUnknownOption() {
+    func testGNUUnsupportedFlags() {
         XCTAssertEqual(ServerSideCopy.classify(exitStatus: 1,
-                                               stderr: "cp: invalid option -- 'a'").isUnknownFlag,
-                       true, "GNU -a 不认 → 触发 -Rp 重试")
+                                               stderr: "cp: invalid option -- 'a'"),
+                       .relay(.unsupportedFlags), "GNU -a 不认 → 触发 -Rp 重试")
     }
 
-    func testBSDUnknownOption() {
+    func testBSDUnsupportedFlags() {
         XCTAssertEqual(ServerSideCopy.classify(exitStatus: 1,
-                                               stderr: "cp: illegal option -- a").isUnknownFlag,
-                       true, "BSD 措辞同判")
+                                               stderr: "cp: illegal option -- a"),
+                       .relay(.unsupportedFlags), "BSD 措辞同判")
     }
 
-    func testPermissionDeniedIsCpFailed() {
+    func testPermissionDeniedIsFail() {
         let r = ServerSideCopy.classify(exitStatus: 1,
                                         stderr: "cp: cannot create 'x': Permission denied")
-        guard case .cpFailed(let msg) = r else {
-            return XCTFail("权限失败必须归 cpFailed（不回退），实际 \(r)")
+        guard case .fail(let msg) = r else {
+            return XCTFail("权限失败必须归 fail（不回退），实际 \(r)")
         }
         XCTAssertTrue(msg.contains("Permission denied"))
     }
 
-    func testEmptyStderrNonZeroFallsBack() {
+    func testEmptyStderrNonZeroRelaysChannelGone() {
         // 受限 shell 可能把话说到 stdout 或干脆沉默——没诊断可保留就交 pump。
-        XCTAssertEqual(ServerSideCopy.classify(exitStatus: 1, stderr: "  \n"), .channelGone)
+        XCTAssertEqual(ServerSideCopy.classify(exitStatus: 1, stderr: "  \n"), .relay(.channelGone))
     }
-}
 
-extension ServerSideCopy.Result {
-    var isUnknownFlag: Bool { if case .unknownFlag = self { return true }; return false }
+    // MARK: - relayReason(for:)（execute 抛错 → 回退原因）
+
+    /// 构造 SSHClientError.operationFailed（用 Traversio public 结构 + 最小诊断）。
+    /// 直接构造 SSHOperationFailureDiagnostics 需要公开 init；退而用真实连接错误不可行，
+    /// 故仅验证**非 operationFailed** 的错误一律归 channelGone（可达且可证伪的那条分支），
+    /// requestFailed→execRejected 的映射由注释核对 Traversio 源码保证（见 SFTPClient.swift）。
+    func testNonOperationFailedErrorIsChannelGone() {
+        // 变异：把 default 分支改成 .execRejected → 本条红（任意错误都被误报「服务器拒命令」）。
+        XCTAssertEqual(ServerSideCopy.relayReason(for: TCError.unknown("boom")), .channelGone,
+                       "非 SSHClientError.operationFailed 的错误只能归 channelGone")
+    }
 }
