@@ -4,6 +4,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // App icon：xcassets 编译后系统自动加载 AppIcon；SPM 构建走 Bundle 资源兜底。
+        if NSApp.applicationIconImage == nil
+           || NSApp.applicationIconImage?.size == NSSize(width: 0, height: 0) {
+            if let icon = NSImage(named: "AppIcon") {
+                NSApp.applicationIconImage = icon
+            }
+        }
         // 全局关掉 macOS 原生 window tabbing。真正让 Ctrl+Tab / Ctrl+Shift+Tab 落到
         // 我们自己的 TC 式标签切换的是 FlyWindow.sendEvent 的拦截——本 SDK（Xcode 26.6 /
         // macOS 26）下 allowsAutomaticWindowTabbing 与 window.tabbingMode 对 ⌃⇥ 的

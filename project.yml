@@ -32,6 +32,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   FlyCommanderUITests:
     type: bundle.ui-testing
     platform: macOS

@@ -15,7 +15,11 @@ let package = Package(
         .target(name: "TCCore"),
         .executableTarget(name: "FlyCommander",
                           dependencies: ["TCCore",
-                                         .product(name: "Traversio", package: "Traversio")]),
+                                         .product(name: "Traversio", package: "Traversio")],
+                          resources: [
+                              .process("Assets.xcassets"),
+                              .copy("AppIcon.icns"),
+                          ]),
         .testTarget(name: "TCCoreTests",
                     dependencies: ["TCCore"]),
         .testTarget(name: "FlyCommanderTests",
