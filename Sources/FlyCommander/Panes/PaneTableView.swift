@@ -634,6 +634,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         alert.accessoryView = field
         alert.addButton(withTitle: L10n.t(.okBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.rename(to: field.stringValue)
         }
@@ -646,6 +647,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         alert.accessoryView = field
         alert.addButton(withTitle: L10n.t(.createBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.makeDirectory(named: field.stringValue)
         }

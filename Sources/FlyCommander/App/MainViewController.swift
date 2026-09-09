@@ -644,6 +644,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         alert.accessoryView = field
         alert.addButton(withTitle: L10n.t(.okBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.rename(to: field.stringValue)
         }
@@ -656,6 +657,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         alert.accessoryView = field
         alert.addButton(withTitle: L10n.t(.createBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
         if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.makeDirectory(named: field.stringValue)
         }
@@ -670,6 +672,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         alert.addButton(withTitle: L10n.t(.overwriteAll))
         alert.addButton(withTitle: L10n.t(.skipAll))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        // 冲突框：覆盖是第 1 按钮 → ⏎ 默认落「覆盖」（破坏性默认，与 TC/mc 一致）。
+        alert.setDefaultConfirmCancel()
         switch alert.runModal() {
         case .alertFirstButtonReturn: return .overwrite
         case .alertSecondButtonReturn: return .skip
@@ -685,14 +689,14 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
             doRemoteDelete(pane: pane, targets: targets)
             return
         }
-        if targets.count > 1 {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = L10n.t(.trashConfirm, "\(targets.count)")
-            alert.addButton(withTitle: L10n.t(.deleteWord))
-            alert.addButton(withTitle: L10n.t(.cancelBtn))
-            if alert.runModal() != .alertFirstButtonReturn { return }
-        }
+        // 本地删除一律先确认（含单文件）：与远程删除（doRemoteDelete）语义对齐。
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.t(.trashConfirm, "\(targets.count)")
+        alert.addButton(withTitle: L10n.t(.deleteWord))
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
+        if alert.runModal() != .alertFirstButtonReturn { return }
         let urls = targets.map { $0.path.url }
         NSWorkspace.shared.recycle(urls) { [weak self] _, _ in
             DispatchQueue.main.async {
@@ -711,6 +715,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         alert.informativeText = L10n.t(.remoteNoTrash)
         alert.addButton(withTitle: L10n.t(.deleteWord))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
         if alert.runModal() != .alertFirstButtonReturn { return }
 
         let source = pane.source
