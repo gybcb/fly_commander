@@ -6,9 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FlyCommander — a keyboard-first, dual-pane file manager for macOS modeled on Total
 Commander. Swift + AppKit, macOS 14+. Written in Chinese; comments and UI strings are
-Chinese. Personal/local tool (not distributed) — the SFTP path depends on Traversio,
-which is AGPL-3.0; distribution obligations do not apply to this repo, but review the
-license before shipping a derived version.
+Chinese. Open-source on GitHub (public), licensed **AGPL-3.0-or-later** (the app
+statically links Traversio, which is AGPL-3.0-or-later + commercial dual-licensed).
+Releases are built and published by GitHub Actions (tag `v*.*.*` →
+`.github/workflows/release.yml`: xcodegen + xcodebuild Release, arm64-only, ad-hoc
+signed, hdiutil dmg, softprops prerelease) — see README for the notarization-free
+Gatekeeper caveat.
 
 ## Commands
 
