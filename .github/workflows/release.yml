@@ -5,6 +5,11 @@ on:
     tags: ["v*.*.*"]
   # 手动触发 = dry-run：只构建并上传 artifact，release job 由 if 硬闸跳过。
   workflow_dispatch:
+    inputs:
+      version:
+        description: "构建用版本号（不会创建 Release）"
+        default: "0.0.1"
+        required: false
 
 permissions:
   contents: write
