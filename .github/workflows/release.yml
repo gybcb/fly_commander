@@ -80,12 +80,14 @@ jobs:
         run: |
           APP=build/Build/Products/Release/FlyCommander.app
           test -d "$APP"
-          # AGPL：发布包内应含许可文本
-          cp LICENSE "$APP/Contents/Resources/LICENSE"
           # 防版本漂移：产物版本必须等于 tag 解出的版本
           plutil -p "$APP/Contents/Info.plist"
           V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
           [ "$V" = "$VERSION" ] || { echo "版本不符: $V"; exit 1; }
+          # AGPL：发布包内应含许可文本。注意顺序——往已签名 bundle 加文件会破坏
+          # 签名 seal（实测 "a sealed resource is missing or invalid"），必须补文件后重签再校验。
+          cp LICENSE "$APP/Contents/Resources/LICENSE"
+          codesign --force --sign - "$APP"
           codesign --verify --strict --verbose=2 "$APP"
 
       - name: Package dmg
