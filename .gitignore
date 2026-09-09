@@ -7,3 +7,6 @@ xcuserdata/
 
 # local git worktrees (SDD)
 .worktrees/
+
+# CI/本地 Release 构建产物目录 (xcodebuild -derivedDataPath build)
+build/

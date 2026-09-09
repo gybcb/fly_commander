@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: sw_vers && swift --version
+
+      - name: swift build
+        run: swift build
+
+      # 含 local-sshd SFTP e2e 等对环境敏感的集成用例；首版「红不挡门」，
+      # 在 runner 上跑稳 2-3 周后去掉 continue-on-error 收紧为硬门槛。
+      # 注意：XCUITest（真窗口+辅助功能权限）不在 CI 跑，保持本地 Tier-2。
+      - name: swift test
+        continue-on-error: true
+        run: swift test

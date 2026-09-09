@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  # 手动触发 = dry-run：只构建并上传 artifact，release job 由 if 硬闸跳过。
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # tag 名经 env 传入并正则校验（防 script injection：tag 语法上可含引号/分号）
+      - name: Resolve version
+        id: ver
+        env:
+          RAW_REF: ${{ github.ref_name }}
+          DISPATCH_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            V="${RAW_REF#v}"
+          else
+            V="$DISPATCH_INPUT"
+          fi
+          case "$V" in
+            [0-9].[0-9].[0-9]*) ;;
+            *) echo "非法版本号: $V"; exit 1 ;;
+          esac
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Show toolchain
+        run: sw_vers && xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # 显式解析远程包（Traversio），失败信息干净、不混进编译错误
+      - name: Resolve package dependencies
+        run: xcodebuild -resolvePackageDependencies -project FlyCommander.xcodeproj -scheme FlyCommander -derivedDataPath build
+
+      # 版本号用 xcodebuild 位置参数 KEY=VALUE 覆盖（project.yml 里的值只是本地默认）。
+      # ARCHS=arm64：锁死单架构——Release 默认 ARCHS_STANDARD 在 Apple Silicon 上仍含
+      # x86_64，会悄悄产出 universal，与「仅 arm64」决策及 README 安装说明矛盾。
+      # 用 build 而非 test action：结构上不会触发 scheme test 段的 XCUITest。
+      - name: Build (Release, ad-hoc signed, arm64)
+        run: |
+          xcodebuild -project FlyCommander.xcodeproj -scheme FlyCommander \
+            -configuration Release -derivedDataPath build \
+            MARKETING_VERSION=${{ steps.ver.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ steps.ver.outputs.build_number }} \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Verify bundle (license / version / signature)
+        run: |
+          APP=build/Build/Products/Release/FlyCommander.app
+          test -d "$APP"
+          # AGPL：发布包内应含许可文本
+          cp LICENSE "$APP/Contents/Resources/LICENSE"
+          # 防版本漂移：产物版本必须等于 tag 解出的版本
+          plutil -p "$APP/Contents/Info.plist"
+          V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
+          [ "$V" = "${{ steps.ver.outputs.version }}" ] || { echo "版本不符: $V"; exit 1; }
+          codesign --verify --strict --verbose=2 "$APP"
+
+      - name: Package dmg
+        env:
+          DMG_NAME: FlyCommander_${{ steps.ver.outputs.version }}_arm64.dmg
+        run: |
+          STAGE=$(mktemp -d)
+          cp -R build/Build/Products/Release/FlyCommander.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          # hdiutil 在 CI 上偶发 transient 失败 → 重试 3 次
+          for i in 1 2 3; do
+            if hdiutil create -volname FlyCommander -srcfolder "$STAGE" -ov -format UDZO "$DMG_NAME"; then
+              break
+            fi
+            [ "$i" = 3 ] && exit 1
+            sleep 5
+          done
+          ls -lh "$DMG_NAME"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: FlyCommander_*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    if: github.event_name == 'push'   # 手动 dispatch 永不发布 —— dry-run 安全阀
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "FlyCommander Alpha-${VERSION} —— 早期预览版，功能与快捷键仍会变动。"
+            echo
+            echo "## 运行要求"
+            echo "- macOS 14 (Sonoma)+，Apple Silicon (arm64)"
+            echo
+            echo "## 首次打开（重要）"
+            echo "本应用未做 Apple 开发者签名与公证，Gatekeeper 会拦截（提示「已损坏」并非损坏）。"
+            echo "放行方式见 README「安装」一节：System Settings → Privacy & Security → 仍要打开。"
+            echo
+            echo "## 源码与许可证"
+            echo "FlyCommander 以 AGPL-3.0-or-later 授权（静态链接 AGPL 的 Traversio）。"
+            echo "本 Release 的对应源码（可重建本二进制）： https://github.com/${REPO}/tree/${TAG}"
+          } > notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          fail_on_unmatched_files: true   # 产物路径写错 → 报错，不静默空发
+          name: FlyCommander Alpha-${{ needs.build.outputs.version }}
+          prerelease: true
+          body_path: notes.md
