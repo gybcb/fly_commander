@@ -138,6 +138,13 @@ public enum L10nTable {
         .share: "Share", .remoteDownloading: "Downloading…",
         .filterButtonTip: "Filter", .filterPlaceholder: "Filter by name…",
         .filterClearTip: "Clear", .filterMatchCount: "{0}/{1}",
+        .transferring: "Transferring…", .transSpeed: "{0}/s", .transRemaining: "Remaining {0}",
+        .transCancel: "Cancel", .transDone: "Done",
+        .transServerSide: "Server-side copy", .transRelayed: "Relayed via this Mac",
+        .transRelayedExecRejected: "Relayed via this Mac (server disallows remote commands)",
+        .transRelayedCpMissing: "Relayed via this Mac (no cp on server)",
+        .transRelayedUnsupportedFlags: "Relayed via this Mac (cp flags unsupported)",
+        .transRelayedChannelGone: "Relayed via this Mac (channel error)",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -278,5 +285,12 @@ public enum L10nTable {
         .share: "共享", .remoteDownloading: "正在下载…",
         .filterButtonTip: "筛选", .filterPlaceholder: "输入筛选字符…",
         .filterClearTip: "清空", .filterMatchCount: "{0}/{1}",
+        .transferring: "传输中…", .transSpeed: "{0}/秒", .transRemaining: "剩余 {0}",
+        .transCancel: "取消", .transDone: "已完成",
+        .transServerSide: "服务器端复制", .transRelayed: "本机中转",
+        .transRelayedExecRejected: "本机中转（服务器不允许远程命令）",
+        .transRelayedCpMissing: "本机中转（服务器没有 cp 命令）",
+        .transRelayedUnsupportedFlags: "本机中转（服务器 cp 不支持该参数）",
+        .transRelayedChannelGone: "本机中转（命令通道异常）",
     ]
 }

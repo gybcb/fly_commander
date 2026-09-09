@@ -5,7 +5,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     // 隐式解包：本工具链禁止在 loadView 里直接给 `let` 存储属性赋值
     // （workspace/viewOfPane 为 internal 而非 private：接线测试需经 @testable 访问）
     var workspace: Workspace!
-    private var router: CommandRouter!
+    // router 为 internal 而非 private：UICrossCopyDemo.swift（#if DEBUG）跨文件扩展需触发 .copy。
+    var router: CommandRouter!
     private var leftContainer: SidePaneContainer!
     private var rightContainer: SidePaneContainer!
     private var split: NSSplitView!
@@ -14,6 +15,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     private let smbConnectionWindow = SMBConnectionWindowController()
     private let themeWindow = ThemeWindowController()
     private var transferEngine: TransferEngine!
+    /// T3：进度面板生命周期旗——presentTransfer 置位，终态（done/failed/idle）复位。
+    /// 旁路门控：只有为 true 时 OperationState 终态才喂面板（搜索/删除的 done 不误关）。
+    private var transferPanelActive = false
     private var commandBar: CommandLineBar!
     private var commandExecutor: InternalCommandExecutor!
     /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
@@ -121,19 +125,47 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
         // 远端传输：router 检测到任一端 isRemote 时委托后台执行器（主线程不冻结）。
         transferEngine = TransferEngine(engine: engine)
-        transferEngine.state = { [weak self] s in self?.workspace.operationState(s) }
+        // T3：传输器自己的 state 通道喂进度面板（终态收口）——**只挂在这里**而非
+        // workspace 全局通道，搜索/删除等其它 OperationState 来源不会误触面板。
+        transferEngine.state = { [weak self] s in
+            guard let self else { return }
+            self.workspace.operationState(s)
+            guard self.transferPanelActive else { return }
+            switch s {
+            case .done, .failed:
+                TransferProgressWindowController.shared.finish(state: s)
+            default:
+                break   // idle 不裁决（冲突取消也报 idle）——收口交给 onFinished
+            }
+        }
         transferEngine.onFinished = { [weak self] srcPane, dstPane in
             guard let self else { return }
+            // 无条件收尾：done/failed 已 finish 过（ended 幂等），这里只会关掉残留 = 取消路径。
+            if self.transferPanelActive {
+                self.transferPanelActive = false
+                TransferProgressWindowController.shared.finishCancelled()
+            }
             self.reloadPane(srcPane)
             self.reloadPane(dstPane)
             self.updateBars()
         }
         router.onRemoteTransfer = { [weak self] isCopy, src, dst in
+            guard let self else { return }
             // promptOnMain：runModal 只允许主线程（引擎在后台线程逐文件询问）。
-            self?.transferEngine.prompt = TransferEngine.promptOnMain { s, d in
-                self?.promptConflict(s, d) ?? .overwrite
+            self.transferEngine.prompt = TransferEngine.promptOnMain { s, d in
+                self.promptConflict(s, d) ?? .overwrite
             }
-            self?.transferEngine.run(isCopy, src, dst)
+            // T3：进度面板 + 取消旗（per-run；面板经 state 旁路收终态）。
+            let targets = src.operationTargets
+            guard !targets.isEmpty else { return }
+            let cancel = CancelFlag()
+            TransferProgressWindowController.shared
+                .presentTransfer(isCopy: isCopy, fileTotal: targets.count, cancel: cancel)
+            self.transferPanelActive = true
+            self.transferEngine.run(isCopy, src, dst, cancel: cancel) { [weak self] info in
+                guard let self, self.transferPanelActive else { return }
+                TransferProgressWindowController.shared.apply(info)
+            }
         }
 
         // 底部命令栏先建（PaneTableView/SidePaneContainer 需要 commandBar 引用）。
@@ -236,6 +268,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         // 语言切换 → 重刷所有"建一次即常驻"的 UI（整份菜单/列头/命令栏/状态栏）。
         // 回调在 L10n.current 的 setter 内同步触发（菜单动作在主线程 → 重建亦在主线程）。
         l10nToken = L10n.observe { [weak self] in self?.rebuildForLanguage() }
+
+        #if DEBUG
+        // UI 测试钩子（FLY_UI_DEMO=crossCopy 才动）：见 UICrossCopyDemo.swift。
+        DispatchQueue.main.async { [weak self] in self?.maybeStartUICrossCopyDemo() }
+        #endif
     }
 
     /// 语言变更后的全量重刷：重建整份主菜单（MainMenu 为纯静态、可重入），
@@ -259,6 +296,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         smbConnectionWindow.refreshLocalizedText()
         themeWindow.refreshLocalizedText()
         PreviewWindowController.refreshLocalizedTextIfCreated()
+        TransferProgressWindowController.refreshLocalizedTextIfCreated()
         updateBars()
     }
 

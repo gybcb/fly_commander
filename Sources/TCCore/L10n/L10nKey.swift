@@ -83,4 +83,10 @@ public enum L10nKey: String, Hashable, CaseIterable {
     // —— 窗格筛选（TabBar 常驻按钮 + 展开的筛选行）——
     /// filterMatchCount 的两个参数是 **可见数 / 总数**。
     case filterButtonTip, filterPlaceholder, filterClearTip, filterMatchCount
+    // —— 传输进度面板（TransferProgressWindowController）——
+    case transferring, transSpeed, transRemaining, transCancel, transDone
+    /// transServerSide/transRelayed = 副标题（实际传输路径）；
+    /// transRelayedReason 携回退原因成品串（execRejected/cpMissing/…各自的串）。
+    case transServerSide, transRelayed, transRelayedExecRejected, transRelayedCpMissing,
+         transRelayedUnsupportedFlags, transRelayedChannelGone
 }
