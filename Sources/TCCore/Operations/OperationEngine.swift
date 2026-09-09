@@ -8,14 +8,24 @@ public final class OperationEngine {
     // 同源（src.sourceID == dst.sourceID）：走源内快路径（本地 fm / SFTP 服务端 rename）。
     // 跨源：流式传输 src.openReader → dst.streamWrite（64KB 块）；
     //       跨源 move 成功后删源，删源失败不回滚（按取舍记 warn）。
+    //
+    // 进度/取消：
+    // - progress = 文件级 (done, total)；byteProgress = **单文件内** (done, total) 字节数，
+    //   仅跨源流式路径触发（同源 copyItem / exec cp 是服务器/文件系统黑盒，给不了字节）。
+    // - cancel 的生效边界（有意分层，勿"优化"成即时中断）：
+    //   本地/同源 = 文件边界；跨源 pump = 64KB 块边界；exec cp = 等当前文件 cp 自然完成
+    //   （Traversio execute 无 abort API）。取消时已写出的残缺目标文件**不删**（维持现状）。
 
     public func performCopy(_ items: [FileItem], to destDir: TCPath,
                             srcSource: FileSource, dstSource: FileSource,
                             prompt: ConflictPrompt? = nil,
-                            progress: ((Int, Int) -> Void)? = nil) throws {
+                            progress: ((Int, Int) -> Void)? = nil,
+                            byteProgress: ((Int64, Int64) -> Void)? = nil,
+                            cancel: CancelFlag? = nil) throws {
         var overwriteAll = false, skipAll = false
         let total = items.count
         for (i, item) in items.enumerated() {
+            if cancel?.isCancelled == true { throw TCError.cancelled }
             let dst = destDir.joining(item.name)
             if try resolveConflict(item, dst, dstSource: dstSource,
                                    prompt: prompt,
@@ -26,7 +36,8 @@ public final class OperationEngine {
                 try dstSource.copyItem(from: item.path, to: dst)
             } else {
                 try checkCrossSourceDirectory(item)
-                try stream(from: srcSource, to: dstSource, src: item.path, dst: dst)
+                try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
+                           byteProgress: byteProgress, cancel: cancel)
             }
             progress?(i + 1, total)
         }
@@ -38,6 +49,8 @@ public final class OperationEngine {
                             srcSource: FileSource, dstSource: FileSource,
                             prompt: ConflictPrompt? = nil,
                             progress: ((Int, Int) -> Void)? = nil,
+                            byteProgress: ((Int64, Int64) -> Void)? = nil,
+                            cancel: CancelFlag? = nil,
                             onWarning: ((String, TCError) -> Void)? = nil) throws {
         var overwriteAll = false, skipAll = false
         // 同源 move 失败需回滚已完成项；跨源 move 传输成功后不回滚（删源失败只记警告）。
@@ -47,6 +60,8 @@ public final class OperationEngine {
         for (i, item) in items.enumerated() {
             let dst = destDir.joining(item.name)
             do {
+                // 取消检查放在 do **内**：抛 .cancelled 走下方 catch，回滚已完成的同源 move。
+                if cancel?.isCancelled == true { throw TCError.cancelled }
                 // 冲突判定放在 do 内：前置覆盖删除失败（如目标带不可变标志）
                 // 同样要触发回滚，与本地旧路径语义一致。
                 if try resolveConflict(item, dst, dstSource: dstSource,
@@ -59,12 +74,14 @@ public final class OperationEngine {
                     rolledBack.append((from: dst, to: item.path))
                 } else {
                     try checkCrossSourceDirectory(item)
-                    try stream(from: srcSource, to: dstSource, src: item.path, dst: dst)
+                    try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
+                               byteProgress: byteProgress, cancel: cancel)
                     do { try srcSource.removeItem(at: item.path) }
                     catch { onWarning?(item.name, asTCError(error)) }
                 }
             } catch {
-                if case TCError.cancelled = asTCError(error) { throw error }
+                // 含 cancel 抛出的 .cancelled——统一走回滚路径（取消不裸 throw，
+                // 否则已 move 的同源项滞留目标目录）。
                 for pair in rolledBack.reversed() { try? dstSource.moveItem(from: pair.from, to: pair.to) }
                 throw asTCError(error)
             }
@@ -134,13 +151,22 @@ public final class OperationEngine {
         }
     }
 
-    /// 跨源流式复制（64KB 块）。
+    /// 跨源流式复制（64KB 块）。字节进度在 reader 闭包内累加（协议零改动）；
+    /// totalBytes==0（stat 拿不到大小）**不报字节**——宁缺毋假（否则恒 100% 或除零）。
+    /// 取消在块边界生效：抛 .cancelled 使 streamWrite 中止（其错误原样上抛，不静默截断）。
     private func stream(from srcSource: FileSource, to dstSource: FileSource,
-                        src: TCPath, dst: TCPath) throws {
+                        src: TCPath, dst: TCPath,
+                        byteProgress: ((Int64, Int64) -> Void)? = nil,
+                        cancel: CancelFlag? = nil) throws {
         let totalBytes = Int64((try? srcSource.stat(src))?.size ?? 0)
         let reader = try srcSource.openReader(src)
+        var transferred: Int64 = 0
         try dstSource.streamWrite(dst, totalBytes: totalBytes) {
-            (try reader(64 * 1024)) ?? Data()   // 读失败沿闭包 throw 上抛，不静默截断
+            if cancel?.isCancelled == true { throw TCError.cancelled }
+            guard let chunk = try reader(64 * 1024) else { return Data() }   // 读失败沿闭包 throw 上抛
+            transferred += Int64(chunk.count)
+            if totalBytes > 0 { byteProgress?(transferred, totalBytes) }
+            return chunk
         }
     }
 

@@ -278,4 +278,117 @@ final class OperationEngineRoutingTests: XCTestCase {
         }
         XCTAssertEqual(b.removeCalls, ["/s/ok.txt", "/s/locked.txt"])   // 两项都尝试删
     }
+
+    // MARK: - 字节进度（跨源流式独有）
+
+    private func sizedItem(_ name: String, in dir: String, size: Int64) -> FileItem {
+        FileItem(id: dir + "/" + name, path: TCPath(dir + "/" + name),
+                 name: name, isDirectory: false, size: size,
+                 modificationDate: .distantPast, isHidden: false,
+                 isReadOnly: false, isExecutable: false)
+    }
+
+    /// 逐 chunk 精确序列（钉死不变量：跨源字节进度在 reader 闭包内累加）。
+    /// 变异：去掉累加 / 累加 writer 返回值 → 序列红。
+    func testByteProgressExactSequence() throws {
+        a.statTable["/s/f.txt"] = sizedItem("f.txt", in: "/s", size: 11)
+        a.readerChunks = [Data([0xAA]), Data([0xBB]), Data([0xCC])]
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeItem("f.txt", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertEqual(seen, ["1/11", "2/11", "3/11"])
+    }
+
+    /// stat 拿不到大小（totalBytes==0）→ 宁缺毋假，不报字节。
+    /// 变异：删掉 totalBytes>0 守卫 → 本条红（出现 (n,0) 假进度）。
+    func testByteProgressSilentWhenSizeUnknown() throws {
+        a.readerChunks = [Data("hello".utf8)]
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeItem("f.txt", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertTrue(seen.isEmpty, "total=0 不得报字节进度：\(seen)")
+    }
+
+    /// 同源 copyItem（服务器端 cp / 本地 fm）是黑盒 → 不触发 byteProgress。
+    /// 变异：给同源分支加假 byteProgress → 本条红。
+    func testByteProgressNotFiredOnSameSourceCopy() throws {
+        a.readerChunks = [Data("x".utf8)]
+        var seen = 0
+        _ = try engine.performCopy([fakeItem("a.txt", in: "/d")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: a,
+                                   byteProgress: { _, _ in seen += 1 })
+        XCTAssertEqual(a.copyCalls.count, 1)
+        XCTAssertEqual(seen, 0)
+    }
+
+    // MARK: - 取消（CancelFlag）
+
+    /// 文件边界取消：置位后第一项都不做（IO 全零）。
+    /// 变异：去掉循环入口检查 → copyCalls/streamWrites 非空红。
+    func testCancelBeforeFirstFileDoesNoIO() throws {
+        let flag = CancelFlag()
+        flag.cancel()
+        XCTAssertThrowsError(
+            try engine.performCopy([fakeItem("f.txt", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b, cancel: flag)
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+        XCTAssertTrue(a.copyCalls.isEmpty && a.openReaders.isEmpty && b.streamWrites.isEmpty)
+    }
+
+    /// 多文件中途取消：第二项开始边界生效（第一项完成，后续零 IO）。
+    /// 变异：检查点挪到循环尾 → 两项都被执行红。
+    func testCancelTakesEffectAtNextFileBoundary() throws {
+        a.statTable["/s/1.txt"] = fakeItem("1.txt", in: "/s")   // 无 dst → 无冲突删除
+        let flag = CancelFlag()
+        var progressCount = 0
+        XCTAssertThrowsError(
+            try engine.performCopy([fakeItem("1.txt", in: "/s"), fakeItem("2.txt", in: "/s")],
+                                   to: TCPath("/d"), srcSource: a, dstSource: a,
+                                   progress: { _, _ in
+                                       progressCount += 1
+                                       if progressCount == 1 { flag.cancel() }
+                                   },
+                                   cancel: flag)
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+        XCTAssertEqual(a.copyCalls.map(\.a), ["/s/1.txt"], "第二项不得开工")
+    }
+
+    /// pump 块边界取消：byteProgress 回调里置位（模拟 UI 线程），流在下一次拉块时中止；
+    /// streamWrite 被中止（未 append 完整记录），后续 chunk 未读。
+    /// 变异：去掉 write 闭包里的 cancel 检查 → 全量读完后正常返回，红。
+    func testCancelMidStreamStopsAtChunkBoundary() throws {
+        a.statTable["/s/big.bin"] = sizedItem("big.bin", in: "/s", size: 30)
+        a.readerChunks = [Data("aaaaaaaaaa".utf8), Data("bbbbbbbbbb".utf8), Data("cccccccccc".utf8)]
+        let flag = CancelFlag()
+        var chunksSeen = 0
+        XCTAssertThrowsError(
+            try engine.performCopy([fakeItem("big.bin", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   byteProgress: { _, _ in
+                                       chunksSeen += 1
+                                       if chunksSeen == 1 { flag.cancel() }
+                                   },
+                                   cancel: flag)
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+        XCTAssertEqual(chunksSeen, 1, "第二块不得再进进度回调")
+        XCTAssertTrue(b.streamWrites.isEmpty, "中止的写不得落成完整记录")
+    }
+
+    /// move 文件边界取消：第一项 move 完成后置位，第二项入口检查抛 .cancelled，
+    /// 且**已 move 的第一项回滚回源目录**（取消检查必须在 do 内才走 catch 回滚路径）。
+    /// 变异：检查挪到 do 外（裸 throw）→ 不回滚，moveCalls==1 红。
+    func testCancelInMoveRollsBackCompletedMoves() throws {
+        let flag = CancelFlag()
+        let items = [fakeItem("1.txt", in: "/s"), fakeItem("2.txt", in: "/s")]
+        XCTAssertThrowsError(
+            try engine.performMove(items, to: TCPath("/d"), srcSource: b, dstSource: b,
+                                   progress: { _, _ in flag.cancel() },   // 第一项完成即取消
+                                   cancel: flag)
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+        XCTAssertEqual(b.moveCalls.count, 2, "一次正向 + 一次回滚")
+        XCTAssertEqual(b.moveCalls[0], Pair(a: "/s/1.txt", b: "/d/1.txt"))
+        XCTAssertEqual(b.moveCalls[1], Pair(a: "/d/1.txt", b: "/s/1.txt"))
+    }
 }
