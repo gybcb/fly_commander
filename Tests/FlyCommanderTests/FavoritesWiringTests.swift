@@ -40,8 +40,9 @@ final class FavoritesMenuBuildTests: XCTestCase {
     private let favA = DirectoryFavorite(sourceID: "local", path: "/a", displayName: "A")
     private let favB = DirectoryFavorite(sourceID: "local", path: "/b", displayName: "B")
 
-    /// 空收藏：仅剩底部切换项（标题「收藏当前目录」、无 ✓）。
-    /// 变异：删 `if !favorites.isEmpty` 守卫 → 多一条 separator 红；toggle 状态写死 .on 红。
+    /// 空收藏：仅剩底部切换项（标题「收藏当前目录」、无 ✓、无快捷键）。
+    /// 变异：删 `if !favorites.isEmpty` 守卫 → 多一条 separator 红；toggle 状态写死 .on 红；
+    /// toggle 误挂 keyEquivalent → 末行红（切换项恒不编号，无数字键可达，靠鼠标点击）。
     func testEmptyFavoritesYieldsOnlyToggleItem() {
         let menu = FavoritesMenu.build(side: .left, isCurrentFavorited: false, favorites: [],
                                        target: probe,
@@ -50,23 +51,26 @@ final class FavoritesMenuBuildTests: XCTestCase {
         XCTAssertEqual(menu.items.count, 1)
         XCTAssertEqual(menu.items[0].title, L10n.t(.addFavorite))
         XCTAssertEqual(menu.items[0].state, .off)
+        XCTAssertEqual(menu.items[0].keyEquivalent, "", "切换项不得占用数字键")
+        // 切换项无数字键、弹出也无默认高亮（spike 三路全灭）——靠鼠标点击到达。
         guard case let .toggleCurrent(side)? = (menu.items[0].representedObject as? PayloadHolder)?.payload else {
             return XCTFail("底部项须挂 toggleCurrent payload")
         }
         XCTAssertEqual(side, .left, "payload 须携带发起侧（非活动侧 🔽 跳自己侧）")
     }
 
-    /// 非空：收藏项原序在前 → separator → 切换项标题翻「取消收藏」且带 ✓。
-    /// 变异：remove/add 标题三元写反 → 两条 title 断言红；separator 漏加 → count 红。
+    /// 非空：编号收藏项原序在前 → separator → 切换项标题翻「取消收藏」且带 ✓。
+    /// 变异：remove/add 标题三元写反 → 两条 title 断言红；separator 漏加 → count 红；
+    /// 编号 off-by-one（"0."/"1."）→ items[0].title 红。
     func testPopulatedMenuOrderSeparatorAndToggleFlip() {
         let menu = FavoritesMenu.build(side: .right, isCurrentFavorited: true,
                                        favorites: [favB, favA],   // store 序=新在前
                                        target: probe,
                                        jumpAction: #selector(MenuProbe.jump(_:)),
                                        toggleAction: #selector(MenuProbe.toggle(_:)))
-        XCTAssertEqual(menu.items.count, 4, "B、A、separator、toggle")
-        XCTAssertEqual(menu.items[0].title, "B", "显示序=store 序（新在前）")
-        XCTAssertEqual(menu.items[1].title, "A")
+        XCTAssertEqual(menu.items.count, 4, "1. B、2. A、separator、toggle")
+        XCTAssertEqual(menu.items[0].title, "1. B", "编号=显示序（store 新在前）")
+        XCTAssertEqual(menu.items[1].title, "2. A")
         XCTAssertTrue(menu.items[2].isSeparatorItem)
         XCTAssertEqual(menu.items[3].title, L10n.t(.removeFavorite))
         XCTAssertEqual(menu.items[3].state, .on)
@@ -83,6 +87,33 @@ final class FavoritesMenuBuildTests: XCTestCase {
         XCTAssertEqual(menu.items[3].action, #selector(MenuProbe.toggle(_:)))
         for item in [menu.items[0], menu.items[3]] {
             XCTAssertTrue(item.target is MenuProbe)
+            // autoenablesItems 旁路：target/action 齐全才不被系统禁用（禁用项 keyEquiv 不触发）。
+            XCTAssertTrue(item.isEnabled)
+        }
+    }
+
+    /// 数字编号与裸键快捷键结构锁：前 9 条 keyEquivalent="1"…"9" 且 **mask 显式清空**；
+    /// 第 10 条起仅 `N. ` 前缀、无快捷键（store cap=20 超出 1~9 的部分）。
+    /// 变异：忘清 keyEquivalentModifierMask（NSMenuItem 缺省 ⌘）→ mask 断言红；
+    /// 编号界从 idx<9 改成 idx<12 → 第 10 条 keyEquivalent 非空红；标题漏前缀 → 首条红。
+    func testNumberingAndBareKeyEquivalents() {
+        let favs = (1...12).map {
+            DirectoryFavorite(sourceID: "local", path: "/p\($0)", displayName: "P\($0)")
+        }
+        let menu = FavoritesMenu.build(side: .left, isCurrentFavorited: false, favorites: favs,
+                                       target: probe,
+                                       jumpAction: #selector(MenuProbe.jump(_:)),
+                                       toggleAction: #selector(MenuProbe.toggle(_:)))
+        for idx in 0..<9 {
+            let item = menu.items[idx]
+            XCTAssertEqual(item.title, "\(idx + 1). P\(idx + 1)")
+            XCTAssertEqual(item.keyEquivalent, String(idx + 1), "前 9 条挂裸数字快捷键")
+            XCTAssertEqual(item.keyEquivalentModifierMask, [], "mask 必须清空，否则做成 ⌘N")
+        }
+        for idx in 9..<12 {
+            let item = menu.items[idx]
+            XCTAssertEqual(item.title, "\(idx + 1). P\(idx + 1)", "10+ 仍显示序号")
+            XCTAssertEqual(item.keyEquivalent, "", "10+ 无数字快捷键（1~9 之外无键可绑）")
         }
     }
 
@@ -107,8 +138,8 @@ final class FavoritesMenuBuildTests: XCTestCase {
 }
 
 /// 收藏 App 层接线回归（范式同 FilterBarWiringTests #7：SessionStore 注入 + `_ = vc.view`）。
-/// 覆盖：favoritesButton 兄弟视图存活 + performClick、F2 钩子→store 往返+回显、
-/// jump 三分派中可 headless 的两分支（同源自 navigate / 跨源换源）+ 断连提示。
+/// 覆盖：favoritesButton 兄弟视图存活 + performClick、F2 钩子→弹活动侧下拉、
+/// 切换项→store 往返+回显、jump 三分派中可 headless 的两分支（同源自 navigate / 跨源换源）+ 断连提示。
 final class FavoritesWiringTests: XCTestCase {
     private var dirA: URL!, dirB: URL!
     private var suiteName: String!
@@ -140,7 +171,7 @@ final class FavoritesWiringTests: XCTestCase {
         store.saveIfChanged(SessionSnapshot(version: 1, leftPath: dirA.path,
                                             rightPath: dirB.path, active: "left"))
         vc = MainViewController(sessionStore: store, favoritesStore: favStore)
-        _ = vc.view   // loadView：wireFavorites 接 router.onFavorite
+        _ = vc.view   // loadView：wireFavorites 接 router.onOpenFavoritesMenu
     }
 
     override func tearDown() {
@@ -197,20 +228,56 @@ final class FavoritesWiringTests: XCTestCase {
         }
     }
 
-    /// F2 全链：router.execute(.favoriteDirectory) → onFavorite → store 增→删往返 + 状态栏回显。
-    /// 变异：删 wireFavorites 调用 → execute 无钩子，store 空红；
-    /// toggleFavorite 两分支回显串写反 → 两条 status 断言红。
-    func testF2HookTogglesStoreWithStatusEcho() {
+    /// F2 全链（语义已变更）：router.execute(.openFavoritesMenu) → onOpenFavoritesMenu →
+    /// **弹活动侧下拉**（不再直切收藏）。经假呈现器捕获「弹了哪一侧 + 菜单结构对不对」，
+    /// 并负向锁 store 未被改动（证明 F2 不再直接收藏）。
+    /// 变异：wireFavorites 里左右容器对调 → presentedSide 红；改回直切 toggleFavorite →
+    /// presented 仍 nil（呈现器没被调）红；菜单条目与 store 不符 → count 红。
+    func testF2HookOpensFavoritesDropdownOnActiveSide() {
+        // 先给 store 塞两条，使弹出的菜单可见证条目（顺序：新在前）。
+        favStore.add(sourceID: "local", path: dirB.path, displayName: "B")
+        favStore.add(sourceID: "local", path: dirA.path, displayName: "A")
+
+        var presented: (side: PaneID, menu: NSMenu)?
+        vc.favoritesMenuPresenter = { container, menu in
+            presented = (container.side, menu)
+        }
+
+        // 活动侧 = 左（会话快照 active:"left"）。
+        vc.router.execute(.openFavoritesMenu)
+        XCTAssertEqual(presented?.side, .left, "F2 须弹活动侧（左）")
+        // 菜单结构：2 收藏 + separator + toggle = 4 项，且首条为「1. A」（A 新在前）。
+        XCTAssertEqual(presented?.menu.items.count, 4)
+        XCTAssertEqual(presented?.menu.items.first?.title, "1. A")
+
+        // 负向锁：F2 不写 store（旧行为会切换收藏态；现仅弹菜单）。
+        XCTAssertEqual(Set(favStore.all.map { $0.path }), [dirA.path, dirB.path],
+                       "F2 前后 store 不变")
+
+        // 切到右侧后 F2 须弹右侧。
+        presented = nil
+        vc.workspace.switchActive()
+        vc.router.execute(.openFavoritesMenu)
+        XCTAssertEqual(presented?.side, .right, "切窗格后 F2 须弹新活动侧（右）")
+
+        vc.favoritesMenuPresenter = nil   // 复位缺省呈现器
+    }
+
+    /// 菜单内切换项（收藏写入唯一入口）：favoriteToggleCurrentSelected → store 增→删往返 +
+    /// 状态栏回显（原 testF2HookTogglesStoreWithStatusEcho 的 store/回显覆盖迁移至此）。
+    /// 变异：toggleFavorite 两分支回显串写反 → 两条 status 断言红；add/remove 写反 → isFavorited 红。
+    func testToggleItemRoundTripsStoreWithStatusEcho() {
         let label = NSTextField(labelWithString: "")
         vc.attachStatusLabel(label)
-        let pane = vc.workspace.leftTabs.activePane
-        XCTAssertEqual(pane.source.sourceID, "local", "前置：会话恢复为本地源")
+        // 活动侧=左（dirA），切换项 payload 带 .left → 切 dirA。
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.representedObject = PayloadHolder(.toggleCurrent(side: .left))
 
-        vc.router.execute(.favoriteDirectory)
+        vc.favoriteToggleCurrentSelected(item)
         XCTAssertTrue(favStore.isFavorited(sourceID: "local", path: dirA.path))
         XCTAssertEqual(label.stringValue, L10n.t(.favoriteAdded))
 
-        vc.router.execute(.favoriteDirectory)   // 再按 = 取消
+        vc.favoriteToggleCurrentSelected(item)   // 再点 = 取消
         XCTAssertFalse(favStore.isFavorited(sourceID: "local", path: dirA.path))
         XCTAssertEqual(label.stringValue, L10n.t(.favoriteRemoved))
     }

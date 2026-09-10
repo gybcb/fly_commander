@@ -12,16 +12,30 @@ enum FavoritesMenu {
     }
 
     /// 构建菜单。favoriteSelected/toggleFavorite 由调用方（VC）实现的 selector。
-    /// 结构：各收藏项（新在前）→ separator →「收藏/取消收藏当前目录」（当前目录已收藏时带 ✓）。
+    /// 结构：各编号收藏项（新在前）→ separator →「收藏/取消收藏当前目录」（当前目录已收藏时带 ✓）。
     /// 空收藏：仅显示底部切换项（首点即建立第一条收藏）。
+    ///
+    /// 编号与数字跳转（真窗 spike 实证后定档，见 UITests/FavoritesAndHiddenUITests 类注释）：
+    /// 标题 `N. 名称`，前 9 条另挂裸数字 keyEquivalent（mask 必显式清空——NSMenuItem 缺省
+    /// mask 是 ⌘，不清等于做成 ⌘N）。**实测：弹出菜单的 tracking loop 对裸键走 type-select
+    /// （按标题首字符前缀匹配 → 高亮该条），不触发 keyEquivalent**（A 案判负）；子类化 NSMenu
+    /// 覆写 performKeyEquivalent 也拿不到裸键（tracking loop 根本不调它，C 案判负）。故最终
+    /// 落 **B 档：按数字 → type-select 高亮对应条目 → 回车跳转**（非「按下即跳」）。keyEquivalent
+    /// 保留：它在菜单右列显示数字提示（视觉锚点），且 mask 空不与命令行栏/主菜单冲突。
+    /// 10~20 条（store cap 超出 1~9）仅显示序号，无键可绑。裸数字仅在菜单打开时可达——
+    /// keyEquivalent 全局扫描只扫主菜单，本菜单是 popUp 出去的游离菜单，关闭态零劫持，
+    /// 窗格焦点时裸数字照常走 type-ahead 字母导航（命令栏仅右箭头激活）。切换项不编号、
+    /// keyEquivalent 恒空。
     static func build(side: PaneID,
                       isCurrentFavorited: Bool,
                       favorites: [DirectoryFavorite],
                       target: AnyObject,
                       jumpAction: Selector, toggleAction: Selector) -> NSMenu {
         let menu = NSMenu()
-        for fav in favorites {
-            let item = NSMenuItem(title: fav.displayName, action: jumpAction, keyEquivalent: "")
+        for (idx, fav) in favorites.enumerated() {
+            let key = idx < 9 ? String(idx + 1) : ""
+            let item = NSMenuItem(title: "\(idx + 1). \(fav.displayName)", action: jumpAction, keyEquivalent: key)
+            if !key.isEmpty { item.keyEquivalentModifierMask = [] }
             item.target = target
             item.representedObject = PayloadHolder(.jump(fav, side: side))
             menu.addItem(item)

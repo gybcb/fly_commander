@@ -11,8 +11,8 @@ public final class CommandRouter {
     /// 目录仍走内核 enterFocusedDirectory；文件才发此钩子。空焦点两者皆不发。
     public var onOpen: ((FileItem) -> Void)?
     public var onSearch: ((TCPath, FileSource) -> Void)?
-    /// F2 收藏当前目录（app 层注入）：内核不持收藏夹（零 UserDefaults），只上报活动窗格。
-    public var onFavorite: ((FilePane) -> Void)?
+    /// F2 弹收藏菜单（app 层注入）：内核不持收藏夹（零 UserDefaults），只上报活动窗格。
+    public var onOpenFavoritesMenu: ((FilePane) -> Void)?
     /// 远端传输委托（app 层注入）：复制/移动任一端是远端源且注入了此钩子时，
     /// 交给它后台执行（主线程不阻塞）。未注入或双端皆本地 → 走本地快路径（同步）。
     /// 参数：(isCopy, 活动窗格=源, 另一窗格=目标)。
@@ -60,8 +60,8 @@ public final class CommandRouter {
             if let item = a.focusedItem, !item.isDirectory { onEdit?(item) }
         case .search:
             onSearch?(a.path, a.source)
-        case .favoriteDirectory:
-            onFavorite?(a)
+        case .openFavoritesMenu:
+            onOpenFavoritesMenu?(a)
         case .activateCommandLine:
             // 焦点移到命令栏是视图层职责（router 无 UI）；PaneTableView 直接调
             // commandBar.activate()。此分支仅为穷举 CommandID，不应经 router 触发。

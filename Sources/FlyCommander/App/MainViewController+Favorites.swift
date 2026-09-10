@@ -2,10 +2,13 @@ import AppKit
 import TCCore
 
 /// 目录收藏的 MainViewController 侧（独立文件防主文件膨胀；同 module extension 先例
-/// = UICrossCopyDemo）。三个入口汇到两处写侧：
-/// - `showFavoritesDropdown`：🔽 箭头 → FavoritesMenu 构建 → popUp（锚定按钮）。
+/// = UICrossCopyDemo）。两个入口汇到同一处呈现：
+/// - `showFavoritesDropdown`：🔽 箭头 **与 F2（router.onOpenFavoritesMenu）共用**——
+///   F2 弹活动侧，🔽 弹自己那侧（可能是非活动侧），二者经同一 presenter。
 /// - `favoriteJumpSelected`：下拉条目 → 同域 navigate / 换域 setSource(活连接) / 断连提示。
-/// - `toggleFavorite(pane:)`：F2（router.onFavorite）与下拉底部切换项共用（收藏⇄取消）。
+/// - `toggleFavorite(pane:)`：下拉底部切换项（收藏⇄取消）。F2 不再直切收藏，
+///   切换动作收进菜单内。弹出菜单**无默认高亮**（预置高亮三路全灭，见 FavoritesMenu
+///   注释的 spike 定档）——切换项靠鼠标点击到达，回车空操作。
 /// 目标侧别在构建菜单时打进 payload（下拉可能来自非活动侧的 🔽——跳自己侧，不抢全局焦点）。
 extension MainViewController {
 
@@ -20,9 +23,16 @@ extension MainViewController {
             target: self,
             jumpAction: #selector(favoriteJumpSelected(_:)),
             toggleAction: #selector(favoriteToggleCurrentSelected(_:)))
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: 0, y: container.tabBar.favoritesButton.bounds.maxY + 2),
-                   in: container.tabBar.favoritesButton)
+        let present = favoritesMenuPresenter ?? { container, menu in
+            // positioning: nil —— 真窗 spike 实证「预置默认高亮」三路全灭：私有 setter 与
+            // KVC 均不可用（headless 探针），popUp(positioning: 切换项) 也不产生高亮
+            // （回车空操作，S3a 判负），且它会把菜单锚到末项改几何。回落 nil：弹出无高亮，
+            // 回车空操作（安全，不会误跳第一条收藏）。
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: container.tabBar.favoritesButton.bounds.maxY + 2),
+                       in: container.tabBar.favoritesButton)
+        }
+        present(container, menu)
     }
 
     @objc func favoriteJumpSelected(_ sender: NSMenuItem) {
@@ -35,9 +45,13 @@ extension MainViewController {
         toggleFavorite(pane: tabGroup(for: side).activePane)
     }
 
-    /// F2（router.onFavorite 注入点）：切换活动窗格当前目录的收藏态。loadView 接完 router 后调一次。
+    /// F2（router.onOpenFavoritesMenu 注入点）：弹**活动侧**收藏下拉——与点活动侧 🔽 完全
+    /// 等价。router 只递来 activePane（TCCore 零 AppKit），用 pane.id 还原容器。loadView 接完 router 后调一次。
     func wireFavorites() {
-        router.onFavorite = { [weak self] pane in self?.toggleFavorite(pane: pane) }
+        router.onOpenFavoritesMenu = { [weak self] pane in
+            guard let self else { return }
+            self.showFavoritesDropdown(in: pane.id == .left ? self.leftContainer : self.rightContainer)
+        }
     }
 
     // MARK: - 写侧

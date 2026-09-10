@@ -7,8 +7,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     var workspace: Workspace!
     // router 为 internal 而非 private：UICrossCopyDemo.swift（#if DEBUG）跨文件扩展需触发 .copy。
     var router: CommandRouter!
-    private var leftContainer: SidePaneContainer!
-    private var rightContainer: SidePaneContainer!
+    /// internal 而非 private：F2 钩子在另一文件的 extension（MainViewController+Favorites）
+    /// 里需按 pane.id 还原容器；private 是文件作用域跨不过去（favoritesStore 同因）。
+    var leftContainer: SidePaneContainer!
+    var rightContainer: SidePaneContainer!
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
     private let connectionWindow = ConnectionWindowController()
@@ -38,6 +40,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     /// 目录收藏夹（internal 而非 private：Favorites 分支在另一文件的 extension 里，
     /// private 是文件作用域跨不过去）。注入点同 sessionStore——测试用空 suite 隔离真实偏好。
     let favoritesStore: DirectoryFavoritesStore
+    /// 收藏下拉的呈现口（缺省 = 真 `menu.popUp`；测试注入假实现断言「F2 链弹了对的那一侧」）。
+    /// 必须声明在主类而非 Favorites extension：Swift 的 extension 不许有存储属性。
+    /// 之所以要这层接缝：popUp 是嵌套跟踪循环，headless 直接触发会阻塞整条测试。
+    var favoritesMenuPresenter: ((SidePaneContainer, NSMenu) -> Void)?
     /// 启动期在 loadView 创建，此后恒非 nil。
     private var recorder: SessionRecorder!
     /// 是否允许写回记忆：显式起始目录 / 参数域禁用 / 注入快照时关闭。
@@ -131,7 +137,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         // 回车/双击落在文件上：默认程序打开（远端先下载到本地缓存，后台）。
         router.onOpen = { [weak self] item in self?.openWithDefault(item) }
         router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
-        wireFavorites()   // F2（favoriteDirectory）→ 切换活动窗格当前目录收藏态
+        wireFavorites()   // F2（openFavoritesMenu）→ 弹活动侧收藏下拉，切换收藏经菜单内建项
         // 警告成品串（"源端残留：X（…）"）在本地化边界组装——内核只给 (文件名, TCError)。
         router.warnFormatter = { name, err in L10n.t(.warnSourceLeftover, name, tcErrorDisplay(err)) }
 

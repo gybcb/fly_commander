@@ -25,7 +25,8 @@ struct DirectoryFavorite: Codable, Equatable {
 
 /// 目录收藏夹持久化（完全仿 ConnectionStore.touchRecent/persistRecent 模板）：
 /// 单例 + 注入 UserDefaults + Codable JSON + 去重前插，cap 20（收藏=用户策展，宽于最近连接）。
-/// 放 AppKit 层——TCCore 零 UserDefaults 纪律；消费者全在 UI（TabBar 箭头下拉 / F2 快捷键）。
+/// 放 AppKit 层——TCCore 零 UserDefaults 纪律；消费者全在 UI（收藏写入唯一入口 = 下拉菜单
+/// 底部切换项；F2 只弹下拉，不再直切）。
 final class DirectoryFavoritesStore {
     static let shared = DirectoryFavoritesStore()
 
