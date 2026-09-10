@@ -224,7 +224,9 @@ final class FlyCommanderUITests: XCTestCase {
     }
 
     func testToolbarButtonsPresent() {
-        for name in ["Copy", "Move", "New Directory", "Delete", "Rename", "Find", "Connect"] {
+        // 变异：从 toolbarDefaultItemIdentifiers 删项 / delegate 对应 case 返回 nil
+        // → 该按钮 AX 缺席 → 本用例红。SPM 侧 MainWindowControllerTests 真窗锁同红面。
+        for name in ["Copy", "Move", "New Directory", "Delete", "Rename", "Find", "Connect", "SMB"] {
             XCTAssertTrue(toolbarButton(name).exists, "工具栏按钮缺失：\(name)")
         }
     }
@@ -285,6 +287,31 @@ final class FlyCommanderUITests: XCTestCase {
         let hostField = conn.textFields.matching(NSPredicate(format: "identifier == 'hostField'")).firstMatch
         XCTAssertTrue(hostField.exists, "主机输入框缺失")
         conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
+    }
+
+    // MARK: - SMB 连接窗（issue #4 入口回归：工具栏 SMB 按钮直达 SMB 窗，不真连）
+
+    func testSMBToolbarButtonOpensSMBWindow() {
+        // 变异证伪（红面映射）：
+        // ① 删 delegate 的 .smbConnect case / 从 default 列表删 .smbConnect →
+        //    首击后 'SMB Connection' 窗永不出现 → waitForExistence 红；
+        // ② item() 的 action 错接到 menuConnect（SFTP）→ 弹出窗 title 是
+        //    'SFTP Connection' → 本用例等 'SMB Connection' 超时红；
+        // ③ SMBConnectionViewController.cancelTapped 的 close() 被改坏
+        //    （删半句/换 no-op）→ 末句 waitForNonExistence 红（关方向零锁补齐）。
+        toolbarButton("SMB").click()
+        let win = app.windows.matching(NSPredicate(format: "title == 'SMB Connection'")).firstMatch
+        XCTAssertTrue(win.waitForExistence(timeout: 5), "SMB 连接窗未弹出（工具栏 SMB 入口失效 → 红）")
+        XCTAssertTrue(win.textFields.matching(NSPredicate(format: "identifier == 'serverField'")).firstMatch.exists,
+                      "SMB 窗主机输入框缺失")
+        // 单例复用不变量：resident SMBConnectionWindowController 第二次 present() 须
+        // 复用同窗。变异=把 MainViewController 的 SMB 窗改成每次点击 new 一个控制器
+        // → 同时存在两扇 'SMB Connection' → count==1 红。
+        toolbarButton("SMB").click()
+        XCTAssertEqual(app.windows.matching(NSPredicate(format: "title == 'SMB Connection'")).count, 1,
+                       "连点两次 SMB 应复用常驻单窗，不得弹第二扇")
+        win.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
+        XCTAssertFalse(win.waitForExistence(timeout: 2), "Cancel 后 SMB 窗应已关闭（关方向闭环）")
     }
 
     // MARK: - 搜索（通配符匹配语义由 core 单测 FileSearcherTests 覆盖）

@@ -13,7 +13,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case menuView, preview, editItem, switchPane, parentDirectory, themeEllipsis
     case menuLanguage
     // —— 工具栏 ——
-    case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarTheme
+    case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarSMB, toolbarTheme
     // —— 窗口标题（各 WindowController）——
     case themeWindowTitle, sftpWindowTitle, smbWindowTitle, searchWindowTitle
     // —— 命令回显（AppKit 层 InternalCommandExecutor）——
