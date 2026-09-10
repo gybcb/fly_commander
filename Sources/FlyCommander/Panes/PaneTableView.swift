@@ -25,7 +25,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     /// display 顺序（item id 列表）：`pane.visibleItemIDs`（无筛选时 = `selection.items`）
     /// 经视图层排序后的投影——筛选态下即「可见 ∩ 已排序」，被筛掉的项不在此列。
-    private var displayIDs: [String] = []
+    /// internal（非 private）：KeyboardNavPerfTests 滚动锁需读焦点行的 display 行号。
+    var displayIDs: [String] = []
     private var sortKey: SortKey = .name
     private var sortDirection: SortDirection = .ascending
     private(set) var isActive = false
@@ -202,20 +203,53 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             : ""
     }
 
-    /// 选择态快路（方向键/空格/单击）：内容未变，只 focus/marks 变。全量 reload 的
-    /// 代价实测 O(N) 重排（2 万项 ≈ 37ms）+ 重建全部可见 cell + main.async 滚动跳
-    /// （"慢半拍"的字面来源）。这里：只重建**可见行**（含焦点行 + 任意标记行，
-    /// selectAll/清空也覆盖）+ **同步** scrollRowToVisible；displayIDs 原样不重排。
-    /// 不可见行的 focus/mark 变化在其滚入时由 viewFor 现取当前选择态自愈，无须预刷。
+    /// 选择态快路（方向键/空格/单击）：内容未变，只 focus/marks 变。两代成本实测
+    /// （真窗 5000 行，50 次 Down，issue #1）：
+    /// ① 全量 reload：O(N) 重排+重建全部可见 cell ≈ 慢半拍；
+    /// ② 上一代修法=对可见行 reloadData(forRowIndexes:)——仍 **223ms/键**：本 SDK 无
+    ///    registerClass → 复用池恒空，reload 把 ~90 个活着的 cell 全丢弃重建
+    ///    （50 键实测 4479 次 init × ~0.26ms + 每格现建 itemByID O(N) 字典）；
+    ///    窄刷 6 格也要 18.9ms——重建成本本身是大头，滚动才是免费的（0.17ms）。
+    /// 本版：覆盖窗 = 可见行 ± 保留边距（实测 NSTableView 的 retention margin ≈ 2 行
+    /// 存活/3 行移除，取 4 行裕量），窗内逐个 **就地 configure 现存 cell**
+    /// （view(atColumn:row:makeIfNecessary:false) 找回；~20µs/格），取不到 cell 的
+    /// 可见行才回退窄刷重建；边距行取不到 cell 直接跳过（本不可见，无须建）。
+    /// displayIDs 原样不重排。
+    /// 自愈合同（评审实测订正）：**仅滚出保留边距被移除的行**在滚入时经 viewFor
+    /// 现取当前选择态自愈；滚出可视区但仍在边距内的格实例**存活且不重问 viewFor**
+    /// → 必须由本函数的 ±4 行覆盖窗一并刷掉，否则陈旧高亮/标记底色残留。
     func refreshSelection() {
         let visible = tableView.rows(in: tableView.visibleRect)
         let columnCount = tableView.tableColumns.count
-        let columns = IndexSet(integersIn: 0..<columnCount)
-        // 可见行须先按当前（未滚动的）选择态重绘，再滚动：新滚入的行由 viewFor 现建，
-        // 天然带正确态；旧焦点行若滚出可视区也无所谓（已重绘为未高亮）。
-        if visible.length > 0 {
-            tableView.reloadData(forRowIndexes: IndexSet(integersIn: visible.location..<visible.location + visible.length),
-                                 columnIndexes: columns)
+        let lo = max(0, visible.location - 4)
+        let hi = min(displayIDs.count, visible.location + visible.length + 4)
+        // itemByID 每次调用都 O(N) 重建字典——必须提到行循环外只做一次。
+        let byID = pane.itemByID
+        var fallback = IndexSet()
+        for row in lo..<hi {
+            guard row < displayIDs.count, let item = byID[displayIDs[row]] else {
+                if visible.contains(row) { fallback.insert(row) }
+                continue
+            }
+            let focused = pane.selection.isFocus(displayIDs[row])
+            let marked = pane.selection.isMarked(displayIDs[row])
+            var inPlace = true
+            for col in 0..<columnCount {
+                guard let cell = tableView.view(atColumn: col, row: row,
+                                                makeIfNecessary: false) as? FileCellView else {
+                    inPlace = false
+                    break
+                }
+                cell.configure(item: item, focus: focused, marked: marked, column: col)
+            }
+            // 边距行取不到格=格不存在（还没滚进来），跳过即可；可见行取不到才需重建。
+            if !inPlace, visible.contains(row) { fallback.insert(row) }
+        }
+        // 须先按当前（未滚动的）选择态刷完，再滚动：新滚入的行由 viewFor 现建，
+        // 天然带正确态；旧焦点行若滚出可视区也无所谓（已刷为未高亮）。
+        if !fallback.isEmpty {
+            tableView.reloadData(forRowIndexes: fallback,
+                                 columnIndexes: IndexSet(integersIn: 0..<columnCount))
         }
         if let focusID = pane.selection.focusID, let row = displayIDs.firstIndex(of: focusID) {
             tableView.scrollRowToVisible(row)   // 同步滚动，不再 main.async
