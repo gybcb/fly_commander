@@ -51,6 +51,7 @@ final class InternalCommandExecutor {
             L10n.t(.helpTabNew),
             L10n.t(.helpTabClose),
             L10n.t(.helpTheme),
+            L10n.t(.helpRefresh),
             L10n.t(.helpLang),
             L10n.t(.helpHelp),
         ].joined(separator: "\n")
@@ -81,6 +82,12 @@ final class InternalCommandExecutor {
         case "smb": return doSMB(cmd.args)
         case "tab": return doTab(cmd.args)
         case "theme": onOpenTheme?(); return L10n.t(.themeOpened)
+        case "refresh":
+            // 与 CommandRouter .refresh 同语义（executor 不持 router，就地内联 reloadPane
+            // 两行）：远端 loadAsync 防网络卡主线程，load 缺省 preserveFocus:true 保焦点。
+            let pane = workspace.activePane
+            if pane.source.isRemote { pane.loadAsync() } else { pane.load() }
+            return L10n.t(.refreshed)
         case "lang": return doLang(cmd.args)
         case "help": return Self.helpText
         default: return L10n.t(.unknownCommand, cmd.name)

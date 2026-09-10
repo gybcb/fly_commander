@@ -226,4 +226,95 @@ final class CommandRouterTests: XCTestCase {
     private func tabGroupRight() -> TabGroup {
         TabGroup(side: .right, panes: [FilePane(id: .right, source: LocalFileSource(), startPath: TCPath(url: rightDir))])
     }
+
+    // MARK: - .refresh（⌃R 手动刷新：重载当前目录且保焦点/筛选）
+
+    /// 外部改了目录内容 → `.refresh` 须让列表反映新内容，且焦点项、筛选文本原样保留。
+    /// 变异：分支改成 `a.load(preserveFocus: false)` → 焦点断言红；
+    /// 分支整个删掉（穷举 switch 编译不过，故实际变异形态=分支体改空操作）→ 新文件不现身红。
+    func testRefreshReloadsAndPreservesFocusAndFilter() throws {
+        let left = workspace.leftTabs.activePane
+        left.setFilter("txt")
+        left.moveFocus(to: 1, mode: .simple)                 // 第二项
+        let focusBefore = left.selection.focusID
+        XCTAssertNotNil(focusBefore, "前置：有焦点项")
+
+        // 模拟外部进程在磁盘上新建文件（绕开 pane 自己的操作路）。
+        try "ext".write(to: leftDir.appendingPathComponent("external.txt"),
+                        atomically: true, encoding: .utf8)
+
+        router.execute(.refresh)
+
+        XCTAssertTrue(left.page?.items.contains { $0.name == "external.txt" } ?? false,
+                      ".refresh 须重载出新文件：\(left.page?.items.map(\.name) ?? [])")
+        XCTAssertEqual(left.selection.focusID, focusBefore, "刷新须保焦点")
+        XCTAssertEqual(left.filterText, "txt", "同目录刷新须保筛选")
+    }
+
+    /// 焦点项被外部删除时刷新：焦点钳到同索引的下一项（不崩、不清零到越界）。
+    /// 变异：load 失败分支/selection.reload 不 clamp → 焦点越界或 nil，本用例红。
+    func testRefreshClampsFocusWhenFocusedItemDeleted() throws {
+        let left = workspace.leftTabs.activePane
+        // 排序后 a.txt 在前（默认按名），焦点在末项 z.txt。
+        left.moveFocus(to: (left.page?.items.count ?? 1) - 1, mode: .simple)
+        let focused = left.focusedItem?.name
+        XCTAssertEqual(focused, "z.txt", "前置：焦点在 z.txt")
+
+        try FileManager.default.removeItem(at: leftDir.appendingPathComponent("z.txt"))
+        router.execute(.refresh)
+
+        XCTAssertFalse(left.page?.items.contains { $0.name == "z.txt" } ?? true,
+                       "z.txt 已删，列表不应仍有")
+        XCTAssertNotNil(left.focusedItem, "焦点项被删后须钳到有效项，不得 nil")
+    }
+
+    /// 远端活动窗格：`.refresh` 必须走 loadAsync（同步 load 会把网络 RTT 卡进主线程）。
+    /// 证法：先挂 onReload 计数 + 快照「execute 返回瞬间」的 page——同步路会让快照变新
+    /// （红），异步路快照仍是旧内容、回调稍后到（绿）。
+    /// 变异：`.refresh` 分支改成裸 `pane.load()` → execute 返回瞬间 page 已是 new.txt → 快照断言红。
+    func testRefreshUsesAsyncLoadForRemotePane() {
+        let remote = FilterRefreshSource(id: "sftp://h:2222")
+        remote.dirs["/r"] = [remoteItem("old.txt")]
+        let rp = FilePane(id: .left, source: remote, startPath: TCPath("/r"))
+        rp.load()
+        XCTAssertEqual(rp.page?.items.map(\.name), ["old.txt"], "前置：初始 old.txt")
+
+        let ws = Workspace(left: TabGroup(side: .left, panes: [rp]),
+                           right: tabGroupRight(), active: .left)
+        let r = CommandRouter(workspace: ws, engine: OperationEngine())
+
+        remote.dirs["/r"] = [remoteItem("new.txt")]          // 外部改远端列表
+        let done = expectation(description: "async reload done")
+        rp.onReload = { _ in done.fulfill() }
+        r.execute(.refresh)
+
+        XCTAssertEqual(rp.page?.items.map(\.name), ["old.txt"],
+                       ".refresh 不得同步阻塞——execute 返回瞬间仍应是旧内容")
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(rp.page?.items.map(\.name), ["new.txt"], "异步回来后须见新内容")
+    }
+}
+
+/// 远端假源：isRemote=true，`listDirectory` 返回可变态 dirs，供 loadAsync 异步路验证。
+private final class FilterRefreshSource: FileSource {
+    let sourceID: String
+    var isRemote = true
+    var dirs: [String: [FileItem]] = [:]
+    init(id: String) { sourceID = id }
+    func listDirectory(_ path: TCPath) throws -> [FileItem] { dirs[path.pathString] ?? [] }
+    func isDirectory(_ path: TCPath) -> Bool { dirs[path.pathString] != nil }
+    func stat(_ path: TCPath) throws -> FileItem? { nil }
+    func copyItem(from: TCPath, to: TCPath) throws {}
+    func moveItem(from: TCPath, to: TCPath) throws {}
+    func renameItem(at: TCPath, to: TCPath) throws {}
+    func makeDirectory(at path: TCPath) throws {}
+    func removeItem(at path: TCPath) throws {}
+    func openReader(_ path: TCPath) throws -> ReadHandle { { _ in nil } }
+    func streamWrite(_ path: TCPath, totalBytes: Int64?, write: @escaping () throws -> Data) throws {}
+}
+
+private func remoteItem(_ name: String) -> FileItem {
+    FileItem(id: "/r/\(name)", path: TCPath("/r/\(name)"), name: name, isDirectory: false,
+             size: 1, modificationDate: .distantPast, isHidden: false,
+             isReadOnly: false, isExecutable: false)
 }

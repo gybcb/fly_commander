@@ -66,6 +66,11 @@ public final class CommandRouter {
             // 焦点移到命令栏是视图层职责（router 无 UI）；PaneTableView 直接调
             // commandBar.activate()。此分支仅为穷举 CommandID，不应经 router 触发。
             break
+        case .refresh:
+            // 手动刷新（⌃R / 命令栏 refresh）：重载活动窗格当前目录。reloadPane 已按
+            // 源分派同步/异步（远端同步 load 会把网络 RTT 卡进主线程），
+            // load/loadAsync 缺省 preserveFocus:true → 焦点/标记/筛选全保留。
+            reloadPane(a)
         }
     }
 

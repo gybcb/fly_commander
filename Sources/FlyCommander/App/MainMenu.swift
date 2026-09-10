@@ -49,6 +49,9 @@ enum MainMenu {
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: L10n.t(.menuView))
         viewMenuItem.submenu = viewMenu
+        // ⌃R 手动刷新：键位避开 ⌘R（重命名，文件菜单）；走菜单 keyEquivalent 路
+        // （焦点在窗内任何控件、含 field editor 都生效，比 KeyDispatcher 裸键路稳）。
+        add(viewMenu, L10n.t(.refresh), #selector(MainViewController.menuRefresh(_:)), "r", target, .control)
         add(viewMenu, L10n.t(.preview), #selector(MainViewController.menuPreview(_:)), "", target)
         add(viewMenu, L10n.t(.editItem), #selector(MainViewController.menuEdit(_:)), "", target)
         add(viewMenu, L10n.t(.switchPane), #selector(MainViewController.menuSwitchPane(_:)), "", target)

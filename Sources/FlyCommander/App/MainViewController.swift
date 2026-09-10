@@ -51,13 +51,19 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     /// 启动期初始 load 进行中：避免把"正在恢复"当作用户操作写回。
     private var isRestoring = false
 
+    /// 目录外部变更自动刷新中枢（每窗格一 FSEvents 流）。工厂可注入（单测塞假源）。
+    /// internal 而非 private：AppDelegate 的 didBecomeActive 兜底要调 refreshAllWatched。
+    let directoryWatcher: DirectoryWatchCoordinator
+
     /// AppDelegate 建窗后注入回链。
     func attachMainWindowController(_ wc: MainWindowController) { mainWindowController = wc }
 
     init(sessionStore: SessionStore = .shared,
-         favoritesStore: DirectoryFavoritesStore = .shared) {
+         favoritesStore: DirectoryFavoritesStore = .shared,
+         watcherFactory: DirectoryEventSourceFactory = FSEventsDirectorySourceFactory()) {
         self.sessionStore = sessionStore
         self.favoritesStore = favoritesStore
+        self.directoryWatcher = DirectoryWatchCoordinator(factory: watcherFactory)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -342,7 +348,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         // 隐藏文件开关的唯一注入点：全部 pane 创建路（loadView 两初生 / newTab /
         // SFTP 连接 / SMB 连接）都经这里，新 pane 必继承当前全局态。
         pane.showHidden = showHiddenFiles
-        pane.onReload = { [weak self] p in self?.refresh(p) }
+        // onReload 尾 = 自动刷新的生命周期单挂点：注册/换路径/注销三合一在此
+        // （navigate/setSource/断连回退的终点必是 load→onReload）。同路径 no-op → 不成环。
+        pane.onReload = { [weak self] p in self?.refresh(p); self?.directoryWatcher.noteReloaded(p) }
         pane.onSelectionChange = { [weak self] p in
             guard let self else { return }
             self.viewOfPane(p)?.refreshSelection()
@@ -431,6 +439,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         let container = (side == .left) ? leftContainer! : rightContainer!
         guard let removed = tab.close(at: index) else { return false }  // 最后一个标签
         container.removeTab(pane: removed)
+        directoryWatcher.stopWatching(removed)   // 关标签 = 注销其 FSEvents 流
         applyActiveState()
         return true
     }
@@ -530,6 +539,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     @objc func menuMoveToOtherPane(_ sender: Any?) { router.execute(.move) }
 
     @objc func menuSearch(_ sender: Any?) { router.execute(.search) }
+
+    /// ⌃R：手动重载活动窗格当前目录（外部改文件的兜底入口）。路由到 TCCore 的
+    /// `.refresh` → reloadPane（本地同步 load / 远端 loadAsync），焦点/标记/筛选保留。
+    @objc func menuRefresh(_ sender: Any?) { router.execute(.refresh) }
 
     /// ⌘⇧F：展开/收起活动窗格的筛选行（与标签条右端常驻按钮同一入口）。
     @objc func menuFilter(_ sender: Any?) {

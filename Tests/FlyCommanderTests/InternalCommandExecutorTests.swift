@@ -122,6 +122,45 @@ final class InternalCommandExecutorTests: XCTestCase {
         for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "smb", "tab", "theme", "lang", "help"] {
             XCTAssertTrue(out?.contains(kw) ?? false, "help 应含 \(kw)：\(out ?? "nil")")
         }
+        XCTAssertTrue(out?.contains("refresh") ?? false, "help 应含 refresh（新命令须入帮助表）")
+    }
+
+    // MARK: - refresh（手动刷新命令栏路）
+
+    /// 本地 `refresh`：重载源当前列表（外部改动现形）+ 回显 refreshed。
+    /// 变异：case "refresh" 删掉 → 回显 unknownCommand 红；
+    /// 分支体删重载行 → 回显正确但列表停留旧内容 → items 断言红。
+    func testRefreshCommandReloadsLocalPaneAndEchoes() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        h.seedLocal(["a.txt", "b.txt"])
+        let src = h.workspace.activePane.source as! StubSource
+        src.dirItems = src.dirItems + [src.item("/L/new.txt")]   // 模拟外部新增
+
+        let out = h.executor.execute(line: "refresh")
+        XCTAssertEqual(out, L10n.t(.refreshed))
+        XCTAssertEqual(Set(h.workspace.activePane.page?.items.map(\.name) ?? []),
+                       ["a.txt", "b.txt", "new.txt"], "refresh 须见新列表")
+    }
+
+    /// 远端活动窗格 `refresh`：必须异步（execute 返回瞬间列表仍旧；回调后才新）。
+    /// 变异：分支改成裸 `pane.load()` → execute 返回瞬间已见 new.txt → 中间断言红。
+    func testRefreshCommandOnRemotePaneIsAsync() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "sftp://h:2222", remote: true), activeRemote: true)
+        h.seedRemote(["old.txt"])
+        let src = h.workspace.activePane.source as! StubSource
+        src.dirItems = [src.item("/R/new.txt")]                  // 外部改远端列表
+
+        let out = h.executor.execute(line: "refresh")
+        XCTAssertEqual(out, L10n.t(.refreshed))
+        XCTAssertEqual(h.workspace.activePane.page?.items.map(\.name), ["old.txt"],
+                       "远端 refresh 不得同步阻塞——execute 返回瞬间仍旧内容")
+
+        let done = expectation(description: "async refresh done")
+        h.workspace.activePane.onReload = { _ in done.fulfill() }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(h.workspace.activePane.page?.items.map(\.name), ["new.txt"])
     }
 
     // MARK: - lang（切换语言）

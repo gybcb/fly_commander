@@ -71,6 +71,12 @@ final class KeyDispatcherTests: XCTestCase {
     func testF2Favorite() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 120, modifiers: []))?.command, .openFavoritesMenu)
     }
+    func testControlRNotDoubleRegistered() {
+        // S2 定档：⌃R 只走菜单 keyEquivalent 路（MainMenu「Refresh」项），KeyDispatcher
+        // 不加 case 15——双路互踩 = 一次按键双触发 reload。变异：dispatcher 加
+        // keyCode 15+.control → refresh 映射 → 本断言红。
+        XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 15, modifiers: [.control])))
+    }
     func testUnknownReturnsNil() {
         XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 50, modifiers: [])))
     }

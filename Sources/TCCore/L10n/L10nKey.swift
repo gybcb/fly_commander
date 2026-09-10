@@ -94,4 +94,6 @@ public enum L10nKey: String, Hashable, CaseIterable {
          favoritesNeedReconnect
     // —— 隐藏文件显隐切换（⌘⇧. 菜单项 + FilePane.showHidden 闸门）——
     case toggleHiddenFiles, hiddenFilesShown, hiddenFilesHidden
+    // —— 手动刷新（View 菜单 ⌃R + 命令栏 refresh；自动刷新的手动兜底）——
+    case refresh, refreshed, helpRefresh
 }

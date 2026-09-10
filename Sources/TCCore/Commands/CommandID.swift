@@ -14,4 +14,6 @@ public enum CommandID: Hashable {
     case cancel
     /// 激活底部命令栏（焦点移到输入框；右箭头触发）。
     case activateCommandLine
+    /// 重载活动窗格当前目录（手动刷新 ⌃R / 命令栏 `refresh`；自动刷新的手动兜底）。
+    case refresh
 }

@@ -66,4 +66,26 @@ final class MainMenuTests: XCTestCase {
         XCTAssertEqual(zh?.state, .on)
         XCTAssertEqual(en?.state, .off)
     }
+
+    /// View ▸ Refresh 键位锁：keyEquivalent=="r" 且 **mask 显式 .control**（⌃R）。
+    /// 双负锁：① 键位是 ⌃R 不是 ⌘R（⌘R 已被文件菜单的重命名占用，撞键=重命名劫持刷新）；
+    /// ② 文件菜单的重命名仍是 ⌘R（刷新没把它挤掉）。
+    /// 变异：MainMenu 里 refresh 项忘传 mask 参数 → 落 add() 缺省 .command → mask 断言红；
+    /// 改成 ⌃⇧R 之类 → mask 含 .shift 红；把 viewMenu 的键位误设 "r"+.command → 与重命名
+    /// 双 ⌘R 撞键，此用例不红（同串），但 UI 实测（S2）+重命名回归会抓。
+    func testRefreshItemIsControlRNotCommandR() throws {
+        L10n.current = .en
+        let main = MainMenu.build(target: NSObject())
+        let view = try XCTUnwrap(submenu(in: main, titled: L10n.t(.menuView)))
+        let refresh = try XCTUnwrap(view.items.first { $0.title == L10n.t(.refresh) }, "View 菜单缺刷新项")
+        XCTAssertEqual(refresh.keyEquivalent, "r")
+        XCTAssertEqual(refresh.keyEquivalentModifierMask, [.control], "刷新须是 ⌃R（防落缺省 ⌘）")
+        XCTAssertEqual(refresh.action, #selector(MainViewController.menuRefresh(_:)))
+
+        // 重命名（文件菜单）保持 ⌘R——刷新用 ⌃R 正是为避开它。
+        let file = try XCTUnwrap(submenu(in: main, titled: L10n.t(.menuFile)))
+        let rename = try XCTUnwrap(file.items.first { $0.title == L10n.t(.rename) })
+        XCTAssertEqual(rename.keyEquivalent, "r")
+        XCTAssertEqual(rename.keyEquivalentModifierMask, [.command])
+    }
 }

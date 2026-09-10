@@ -2,6 +2,8 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
+    private weak var mainViewController: MainViewController?
+    private var activeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // App icon：xcassets 编译后系统自动加载 AppIcon；SPM 构建走 Bundle 资源兜底。
@@ -21,13 +23,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = wc
         if let vc = wc.window?.contentViewController as? MainViewController {
             NSApp.mainMenu = MainMenu.build(target: vc)
-            vc.attachMainWindowController(wc)   // 语言切换时回刷工具栏 label（VC 侧 weak）
+            vc.attachMainWindowController(wc)   // 语言切换时重刷工具栏 label（VC 侧 weak）
+            mainViewController = vc
         }
         wc.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         // 回收上次残留的 /Volumes/FlyCommander/* 挂载（后台跑，不阻塞启动窗；
         // 读取 mount 表→逐个静默 umount，无残留时 no-op）。
         DispatchQueue.global(qos: .utility).async { SMBMountManager().reclaimStale() }
+        // 自动刷新兜底：回到前台时补刷**已注册流**的窗格（只碰本地 fileURL 目录，
+        // 不扩 SFTP/SMB 面，守用户裁决）。兜 FSEvents 队列 overflow 丢事件与
+        // 「目录被删后重建」的失联窗口。observer 持强引用随 delegate 终身（单例生命周期）。
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.mainViewController?.directoryWatcher.refreshAllWatched()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -79,16 +79,23 @@ extension MainViewController {
             pane.navigate(to: fav.tcPath)
             return
         }
+        // 评审 C2：换源后 setSource 内部走 loadAsync，注销（onReload→noteReloaded）要等
+        // 网络回包——RTT 窗口里旧 fileURL 流仍会驱动**同步** load。换源后**同步**补一次
+        // noteReloaded：此刻 path 已是新值，非 fileURL 立即注销（local 分支则立即换挂）。
+        // loadAsync 回包时 onReload 再入一次，同路径 no-op，无害。
         if fav.sourceID == "local" {
             pane.setSource(LocalFileSource(), andPath: fav.tcPath)
+            directoryWatcher.noteReloaded(pane)
             return
         }
         if fav.sourceID.hasPrefix("sftp://"), let live = ConnectionStore.shared.source(for: fav.sourceID) {
             pane.setSource(live, andPath: fav.tcPath)
+            directoryWatcher.noteReloaded(pane)
             return
         }
         if fav.sourceID.hasPrefix("smb://"), let live = SMBConnectionStore.shared.source(for: fav.sourceID) {
             pane.setSource(live, andPath: fav.tcPath)
+            directoryWatcher.noteReloaded(pane)
             return
         }
         setStatus(L10n.t(.favoritesNeedReconnect))

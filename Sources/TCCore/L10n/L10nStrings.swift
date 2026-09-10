@@ -151,6 +151,8 @@ public enum L10nTable {
         .favoritesNeedReconnect: "Not connected — reconnect first",
         .toggleHiddenFiles: "Show Hidden Files", .hiddenFilesShown: "Hidden files shown",
         .hiddenFilesHidden: "Hidden files hidden",
+        .refresh: "Refresh", .refreshed: "Pane refreshed",
+        .helpRefresh: "  refresh              Reload the active pane's directory",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -304,5 +306,7 @@ public enum L10nTable {
         .favoritesNeedReconnect: "连接未建立，请先重连",
         .toggleHiddenFiles: "显示隐藏文件", .hiddenFilesShown: "已显示隐藏文件",
         .hiddenFilesHidden: "已隐藏隐藏文件",
+        .refresh: "刷新", .refreshed: "已刷新窗格",
+        .helpRefresh: "  refresh              重新载入当前窗格目录",
     ]
 }
