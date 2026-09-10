@@ -11,6 +11,8 @@ final class TabBarView: NSView {
     var onCloseTab: ((Int) -> Void)?
     /// 右端常驻筛选按钮：点击展开/收起活动窗格的筛选行。
     var onToggleFilter: (() -> Void)?
+    /// 右端常驻收藏夹按钮：点击弹出目录收藏下拉（跳转 + 收藏/取消收藏当前目录）。
+    var onFavorites: (() -> Void)?
     /// 筛选行当前是否展开（开关态由 SidePaneContainer 同步）。
     var isFilterActive: Bool = false {
         didSet { filterButton.state = isFilterActive ? .on : .off }
@@ -21,6 +23,8 @@ final class TabBarView: NSView {
     /// 常驻筛选按钮：**scroll 的兄弟视图**，绝不入 stack——`rebuild` 开头清空
     /// stack.arrangedSubviews，放进去每次导航都会被销毁。
     private let filterButton = NSButton()
+    /// 常驻收藏夹按钮：与 filterButton 同款兄弟视图纪律（rebuild 不销毁）。
+    let favoritesButton = NSButton()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -51,11 +55,26 @@ final class TabBarView: NSView {
         filterButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(filterButton)
 
+        // 🔽 同理（固定 24pt 宽弃文案，语义走 toolTip）。
+        favoritesButton.title = "🔽"
+        favoritesButton.bezelStyle = .recessed
+        favoritesButton.font = .systemFont(ofSize: 11)
+        favoritesButton.toolTip = L10n.t(.favoritesButtonTip)
+        favoritesButton.setAccessibilityIdentifier("paneFavoritesButton")
+        favoritesButton.target = self
+        favoritesButton.action = #selector(favoritesClicked(_:))
+        favoritesButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(favoritesButton)
+
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: filterButton.leadingAnchor, constant: -4),
+            scroll.trailingAnchor.constraint(equalTo: favoritesButton.leadingAnchor, constant: -4),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            favoritesButton.trailingAnchor.constraint(equalTo: filterButton.leadingAnchor, constant: -4),
+            favoritesButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            favoritesButton.widthAnchor.constraint(equalToConstant: 24),
+            favoritesButton.heightAnchor.constraint(equalToConstant: 18),
             filterButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             filterButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             filterButton.widthAnchor.constraint(equalToConstant: 24),
@@ -100,15 +119,17 @@ final class TabBarView: NSView {
         plus.toolTip = L10n.t(.newTabTip)
         stack.addArrangedSubview(plus)
 
-        // 常驻筛选按钮不在 stack 里，rebuild 不重建它——但 toolTip 在此重刷，
+        // 常驻筛选/收藏按钮不在 stack 里，rebuild 不重建它们——但 toolTip 在此重刷，
         // 语言切换走的正是 rebuild 这条路。
         filterButton.toolTip = L10n.t(.filterButtonTip)
+        favoritesButton.toolTip = L10n.t(.favoritesButtonTip)
     }
 
     @objc private func tabClicked(_ sender: NSButton) { onSwitchTab?(sender.tag) }
     @objc private func closeClicked(_ sender: NSButton) { onCloseTab?(sender.tag) }
     @objc private func plusClicked(_ sender: NSButton) { onNewTab?() }
     @objc private func filterClicked(_ sender: NSButton) { onToggleFilter?() }
+    @objc private func favoritesClicked(_ sender: NSButton) { onFavorites?() }
 
     /// 纯函数：字符级截断（>max 保留前 max-1 字符 + "…"）。供单测。
     static func truncate(_ s: String, max: Int) -> String {

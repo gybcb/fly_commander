@@ -20,10 +20,25 @@ public final class FilePane {
     /// 当前筛选文本（空 = 无筛选）。视图筛选行每键击经 `setFilter` 写入。
     public private(set) var filterText = ""
     private var filter: NameFilter?
-    /// 可见项 id，**存储序**（= `page.items` 顺序）；nil = 无筛选。
-    private var visibleIDs: [String]?
-    /// 可见性门禁用集合；nil = 无筛选（门禁默认放行）。
-    private var visibleIDSet: Set<String>?
+    /// 隐藏文件（点前缀）闸门。**内核缺省 true=全显**（旧行为零扰动）；持久缺省在
+    /// App 层（UserDefaults，缺省 false=隐藏，与 Finder 习惯对齐）。setter 与
+    /// `setFilter` 同款快路：重算可见集 → 剪枝/重定位 → 仅选择态真变才发
+    /// onSelectionChange；绝不发 onReload（那是全量路：重建标签条+会话写回）。
+    /// 新建 pane 不继承——由 App 层在每个 pane 创建点注入当前值。
+    public var showHidden: Bool = true {
+        didSet {
+            guard oldValue != showHidden else { return }
+            recomputeVisibility()
+            let before = selection
+            enforceVisibleInvariants()
+            if before != selection { onSelectionChange?(self) }
+        }
+    }
+    /// 可见项 id，**存储序**（= `page.items` 顺序）；nil = 全放行（旧「显示全部」语义）。
+    /// internal（非 private）：nil-vs-非nil 无公开可观测面，供 @testable 语义锁断言。
+    var visibleIDs: [String]?
+    /// 可见性门禁用集合；nil = 全放行（门禁默认放行）。
+    var visibleIDSet: Set<String>?
 
     public var onReload: ((FilePane) -> Void)?
     /// 选择态变化快路（方向键/空格/单击焦点）：内容（page/selection.items）未变、
@@ -98,14 +113,19 @@ public final class FilePane {
     }
 
     /// 可见集的唯一写入口：**从 `page.items` 派生**（不读 `selection.items`——`load()` 里
-    /// `page =` 早于 `selection.reload`，读 selection 会拿到旧值）。无筛选 → 两者 nil。
+    /// `page =` 早于 `selection.reload`，读 selection 会拿到旧值）。双闸门（隐藏闸 +
+    /// 文本闸）全放行 → 两者 nil（旧「显示全部」语义，消费端 `?? true` 兜底零扰动）；
+    /// 任一闸门生效 → 缓存非 nil，hidden 项绝无兜底泄漏路径。
     private func recomputeVisibility() {
-        guard !filterText.isEmpty, let filter else {
+        let filterActive = !filterText.isEmpty && filter != nil
+        guard filterActive || !showHidden else {
             visibleIDs = nil
             visibleIDSet = nil
             return
         }
-        let ids = (page?.items ?? []).filter { filter.matches($0.name) }.map(\.id)
+        let ids = (page?.items ?? []).filter { item in
+            (showHidden || !item.isHidden) && (!filterActive || filter!.matches(item.name))
+        }.map(\.id)
         visibleIDs = ids
         visibleIDSet = Set(ids)
     }

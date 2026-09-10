@@ -209,6 +209,20 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertTrue(ws.activePane === p1, "nextTab 后活动窗格应为第二标签")
     }
 
+    // MARK: - .favoriteDirectory（F2 → onFavorite 钩子，内核零收藏夹持有）
+
+    /// 变异：删掉 execute 的 `.favoriteDirectory: onFavorite?(a)` 分支 → 钩子永不触发，
+    /// 本用例红；分支传错窗格（如恒传 left）→ 切到右窗格后的断言红。
+    func testFavoriteDirectoryFiresHookWithActivePane() {
+        var received: FilePane?
+        router.onFavorite = { received = $0 }
+        router.execute(.favoriteDirectory)
+        XCTAssertTrue(received === workspace.activePane, "钩子须收到活动窗格（左）")
+        workspace.switchActive()
+        router.execute(.favoriteDirectory)
+        XCTAssertTrue(received === workspace.activePane, "切窗格后再按 → 收到右窗格")
+    }
+
     private func tabGroupRight() -> TabGroup {
         TabGroup(side: .right, panes: [FilePane(id: .right, source: LocalFileSource(), startPath: TCPath(url: rightDir))])
     }

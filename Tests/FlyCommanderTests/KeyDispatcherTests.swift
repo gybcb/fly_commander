@@ -68,6 +68,9 @@ final class KeyDispatcherTests: XCTestCase {
     func testOptionQToggle() {
         XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 12, modifiers: [.option]))?.command, .toggleMark)
     }
+    func testF2Favorite() {
+        XCTAssertEqual(KeyDispatcher.dispatch(KeyInput(keyCode: 120, modifiers: []))?.command, .favoriteDirectory)
+    }
     func testUnknownReturnsNil() {
         XCTAssertNil(KeyDispatcher.dispatch(KeyInput(keyCode: 50, modifiers: [])))
     }

@@ -53,6 +53,8 @@ enum MainMenu {
         add(viewMenu, L10n.t(.editItem), #selector(MainViewController.menuEdit(_:)), "", target)
         add(viewMenu, L10n.t(.switchPane), #selector(MainViewController.menuSwitchPane(_:)), "", target)
         add(viewMenu, L10n.t(.filterButtonTip), #selector(MainViewController.menuFilter(_:)), "f", target, [.command, .shift])
+        // ✓ 态不在这里烙——NSMenuItemValidation（VC.validateMenuItem）在每次菜单打开时刷新。
+        add(viewMenu, L10n.t(.toggleHiddenFiles), #selector(MainViewController.menuToggleHidden(_:)), ".", target, [.command, .shift])
         add(viewMenu, L10n.t(.parentDirectory), #selector(MainViewController.menuGoToParent(_:)), "", target)
         add(viewMenu, L10n.t(.themeEllipsis), #selector(MainViewController.menuTheme(_:)), "", target)
 

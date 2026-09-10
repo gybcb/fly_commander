@@ -89,4 +89,9 @@ public enum L10nKey: String, Hashable, CaseIterable {
     /// transRelayedReason 携回退原因成品串（execRejected/cpMissing/…各自的串）。
     case transServerSide, transRelayed, transRelayedExecRejected, transRelayedCpMissing,
          transRelayedUnsupportedFlags, transRelayedChannelGone
+    // —— 目录收藏夹（DirectoryFavoritesStore + TabBar 箭头下拉）——
+    case favoritesButtonTip, addFavorite, removeFavorite, favoriteAdded, favoriteRemoved,
+         favoritesNeedReconnect
+    // —— 隐藏文件显隐切换（⌘⇧. 菜单项 + FilePane.showHidden 闸门）——
+    case toggleHiddenFiles, hiddenFilesShown, hiddenFilesHidden
 }

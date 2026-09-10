@@ -145,6 +145,12 @@ public enum L10nTable {
         .transRelayedCpMissing: "Relayed via this Mac (no cp on server)",
         .transRelayedUnsupportedFlags: "Relayed via this Mac (cp flags unsupported)",
         .transRelayedChannelGone: "Relayed via this Mac (channel error)",
+        .favoritesButtonTip: "Favorites", .addFavorite: "Favorite Current Directory",
+        .removeFavorite: "Unfavorite Current Directory", .favoriteAdded: "Added to favorites",
+        .favoriteRemoved: "Removed from favorites",
+        .favoritesNeedReconnect: "Not connected — reconnect first",
+        .toggleHiddenFiles: "Show Hidden Files", .hiddenFilesShown: "Hidden files shown",
+        .hiddenFilesHidden: "Hidden files hidden",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -292,5 +298,11 @@ public enum L10nTable {
         .transRelayedCpMissing: "本机中转（服务器没有 cp 命令）",
         .transRelayedUnsupportedFlags: "本机中转（服务器 cp 不支持该参数）",
         .transRelayedChannelGone: "本机中转（命令通道异常）",
+        .favoritesButtonTip: "收藏夹", .addFavorite: "收藏当前目录",
+        .removeFavorite: "取消收藏当前目录", .favoriteAdded: "已加入收藏夹",
+        .favoriteRemoved: "已移出收藏夹",
+        .favoritesNeedReconnect: "连接未建立，请先重连",
+        .toggleHiddenFiles: "显示隐藏文件", .hiddenFilesShown: "已显示隐藏文件",
+        .hiddenFilesHidden: "已隐藏隐藏文件",
     ]
 }

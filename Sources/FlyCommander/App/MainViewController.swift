@@ -1,7 +1,7 @@
 import AppKit
 import TCCore
 
-final class MainViewController: NSViewController, NSSplitViewDelegate {
+final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuItemValidation {
     // 隐式解包：本工具链禁止在 loadView 里直接给 `let` 存储属性赋值
     // （workspace/viewOfPane 为 internal 而非 private：接线测试需经 @testable 访问）
     var workspace: Workspace!
@@ -18,6 +18,12 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// T3：进度面板生命周期旗——presentTransfer 置位，终态（done/failed/idle）复位。
     /// 旁路门控：只有为 true 时 OperationState 终态才喂面板（搜索/删除的 done 不误关）。
     private var transferPanelActive = false
+    /// 隐藏文件全局开关（⌘⇧.）：持久缺省 false=隐藏（Finder 习惯；行为变更经用户确认）。
+    /// 必须用 `bool(forKey:)` 而非 `object as? Bool`：launchArguments 的
+    /// `-showHiddenFiles YES` 落成**字符串** "YES"，`as? Bool` 转不动会静默落缺省
+    /// （XCUITest 定态靠这条路）；bool(forKey:) 认 "YES"/"NO" 等串。写侧 set(Bool)。
+    /// 传播与注入点 = `wirePaneCallbacks`（覆盖 loadView 两初生 pane 与全部新建路）。
+    private var showHiddenFiles: Bool = UserDefaults.standard.bool(forKey: "showHiddenFiles")
     private var commandBar: CommandLineBar!
     private var commandExecutor: InternalCommandExecutor!
     /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
@@ -29,6 +35,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
 
     /// 会话记忆（左右窗格目录 + 活动侧）的持久化门面；可注入（单测/UI 测试用独立 suite）。
     private let sessionStore: SessionStore
+    /// 目录收藏夹（internal 而非 private：Favorites 分支在另一文件的 extension 里，
+    /// private 是文件作用域跨不过去）。注入点同 sessionStore——测试用空 suite 隔离真实偏好。
+    let favoritesStore: DirectoryFavoritesStore
     /// 启动期在 loadView 创建，此后恒非 nil。
     private var recorder: SessionRecorder!
     /// 是否允许写回记忆：显式起始目录 / 参数域禁用 / 注入快照时关闭。
@@ -39,8 +48,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// AppDelegate 建窗后注入回链。
     func attachMainWindowController(_ wc: MainWindowController) { mainWindowController = wc }
 
-    init(sessionStore: SessionStore = .shared) {
+    init(sessionStore: SessionStore = .shared,
+         favoritesStore: DirectoryFavoritesStore = .shared) {
         self.sessionStore = sessionStore
+        self.favoritesStore = favoritesStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -120,6 +131,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         // 回车/双击落在文件上：默认程序打开（远端先下载到本地缓存，后台）。
         router.onOpen = { [weak self] item in self?.openWithDefault(item) }
         router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
+        wireFavorites()   // F2（favoriteDirectory）→ 切换活动窗格当前目录收藏态
         // 警告成品串（"源端残留：X（…）"）在本地化边界组装——内核只给 (文件名, TCError)。
         router.warnFormatter = { name, err in L10n.t(.warnSourceLeftover, name, tcErrorDisplay(err)) }
 
@@ -305,6 +317,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
         container.tabBar.onSwitchTab = { [weak self] i in self?.switchTab(in: side, to: i) }
         container.tabBar.onNewTab = { [weak self] in self?.newTab(in: side) }
         container.tabBar.onCloseTab = { [weak self] i in _ = self?.closeTab(in: side, at: i) }
+        container.tabBar.onFavorites = { [weak self] in self?.showFavoritesDropdown(in: container) }
     }
 
     /// 窗口的初始第一响应者：**活动侧**当前标签的窗格，供 window.initialFirstResponder 使用。
@@ -320,6 +333,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// onReload = 内容变了（列表/导航）走全量；onSelectionChange = 只焦点/标记变了
     /// 走快路（局部重绘 + 同步滚动，不重排 sortedIDs、不重建标签条）。
     private func wirePaneCallbacks(_ pane: FilePane) {
+        // 隐藏文件开关的唯一注入点：全部 pane 创建路（loadView 两初生 / newTab /
+        // SFTP 连接 / SMB 连接）都经这里，新 pane 必继承当前全局态。
+        pane.showHidden = showHiddenFiles
         pane.onReload = { [weak self] p in self?.refresh(p) }
         pane.onSelectionChange = { [weak self] p in
             guard let self else { return }
@@ -512,6 +528,34 @@ final class MainViewController: NSViewController, NSSplitViewDelegate {
     /// ⌘⇧F：展开/收起活动窗格的筛选行（与标签条右端常驻按钮同一入口）。
     @objc func menuFilter(_ sender: Any?) {
         viewOfPane(workspace.activePane)?.toggleFilterRow()
+    }
+
+    /// ⌘⇧.：切换隐藏文件（全局两窗格同步）。逐 pane 赋 showHidden——FilePane didSet
+    /// 自带可见集重算 + 剪枝/重定位 + 快路回调，视图刷新不需要额外全量路。
+    /// 菜单 ✓ 走 validateMenuItem（打开菜单时按当前态刷新，仿语言子菜单）。
+    @objc func menuToggleHidden(_ sender: Any?) {
+        showHiddenFiles.toggle()
+        // UI 测试模式抑制落盘（真窗 ⌘⇧. 用例不污染开发者偏好；内存态照常传播）。
+        if !TestIsolation.suppressPreferenceWrites {
+            UserDefaults.standard.set(showHiddenFiles, forKey: "showHiddenFiles")
+        }
+        for pane in workspace.leftTabs.panes + workspace.rightTabs.panes {
+            pane.showHidden = showHiddenFiles
+        }
+        // 快路（showHidden didSet 只发 onSelectionChange 不发 onReload）下视图不知内核可见集
+        // 变了——必须像语言切换那样手动重投影：visibleItemIDs 已重算，视图 reload 才见 dotfile
+        // 增删。漏这步 = 表格停留在旧可见集（真窗实测：开后 .hidden 不现身）。
+        leftContainer.allPaneViews.forEach { $0.reload() }
+        rightContainer.allPaneViews.forEach { $0.reload() }
+        setStatus(L10n.t(showHiddenFiles ? .hiddenFilesShown : .hiddenFilesHidden))
+    }
+
+    // NSMenuItemValidation 协议方法（非 override）：打开菜单时刷 ✓（仿语言子菜单当前态）。
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(menuToggleHidden(_:)) {
+            menuItem.state = showHiddenFiles ? .on : .off
+        }
+        return true
     }
 
     @objc func menuConnect(_ sender: Any?) { beginConnection() }
