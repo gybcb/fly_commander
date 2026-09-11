@@ -451,6 +451,44 @@ final class FlyCommanderUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertFalse(preview.exists, "Esc 后预览窗应已关闭")
     }
+    /// Esc 关窗主修端到端锁（PDF 路）：打开 PDF 预览后**立即**按 Esc——此刻 PDFKit 后台读
+    /// 还没落定，内容树只有 placeholder 纯色 NSView、无可当选 key view，FR=NSWindow，
+    /// 响应链 cancelOperation 必断（探针 fired=0）。只有窗层 sendEvent 拦截能在这一刻关窗。
+    /// **不许在 Esc 前加 waitFor(PDFView)/sleep**：等完=内容装成 PDFView、响应链又能救活
+    /// =假绿，placeholder 窗口期本身就是要证的时机。
+    /// 变异=删 PreviewWindow.sendEvent 拦截 → Esc 后 preview 仍存在 → 本条红。
+    func testEscapeClosesPDFPreviewImmediately() {
+        focusRowNamed("sample.pdf")
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), "PDF 预览窗未弹出")
+        // 刻意不等 PDFView：window 一存在就按 Esc，正打 placeholder 窗口期。
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(preview.exists, "PDF placeholder 窗口期按 Esc 必须关窗（窗层拦截被删即此红）")
+    }
+
+    /// 主窗 Esc 连带关预览端到端锁（用户拍板）：预览开着，焦点回到主窗文件列表后按 Esc
+    /// → 预览关闭。真实键事件经 PaneTableView.keyDown 的 Esc 分支（裸 Esc+非 repeat →
+    /// closeIfVisible，与 SPM 冒烟的合成 sendEvent 不同链路，端到端坐实"焦点在文件列表
+    /// 也能关预览"）。
+    /// 变异=删 keyDown 的 closeIfVisible 早退 → Esc 走了原 clearMarks、预览仍在
+    /// → 本条红。
+    func testMainWindowEscapeClosesPreview() {
+        focusRowNamed("alpha_small.txt")
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), "预览窗未弹出")
+        focusRowNamed("gamma.txt")   // 焦点回主窗文件列表（FR=PaneTableView）
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(preview.exists, "焦点在文件列表时按 Esc 必须连带关预览")
+    }
+
     /// 回归"大单行文件（1.3MB 一整行）预览只显示横幅、文字区空白"：
     /// 长行截断后文本区必须有内容，且横幅含"长行已截断"说明。
     func testSingleLineLargeTextPreviewRendersContent() {

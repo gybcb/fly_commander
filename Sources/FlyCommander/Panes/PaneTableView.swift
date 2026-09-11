@@ -559,6 +559,26 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     override func keyDown(with event: NSEvent) {
         guard window?.firstResponder === self else { super.keyDown(with: event); return }
+        // 主窗 Esc 连带关预览（用户拍板：预览开着 → 聚焦在文件列表时按 Esc 先关预览窗）。
+        // 三条守卫与预览窗内 Esc 拦截同一合同，两条路不可分叉（评审 wf_52002fb5-560 C-1/C-3）：
+        // - 裸 Esc 才抢：KeyDispatcher 的 case 53 不判修饰，⌘/⌃/⌥/⇧-Esc 在文件列表维持
+        //   **既有** .clearMarks 语义（历史行为不改），只是不拿去关预览——预览窗内带修饰
+        //   Esc 被窗层吞掉，主窗再拿它关预览就是两套合同。
+        // - repeat 消音（isARepeat）：首次按下若已关预览，performClose 同步转交 key window，
+        //   按住不放后续 repeat（~30/秒）落进本刚成为 key 的窗格。与窗层同合同=吞掉：
+        //   首次已消费该键语义，repeat 既不该再关预览，也不该漏回 .clearMarks 把刚承诺
+        //   的「关预览那次不清标记」当场打破；预览没开时 repeat 也不该比单次多清东西。
+        // - 只在 FR=本窗格（本方法首行）时生效：筛选行/命令行的 Esc 是其本地编辑语义，
+        //   由各自 cancelOperation 吞，不经这里 → 不会被预览抢走。
+        if event.keyCode == 53 {   // kVK_Escape
+            // Esc 旧路本会经 KeyDispatcher 认领并清 type-ahead 前缀，这里提前拦也保持同行为。
+            typeAheadBuffer = ""
+            typeAheadReset?.cancel()
+            if event.isARepeat { return }
+            let bare = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            if bare, PreviewWindowController.closeIfVisible() { return }
+            // 裸 Esc 且预览没开（或带修饰 Esc）→ 落回下面原 .clearMarks 路（TC 语义不变）。
+        }
         let input = KeyInput(keyCode: event.keyCode, modifiers: event.modifierFlags)
         // 1) KeyDispatcher 认领的键（方向/F 键/Return/Backspace/Space/Tab/Esc…）走 TC 原路径；
         //    处理前先清 type-ahead 前缀（任何"别的"键都中断字母累积）。
