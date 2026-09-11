@@ -16,6 +16,10 @@ final class PreviewWindowController: NSWindowController {
     static func resetSharedForTest() { _shared = nil }
     /// 测试用：创建但不显示窗口（不经 present，故不 orderFront），返回实例供标题断言。
     static func createWithoutPresentingForTest() -> PreviewWindowController { shared }
+    /// 测试用：取内容 VC（冒烟测直接 show 到自建的离屏窗口，绕开单例上屏竞态）。
+    static func previewVCForTest() -> PreviewViewController? {
+        createWithoutPresentingForTest().window?.contentViewController as? PreviewViewController
+    }
     #endif
 
     static func show(item: FileItem) {

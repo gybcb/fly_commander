@@ -1,13 +1,18 @@
 import AppKit
+import PDFKit
+import AVKit
 import TCCore
 
 final class PreviewViewController: NSViewController {
-    private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "tiff", "tif", "bmp", "webp"]
     /// 文本预览只加载文件开头这么多字节：排版/滚动开销随字符数走，
     /// 1.5MB 文件滚动已实测变慢 → 上限取 512KB 保证流畅，超出走截断横幅。
     private static let textPreviewLimit = 512 * 1024
     /// 超过此大小的文件直接走二进制降级（不再读取）。
     private static let textMaxBytes = 512 * 1024 * 1024
+    /// 富文本整档读入上限（PDF/media 无此风险：PDFKit 懒排版、播放器不读全文）。
+    /// 依据=评审实测放大比（见 show .richText 注释）：16MB 文件已能膨胀出
+    /// 数百万字符 TextKit 文档，再往上主线程排版不可接受 → 直接降级页。
+    static let richTextMaxBytes = 16 * 1024 * 1024
     /// 单行上限：TextKit 的排版量/文档高度随单行字符数走（probe 实测 524K 字符
     /// 单行 → 78645pt document view，且曾导致预览区空白）→ 超长行截到此值。
     static let textLineLimit = 32 * 1024
@@ -56,18 +61,115 @@ final class PreviewViewController: NSViewController {
         view.window?.performClose(nil)
     }
 
+    /// 关窗停播挂点：performClose 对单例窗只是隐藏（isReleasedWhenClosed=false，
+    /// contentView 不离窗 → viewDidDisappear 生产里根本不来——评审回归锁抓出）→ 挂窗的
+    /// willCloseNotification。show 时窗必已存在（present 先置 contentViewController 再
+    /// show）；按窗身份去重，换窗（测试夹具）也能重挂。VC 单例永生 → observer 不用摘。
+    private var pauseObserverWindow: NSWindow?
+    private func registerClosePauseIfNeeded() {
+        guard let w = view.window, pauseObserverWindow !== w else { return }
+        pauseObserverWindow = w
+        NotificationCenter.default.addObserver(self, selector: #selector(pauseForWindowClose),
+                                               name: NSWindow.willCloseNotification, object: w)
+    }
+    @objc private func pauseForWindowClose() { currentPlayer?.pause() }
+
+    /// 每次 show 自增；异步加载（PDF/富文本）回主线程时校验 `token == showToken`，
+    /// 丢弃被更新预览覆盖的陈旧结果。单例预览窗 + F3 快连按是最真竞态。
+    /// token 只丢结果不中断已在途的读（PDFDocument/NSAttributedString 无 cancel API）——
+    /// 快连按会瞬发几个后台读，每个 ≤ 数十 MB 且有 .userInitiated 优先级，是有界浪费非泄漏。
+    private var showToken = 0
+
+    /// 当前媒体预览的 player（仅 .media 路赋值，弱于窗口生命周期）。AVPlayer 不随
+    /// AVPlayerView 离树/关窗自动停（评审实测）→ show 开头 + 关窗通知两处 pause。
+    private var currentPlayer: AVPlayer?
+    #if DEBUG
+    /// 测试用：断言 pause 收口真的握住了 player（rate 翻转合同，见 PreviewRenderingSmokeTests）。
+    var currentPlayerForTest: AVPlayer? { currentPlayer }
+    #endif
+
     func show(item: FileItem) {
         localizedBindings.removeAll()   // 旧内容即将丢弃，绑定随之作废
+        registerClosePauseIfNeeded()
+        showToken += 1
+        let token = showToken
+        fallbackURL = item.path.url
         let url = item.path.url
-        let content: NSView
-        if Self.imageExtensions.contains(url.pathExtension.lowercased()) {
-            content = makeImageView(url: url)
-        } else if let pt = Self.loadPreviewText(url: url, limit: Self.textPreviewLimit) {
-            content = makeTextView(url: url, item: item, text: pt)
-        } else {
-            content = makeFallbackView(item: item)
+        // 正在播的媒体必须在这里停：AVPlayer 不随视图移除/关窗而停（评审实测：换文件
+        // 后播放头仍推进，直到曲目播完）。pause 收口在 show 开头 + willClose 通知，
+        // 覆盖「预览下一个文件」与「关窗」两条路。
+        currentPlayer?.pause()
+        // 远端文件（sftp://… / smb://…）不进任何渲染路：AVPlayer/PDFKit/ASText 都不吃
+        // scheme URL（评审实证 remote mp4 只剩播放器空壳，丢了旧版降级页的提示+出口）。
+        // 与命令行 view 命令的 remoteNoPreview 合同同向；降级页给出路径 + 复制路径出口。
+        // token 已自增 → 在途的本地异步加载照样作废。
+        if item.path.isRemote {
+            swapContent(makeFallbackView(item: item))
+            return
         }
-        // Swap content
+        // 异步路（pdf/富文本）自带占位换视图，不进同步 switch。
+        // 后台只做数据加载（PDF 解析/docx zip 解压可能几十~几百 ms），**AppKit 视图
+        // 一律主线程构造**——load 返回 nil（加载失败）→ 主线程降级页。
+        switch PreviewKindClassifier.classify(filenameExtension: url.pathExtension) {
+        case .pdf:
+            showAsync(token: token, load: { PDFDocument(url: url) },
+                      fallback: { self.makeFallbackView(item: item) },
+                      on: { (doc: PDFDocument?) in
+                guard let doc, doc.pageCount > 0 else { return nil }
+                return self.makePDFContent(document: doc)
+            })
+        case .richText:
+            // 尺寸上限：TextKit 排版量/常驻随字符数走（评审实测 23MB RTF → 312MB 常驻、
+            // 首次全量排版主线程独占 ~5-7s；340KB docx 可膨胀 5 万倍）——旧文本路的
+            // 护栏同理由（见 textPreviewLimit 注释）。超限直接降级页，「用默认应用打开」
+            // 仍可达；上限取 16MB 文件（实测 docx 展开 ≤ ~700 万字符 ≈ 1.4s 排版）。
+            showAsync(token: token,
+                      load: {
+                guard let size = Self.fileSize(url), size <= Self.richTextMaxBytes else { return nil }
+                return try? NSAttributedString(url: url, options: [:], documentAttributes: nil)
+            },
+                      fallback: { self.makeFallbackView(item: item) },
+                      on: { (ast: NSAttributedString?) in
+                guard let ast, ast.length > 0 else { return nil }
+                return self.makeRichTextContent(attributedString: ast)
+            })
+        case .image:
+            swapContent(makeImageView(url: url))
+        case .media:
+            swapContent(makeMediaView(url: url))
+        case .text:
+            if let pt = Self.loadPreviewText(url: url, limit: Self.textPreviewLimit) {
+                swapContent(makeTextView(url: url, item: item, text: pt))
+            } else {
+                swapContent(makeFallbackView(item: item))
+            }
+        }
+    }
+
+    /// 后台加载数据 → 主线程 token 校验（仍是最新预览才换视图）→ 用结果建视图，
+    /// 加载失败（on 返回 nil）走 fallback 降级页。token 只丢结果不中断在途读
+    /// （PDFDocument/NSAttributedString 无 cancel）——快连按瞬发几个后台读，各有界
+    /// （≤文件大小、.userInitiated），是有界浪费非泄漏。队列只用系统预建全局队列
+    /// （SDK 约束：绝不动态建 DispatchQueue）。
+    private func showAsync<T>(token: Int,
+                              load: @escaping @Sendable () -> T?,
+                              fallback: @escaping () -> NSView,
+                              on: @escaping (T?) -> NSView?) {
+        let placeholder = NSView()
+        placeholder.wantsLayer = true
+        placeholder.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        swapContent(placeholder)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let loaded = load()
+            DispatchQueue.main.async {
+                guard let self, token == self.showToken else { return }
+                self.swapContent(on(loaded) ?? fallback())
+            }
+        }
+    }
+
+    /// 换掉整块内容视图（约束铺满 view）。程序化子视图必须关 autoresizing mask（SDK 约束）。
+    private func swapContent(_ content: NSView) {
         for subview in view.subviews { subview.removeFromSuperview() }
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)
@@ -77,6 +179,28 @@ final class PreviewViewController: NSViewController {
             content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
+
+    /// 预览侧「文件字节数」：普通文件直读；目录（=包，rtfd 等）递归求和并设硬顶早停
+    /// （只为尺寸守卫服务，不求精确——超顶必然超守卫）。无 fileSizeKey 会把目录判成
+    /// 尺寸未知 → 富文本守卫全盲（评审回归锁 testRTFDDirectoryPackageLoads 抓出）。
+    static let packageScanCap = 256 * 1024 * 1024
+    private static func fileSize(_ url: URL) -> Int64? {
+        guard let v = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey]) else { return nil }
+        if v.isDirectory == true {
+            var total: Int64 = 0
+            guard let en = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
+                return 0
+            }
+            for case let f as URL in en {
+                let s = Int64((try? f.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                total += s
+                if total > Int64(packageScanCap) { return total }   // 早停：已远超任何守卫
+            }
+            return total
+        }
+        guard let n = v.fileSize else { return nil }
+        return Int64(n)
     }
 
     /// 只读文件开头 `limit` 字节做文本预览。
@@ -241,6 +365,83 @@ final class PreviewViewController: NSViewController {
                 label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             ])
         }
+        return container
+    }
+
+    /// PDF 预览：PDFKit PDFView（探针实证本 SDK 存活面 = document/autoScales/displayMode，
+    /// displayModeOptions 被剥——别「顺手加」，编译不过）。document 由调用方在后台加载并
+    /// 确认 pageCount>0 后传入；挂载点必须关 autoresizing mask（SDK 约束）。
+    private func makePDFContent(document: PDFDocument) -> NSView {
+        let pdfView = PDFView(frame: .zero)
+        pdfView.document = document
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        container.addSubview(pdfView)
+        NSLayoutConstraint.activate([
+            pdfView.topAnchor.constraint(equalTo: container.topAnchor),
+            pdfView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    /// 富文本预览（rtf/rtfd/doc/docx 的 NSAttributedString 结果）：只读 NSTextView。
+    /// **不套等宽字体**——setAttributedString 后保留文档自带字体/颜色（富文本的意义）。
+    private func makeRichTextContent(attributedString: NSAttributedString) -> NSView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        guard let text = scroll.documentView as? NSTextView,
+              let storage = text.textStorage else {
+            let v = NSView()
+            v.wantsLayer = true
+            v.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            return v
+        }
+        text.isEditable = false
+        text.isSelectable = true
+        storage.setAttributedString(attributedString)
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        container.addSubview(scroll)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+        ])
+        return container
+    }
+
+    /// 媒体预览（视频/音频共用 AVPlayerView）。**属性面刻意的窄**：本缩减 SDK 里
+    /// controlsVisible/videoGravity 等被剥（探针实测），只碰 player 挂载——后人别加。
+    /// 不自动 play()：打开预览即自动出声是惊吓不是特性，用户按控件播放。
+    /// player 存进 currentPlayer → show 开头 + 关窗 willClose 两处统一 pause（离树/关窗
+    /// 不停播是 AVPlayer 实测行为，见 currentPlayer 注释；viewDidDisappear 不可靠，
+    /// 见 registerClosePauseIfNeeded 注释）。
+    private func makeMediaView(url: URL) -> NSView {
+        let player = AVPlayer(url: url)
+        let playerView = AVPlayerView(frame: .zero)
+        playerView.player = player
+        playerView.translatesAutoresizingMaskIntoConstraints = false
+        currentPlayer = player
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        container.addSubview(playerView)
+        NSLayoutConstraint.activate([
+            playerView.topAnchor.constraint(equalTo: container.topAnchor),
+            playerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            playerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            playerView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
         return container
     }
 

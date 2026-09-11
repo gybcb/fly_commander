@@ -61,7 +61,7 @@ final class FlyCommanderUITests: XCTestCase {
         }
     }
 
-    /// 8 项夹具：alpha_small.txt(1B) alpha_big.txt(100B) large.bin(5000B) sub/ sub/inner.txt gamma.txt(1B) big.log(1.5MB 多行) longline.txt(1.3MB 单行) sample.torrent(小 bencode+哈希)。
+    /// 9 项夹具：alpha_small.txt(1B) alpha_big.txt(100B) large.bin(5000B) sub/ sub/inner.txt gamma.txt(1B) big.log(1.5MB 多行) longline.txt(1.3MB 单行) sample.torrent(小 bencode+哈希) sample.pdf(最小合法 PDF，issue #3 分派锁)。
     private func makeFixture() -> URL {
         let base = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("fly_commander_uitest_fixture_\(UUID().uuidString)")
@@ -82,6 +82,16 @@ final class FlyCommanderUITests: XCTestCase {
         torrent.append(Data(repeating: 7, count: 40))
         torrent.append(Data("ee".utf8))
         try! torrent.write(to: base.appendingPathComponent("sample.torrent"))
+        // 最小合法 PDF（单页 200x200）：issue #3 分派锁——PDF 必须走 PDFKit 不进文本/降级路。
+        // PDFKit 容忍 xref 缺失但字节须完整（SPM 冒烟测同款夹具，PDFDocument 实测可开）。
+        try! """
+        %PDF-1.4
+        1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+        2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+        3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj
+        trailer<</Root 1 0 R/Size 4>>
+        %%EOF
+        """.write(to: base.appendingPathComponent("sample.pdf"), atomically: true, encoding: .ascii)
         try! fm.createDirectory(at: base.appendingPathComponent("sub"), withIntermediateDirectories: true)
         write(base.appendingPathComponent("sub"), "inner.txt", 1)
         return base
@@ -159,7 +169,7 @@ final class FlyCommanderUITests: XCTestCase {
         for header in ["Name", "Size", "Date Modified"] {
             XCTAssertTrue(headerButton(header).exists, "列头缺失：\(header)")
         }
-        XCTAssertEqual(leftTable().tableRows.count, 8, "行数不等于夹具 8 项")
+        XCTAssertEqual(leftTable().tableRows.count, 9, "行数不等于夹具 9 项")
         XCTAssertTrue(leftRowNames().contains("alpha_small.txt"), "左栏未显示夹具文件")
         // 标题 = 启动目录的 displayString（夹具在 runner 容器内，home 前缀显示为 ~，尾段不变）
         let window = app.windows.element(boundBy: 0)
@@ -179,7 +189,7 @@ final class FlyCommanderUITests: XCTestCase {
         divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.25,
                    thenDragTo: split.coordinate(withNormalizedOffset: CGVector(dx: 0.57, dy: 0.5)))
-        XCTAssertEqual(leftTable().tableRows.count, 8, "拖拽后左栏丢失")
+        XCTAssertEqual(leftTable().tableRows.count, 9, "拖拽后左栏丢失")
         XCTAssertEqual(app.tables.count, 2, "拖拽后窗格数量变化")
     }
 
@@ -189,9 +199,9 @@ final class FlyCommanderUITests: XCTestCase {
     /// 委托→排序的接线与排序逻辑由 Tier 1 覆盖（PaneTableViewTests / PaneSortTests）。
     func testHeaderSortByNameThenSize() {
         // 默认序 = 目录优先 + 名称（localizedStandardCompare，与 core 单测同语义）：
-        // sub(目录) 在前，文件按名 alpha_big < alpha_small < big < gamma < large < longline
+        // sub(目录) 在前，文件按名 alpha_big < alpha_small < big < gamma < large < longline < sample.pdf < sample.torrent
         XCTAssertEqual(leftRowNames(),
-                       ["sub", "alpha_big.txt", "alpha_small.txt", "big.log", "gamma.txt", "large.bin", "longline.txt", "sample.torrent"],
+                       ["sub", "alpha_big.txt", "alpha_small.txt", "big.log", "gamma.txt", "large.bin", "longline.txt", "sample.pdf", "sample.torrent"],
                        "默认显示序应为 目录优先+名称")
     }
 
@@ -249,7 +259,7 @@ final class FlyCommanderUITests: XCTestCase {
 
     func testCmdASelectsAll() {
         app.typeKey("a", modifierFlags: .command)
-        XCTAssertTrue(selectionStatus("8 selected").waitForExistence(timeout: 5), "全选后工具栏未显示已选 8 项")
+        XCTAssertTrue(selectionStatus("9 selected").waitForExistence(timeout: 5), "全选后工具栏未显示已选 9 项")
         // Cmd+A 非 toggle（selectAll 幂等）；清标记走 KeyDispatcher 的 Esc → clearMarks
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(selectionStatus("1 selected").waitForExistence(timeout: 5), "Esc 清标记后应回到已选 1 项（焦点行）")
@@ -413,6 +423,22 @@ final class FlyCommanderUITests: XCTestCase {
                       ".torrent 应预览出 bencode 文本，实际 \(content?.count ?? 0) 字符")
     }
 
+    /// issue #3 分派端到端锁：PDF 必须走 PDFKit 渲染路——SPM 冒烟测锁了
+    /// makePDFContent 本身，但抓不到「分类对却没接进 show 的 switch」这半边。
+    /// 变异=show 里删 .pdf case（落 .text）→ PDF 二进制嗅探判二进制 → 降级页
+    /// "Cannot preview this file" 出现 → 本条红。
+    func testPreviewPDFShowsViewerNotFallback() {
+        focusRowNamed("sample.pdf")
+        menuBar("View").click()
+        menuBar("View").menuItems
+            .matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        let preview = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'FlyCommander Preview'")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), "PDF 预览窗未弹出")
+        let fallback = preview.staticTexts
+            .matching(NSPredicate(format: "value == 'Cannot preview this file'")).firstMatch
+        XCTAssertFalse(fallback.exists, "PDF 不应落入'无法预览此文件'降级页（分派没接上即此红）")
+    }
+
     /// 回归"预览窗不能按 Esc 退出"：Esc 应关闭预览窗（cancelOperation 路径）。
     func testEscapeClosesPreviewWindow() {
         focusRowNamed("alpha_small.txt")
@@ -491,7 +517,7 @@ final class FlyCommanderUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         XCTAssertTrue(cmdBarOutput.waitForExistence(timeout: 2), "命令栏输出行缺失")
         let text = (cmdBarOutput.value as? String) ?? ""
-        XCTAssertTrue(text.contains("8 items"), "ls 应回显夹具 8 项，实际：\(text)")
+        XCTAssertTrue(text.contains("9 items"), "ls 应回显夹具 9 项，实际：\(text)")
     }
 
     func testCommandLineHelpListsCommands() {
@@ -507,7 +533,7 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("8 items"), "前置：ls 已回显")
+        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("9 items"), "前置：ls 已回显")
         // Esc 清输入+输出：再激活命令栏放一个字符，Esc 后应清空输出并回到窗格
         activateCommandBar()
         app.typeKey(XCUIKeyboardKey(rawValue: "x"), modifierFlags: [])
