@@ -87,6 +87,35 @@ final class TabBarView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// 三态激活视觉（用户「激活 tab 要不一样」）。旧版激活差异只有 recessed state=.on
+    /// 的极浅系统底=肉眼难辨，且 isActiveSide 是死参数（另一侧 pane 的活动 tab 也画亮态）。
+    /// 现由底色+字重+文字色三通道驱动，state 恒 .off（recessed pressed 自绘底会与
+    /// layer 底色打架）：
+    ///   当前侧活动 = accent 实底 + medium + 白字（字面 .white，见 tabVisual 内注释）
+    ///   另一侧活动 = accent 25% 底 + medium（FileCellView 标记行同款）
+    ///   非活动     = 无自定义底 + regular
+    /// 色+字重双通道 → 不靠纯色分辨（无障碍）。纯函数出参供回归锁直测。
+    struct TabVisual {
+        let background: NSColor?     // nil=不覆盖系统底
+        let font: NSFont
+        let foreground: NSColor?     // nil=跟随系统 labelColor
+    }
+    static func tabVisual(isActiveTab: Bool, isActiveSide: Bool) -> TabVisual {
+        guard isActiveTab else {
+            return TabVisual(background: nil, font: .systemFont(ofSize: 11), foreground: nil)
+        }
+        return TabVisual(
+            background: isActiveSide ? ThemeStore.shared.accentColor
+                                     : ThemeStore.shared.accentColor.withAlphaComponent(0.25),
+            font: .systemFont(ofSize: 11, weight: .medium),
+            // 白字须字面值：本 SDK 下 recessed 按钮对**目录语义色**做 cell 级重映射
+            // （selectedControlTextColor 实测=labelColor 别名解析为黑；alternateSelected
+            // ControlTextColor 等 controlTextColor 家族在 cell 绘文本时被吞——红色/字面白
+            // 像素探针背书：字面色可绘、语义色不可）。labelColor 同族也仅另一侧软底可用
+            // （软底上黑/系统标签色本就是可读前景，且跟随暗色模式）。
+            foreground: isActiveSide ? .white : .labelColor)
+    }
+
     /// 重建标签。titles 顺序 = TabGroup.panes 顺序。
     func rebuild(titles: [String], activeIndex: Int, isActiveSide: Bool) {
         for v in stack.arrangedSubviews { v.removeFromSuperview() }
@@ -95,8 +124,19 @@ final class TabBarView: NSView {
                                  target: self, action: #selector(tabClicked(_:)))
             title.tag = i
             title.bezelStyle = .recessed
-            title.font = .systemFont(ofSize: 11)
-            title.state = (i == activeIndex) ? .on : .off
+            let visual = Self.tabVisual(isActiveTab: i == activeIndex, isActiveSide: isActiveSide)
+            if let bg = visual.background {
+                title.wantsLayer = true
+                title.layer?.backgroundColor = bg.cgColor
+                let ps = NSMutableParagraphStyle()
+                ps.alignment = .center
+                var attrs: [NSAttributedString.Key: Any] = [.font: visual.font, .paragraphStyle: ps]
+                if let fg = visual.foreground { attrs[.foregroundColor] = fg }
+                title.attributedTitle = NSAttributedString(string: title.title, attributes: attrs)
+            } else {
+                title.font = visual.font
+            }
+            title.state = .off
             title.toolTip = t
             stack.addArrangedSubview(title)
 
@@ -136,4 +176,15 @@ final class TabBarView: NSView {
         guard s.count > max, max >= 2 else { return s }
         return String(s.prefix(max - 1)) + "…"
     }
+
+    #if DEBUG
+    /// 测试钩子：按 tag 升序回读各标签标题按钮（激活态视觉回归锁读 layer 底色/attributedTitle）。
+    /// 判据=action 精确等于 tabClicked（标题/关闭按钮 tag 同为 i，按 tag 或标题串筛都会误伤）；
+    /// 只读不改状态，生产路径零调用。
+    func titleButtonsForTest() -> [NSButton] {
+        stack.arrangedSubviews.compactMap { $0 as? NSButton }
+            .filter { $0.action == #selector(tabClicked(_:)) }
+            .sorted { $0.tag < $1.tag }
+    }
+    #endif
 }

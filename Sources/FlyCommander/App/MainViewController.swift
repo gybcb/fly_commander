@@ -216,6 +216,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
             guard let self else { return }
             self.leftContainer.allPaneViews.forEach { $0.reload() }
             self.rightContainer.allPaneViews.forEach { $0.reload() }
+            // tab 激活底色是 rebuild 时定格进 layer 的 accent CGColor——只 reload 表格
+            // 不重画标签条，改主题后活动 tab 留旧色直到下次导航（评审 wf_855e5db8 confirmed）。
+            // applyActiveState=正规幂等入口（双侧 show→tabBar.rebuild 现取新 accent）。
+            self.applyActiveState()
         }
         workspace.onCommandTransfer = { [weak self] id in self?.router.execute(id) }
         workspace.onCommandStatus = { [weak self] s in self?.setStatus(s) }
