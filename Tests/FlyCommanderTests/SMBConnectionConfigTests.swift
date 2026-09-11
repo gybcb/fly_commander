@@ -29,7 +29,10 @@ final class SMBConnectionConfigTests: XCTestCase {
     func testRequestBuildsRecordAndConfig() {
         let req = SMBConnectionRequest(server: "h", share: "s", domain: nil,
                                        username: "u", secret: "pw", remember: true)
-        XCTAssertEqual(req.record, r2(server: "h"))
+        // record 每次构建自带新 UUID id（保存语义下 id 由 save 赋稳定值）→ 逐参数比对
+        XCTAssertEqual(req.record.sourceID, r2(server: "h").sourceID)
+        XCTAssertEqual(req.record.credentialAccount, r2(server: "h").credentialAccount)
+        XCTAssertFalse(req.record.id.isEmpty)
         XCTAssertEqual(req.config.sourceID, "smb://h/s")
         XCTAssertEqual(req.record.remembers, true)
     }

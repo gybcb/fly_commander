@@ -91,7 +91,7 @@ final class ResidentWindowRepaintTests: XCTestCase {
         XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.connect)), "连接按钮应为中文")
         // 单选/复选标题
         XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.fieldKeyFile)), "密钥文件单选应为中文")
-        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.rememberPassword)), "记住密码复选应为中文")
+        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.saveConnection)), "保存按钮应为中文")
 
         L10n.current = .en
         vc.refreshLocalizedText()
@@ -110,7 +110,7 @@ final class ResidentWindowRepaintTests: XCTestCase {
         XCTAssertTrue(containsField(vc.view, oldZh), "服务器标签应为中文")
         XCTAssertTrue(containsField(vc.view, L10n.t(.fieldDomain)), "域标签应为中文")
         XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.cancel)), "取消按钮应为中文")
-        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.rememberPassword)), "记住密码复选应为中文")
+        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.saveConnection)), "保存按钮应为中文")
 
         L10n.current = .en
         vc.refreshLocalizedText()

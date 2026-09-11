@@ -46,6 +46,9 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case fillHost, invalidPort, chooseKeyFile, connecting
     case fieldServer, fieldShare, fieldDomain, fillServerShare
     case connectFailedPrefix
+    // —— 已保存连接列表（连接对话框，SMB/SFTP 共用）——
+    case fieldConnName, saveConnection, deleteConnection, savedConnectionsTitle
+    case savedListEmpty, savedListFull, savedDuplicateTitle, savedDuplicateBody, savedDone
     // —— 仅供 fallback 回归测试，故意只进 en 表 ——
     case testFallbackProbe
     // —— 命令栏回显（InternalCommandExecutor，T6）——

@@ -47,6 +47,10 @@ final class ConnectionWindowController: NSWindowController {
         if let port = pendingPort { connectionVC.prefillPort(port) }
         pendingHost = nil
         pendingPort = nil
+        window?.layoutIfNeeded()
+        // center() 前必须先排版：bottom 钉使窗高在首排版时才 autogrow（332→427），
+        // center 若先跑则按旧高居中、显示时向下生长 → 首开比再次打开低 ~23pt
+        // （SMBConnectionWindowController 同款先例）。
         window?.center()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

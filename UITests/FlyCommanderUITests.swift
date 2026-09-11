@@ -289,13 +289,22 @@ final class FlyCommanderUITests: XCTestCase {
         // 按钮
         XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Connect'")).firstMatch.exists)
         XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.exists)
-        // 表单字段：AX 里单选是 RadioButton、复选是 CheckBox（不在 .buttons 里）
+        // 「保存连接列表」issue：记住密码复选已退役（保存即存密钥），保存/删除按钮接管
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Save'")).firstMatch.exists, "缺保存按钮")
+        XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Delete'")).firstMatch.exists, "缺删除按钮")
+        XCTAssertFalse(conn.checkBoxes.matching(NSPredicate(format: "title == 'Remember Password'")).firstMatch.exists,
+                       "记住密码复选应已退役")
+        // 表单字段：AX 里单选是 RadioButton（不在 .buttons 里）
         XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == 'Password'")).firstMatch.exists)
         XCTAssertTrue(conn.radioButtons.matching(NSPredicate(format: "title == 'Key File'")).firstMatch.exists)
-        XCTAssertTrue(conn.checkBoxes.matching(NSPredicate(format: "title == 'Remember Password'")).firstMatch.exists)
-        // 主机输入框（无最近连接时应为空）
+        // 主机输入框（无已保存条目时表单应为空）
         let hostField = conn.textFields.matching(NSPredicate(format: "identifier == 'hostField'")).firstMatch
         XCTAssertTrue(hostField.exists, "主机输入框缺失")
+        // 已保存列表区存在。表格 identifier 在 AX 不可达（本 SDK 实测 Table/Other 均查不到
+        // savedTable=同搜索窗 AX 塌缩前科，假锁），锚换常显区题静态文本；
+        // 真保存/双击路=写用户真列表+真连外网，永久排除 UITest，由 SPM SavedConnectionsVCTests 覆盖）
+        XCTAssertTrue(conn.staticTexts.matching(NSPredicate(format: "value == 'Saved connections' OR title == 'Saved connections'")).firstMatch.exists,
+                      "已保存列表区（区题）缺失")
         conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 

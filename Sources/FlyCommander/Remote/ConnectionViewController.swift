@@ -1,11 +1,28 @@
 import AppKit
 import TCCore
 
-final class ConnectionViewController: NSViewController {
+final class ConnectionViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     var onConnected: ((SFTPSource, String) -> Void)?
+
+    // MARK: - 存储 / 连接执行注入
+
+    var store = ConnectionStore.shared
+
+    /// 连接执行注入（SMBConnectionViewController 同款）：completion 须回主线程。
+    /// 默认=后台 global 队列 + shared store 真连（原 connectTapped 合同原样搬移）；
+    /// 真窗单测替换成同步 fake，UITest 无需真 sshd。
+    var connectExecutor: (ConnectionRequest, @escaping (Result<(SFTPSource, home: String), Error>) -> Void) -> Void = { request, completion in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result: Result<(SFTPSource, home: String), Error>
+            do { result = .success(try ConnectionStore.shared.connect(request)) }
+            catch { result = .failure(error) }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
 
     // MARK: - 表单控件
 
+    private let nameField = NSTextField(frame: .zero)
     private let hostField = NSTextField(frame: .zero)
     private let portField = NSTextField(frame: .zero)
     private let userField = NSTextField(frame: .zero)
@@ -15,8 +32,9 @@ final class ConnectionViewController: NSViewController {
     private let keyPathField = NSTextField(frame: .zero)
     private let browseButton = NSButton(title: L10n.t(.browse), target: nil, action: nil)
     private let passphraseField = NSSecureTextField(frame: .zero)
-    private let rememberCheckbox = NSButton(checkboxWithTitle: L10n.t(.rememberPassword), target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
+    private let saveButton = NSButton(title: L10n.t(.saveConnection), target: nil, action: nil)
+    private let deleteButton = NSButton(title: L10n.t(.deleteConnection), target: nil, action: nil)
     private let connectButton = NSButton(title: L10n.t(.connect), target: nil, action: nil)
     private let cancelButton = NSButton(title: L10n.t(.cancel), target: nil, action: nil)
 
@@ -26,7 +44,15 @@ final class ConnectionViewController: NSViewController {
     private var connecting = false
     private var connectToken = 0
 
-    private let store = ConnectionStore.shared
+    // MARK: - 已保存列表区（常显：空列表=占位文案，窗高恒定无动态伸缩）
+    private let savedTitleLabel = NSTextField(labelWithString: L10n.t(.savedConnectionsTitle))
+    /// internal 供 @testable 真窗锁程序化选中/触发 onActivate（单击载入/双击直连两路）。
+    let savedTable = HitTableView()
+    private let savedEmptyLabel = NSTextField(labelWithString: L10n.t(.savedListEmpty))
+    private let savedScroll = NSScrollView()
+
+    private var records: [SFTPConnectionRecord] = []
+    private var selectedRecordID: String?
 
     /// 语言切换重刷绑定：闭包捕获控件 + key，刷新时按当前语言重算 t() 回写。
     private var localizedBindings: [() -> Void] = []
@@ -37,7 +63,7 @@ final class ConnectionViewController: NSViewController {
         localizedBindings.append { button.title = L10n.t(key) }
     }
 
-    /// 语言变更后重刷本窗静态标签（行标签/单选/复选/按钮）。状态文本随流程覆盖，不绑定。
+    /// 语言变更后重刷本窗静态标签（行标签/单选/区题/空态/按钮）。状态文本随流程覆盖，不绑定。
     /// 视图未加载时绑定表为空 → 无操作，不强行 loadView。
     func refreshLocalizedText() {
         localizedBindings.forEach { $0() }
@@ -46,6 +72,7 @@ final class ConnectionViewController: NSViewController {
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
 
+        let nameRow = row(.fieldConnName, nameField)
         let hostRow = row(.fieldHost, hostField)
         let netRow = NSStackView(views: [
             labeled(.fieldPort, portField, width: 60),
@@ -77,6 +104,13 @@ final class ConnectionViewController: NSViewController {
         browseButton.bezelStyle = .rounded
         browseButton.target = self
         browseButton.action = #selector(browseTapped)
+        saveButton.bezelStyle = .rounded
+        saveButton.target = self
+        saveButton.action = #selector(saveTapped)
+        deleteButton.bezelStyle = .rounded
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteTapped)
+        deleteButton.isEnabled = false
         passwordRadio.target = self
         passwordRadio.action = #selector(authRadioChanged)
         keyRadio.target = self
@@ -86,12 +120,48 @@ final class ConnectionViewController: NSViewController {
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
 
-        let buttonRow = NSStackView(views: [connectButton, cancelButton])
+        let buttonRow = NSStackView(views: [connectButton, cancelButton, saveButton, deleteButton])
         buttonRow.spacing = 8
 
-        let stack = NSStackView(views: [hostRow, netRow, radioRow, passwordRow,
-                                        keyPathRow, passphraseRow,
-                                        rememberCheckbox, statusLabel, buttonRow])
+        // 列表区：固定 110 高容器内 scroll+表格 与 空态占位 互斥显隐 → 窗高只 autogrow 一次。
+        savedTitleLabel.font = .systemFont(ofSize: 11)
+        savedTitleLabel.textColor = .secondaryLabelColor
+        savedEmptyLabel.font = .systemFont(ofSize: 11)
+        savedEmptyLabel.textColor = .tertiaryLabelColor
+        savedEmptyLabel.alignment = .center
+        savedEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("connName"))
+        column.width = 420
+        savedTable.addTableColumn(column)
+        savedTable.headerView = nil
+        savedTable.rowHeight = 18
+        savedTable.dataSource = self
+        savedTable.delegate = self
+        savedTable.onActivate = { [weak self] in self?.connectSelected() }
+
+        savedScroll.documentView = savedTable
+        savedScroll.hasVerticalScroller = true
+        savedScroll.borderType = .bezelBorder
+        savedScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let listBox = NSView()
+        listBox.translatesAutoresizingMaskIntoConstraints = false
+        listBox.addSubview(savedScroll)
+        listBox.addSubview(savedEmptyLabel)
+        NSLayoutConstraint.activate([
+            listBox.heightAnchor.constraint(equalToConstant: 110),
+            savedScroll.topAnchor.constraint(equalTo: listBox.topAnchor),
+            savedScroll.bottomAnchor.constraint(equalTo: listBox.bottomAnchor),
+            savedScroll.leadingAnchor.constraint(equalTo: listBox.leadingAnchor),
+            savedScroll.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
+            savedEmptyLabel.centerXAnchor.constraint(equalTo: listBox.centerXAnchor),
+            savedEmptyLabel.centerYAnchor.constraint(equalTo: listBox.centerYAnchor),
+        ])
+
+        let stack = NSStackView(views: [nameRow, hostRow, netRow, radioRow, passwordRow,
+                                        keyPathRow, passphraseRow, statusLabel,
+                                        savedTitleLabel, listBox, buttonRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -101,24 +171,35 @@ final class ConnectionViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            stack.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -40),
+            // bottom 必须钉死 → 窗口经 contentViewController 按内容 autogrow。
+            // 列表区使内容远超 init 的 300 高：缺这条 Connect/Cancel 底缘被裁
+            // （对齐 SMB 窗现状；前轮「SFTP 不修」前提被本功能推翻）。
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
 
         // AX 标识（UI 测试定位用）
+        nameField.setAccessibilityIdentifier("nameField")
         hostField.setAccessibilityIdentifier("hostField")
         portField.setAccessibilityIdentifier("portField")
         userField.setAccessibilityIdentifier("userField")
         passwordField.setAccessibilityIdentifier("passwordField")
         keyPathField.setAccessibilityIdentifier("keyPathField")
         passphraseField.setAccessibilityIdentifier("passphraseField")
-        rememberCheckbox.setAccessibilityIdentifier("rememberCheckbox")
+        saveButton.setAccessibilityIdentifier("saveConnectionButton")
+        deleteButton.setAccessibilityIdentifier("deleteConnectionButton")
+        savedTable.setAccessibilityIdentifier("savedTable")
         connectButton.setAccessibilityIdentifier("connectButton")
         statusLabel.setAccessibilityIdentifier("connectStatus")
 
-        // 静态标签绑定（单选/复选/按钮标题——属性初始化时冻结，须显式重刷）。
+        // 静态标签绑定（单选/按钮/区题/空态——属性初始化时冻结，须显式重刷）。
         bind(passwordRadio, .fieldPassword)
         bind(keyRadio, .fieldKeyFile)
         bind(browseButton, .browse)
-        bind(rememberCheckbox, .rememberPassword)
+        bind(saveButton, .saveConnection)
+        bind(deleteButton, .deleteConnection)
+        bind(savedTitleLabel, .savedConnectionsTitle)
+        bind(savedEmptyLabel, .savedListEmpty)
         bind(connectButton, .connect)
         bind(cancelButton, .cancel)
 
@@ -146,39 +227,26 @@ final class ConnectionViewController: NSViewController {
 
     // MARK: - Public
 
-    /// 命令栏 `sftp host[:port]` 预填（prepare 之后调用，覆盖最近连接回填）。
+    /// 命令栏 `sftp host[:port]` 预填（prepare 之后调用）。
     func prefillHost(_ host: String) { hostField.stringValue = host }
     func prefillPort(_ port: UInt16) { portField.stringValue = String(port) }
 
-    /// 重置表单并预填最近连接（若有记住的凭据则回填并勾选"记住"）。
+    /// 重置表单（不回填任何条目——「单击即编辑」语义由列表选中载入承担）+ 刷新列表；
     /// 使在途连接结果失效（token++）。
     func prepare() {
         connectToken &+= 1
         connecting = false
         statusLabel.stringValue = ""
         connectButton.isEnabled = true
-        if let recent = store.recentConnections.first {
-            hostField.stringValue = recent.host
-            portField.stringValue = String(recent.port)
-            userField.stringValue = recent.username
-            keyPathField.stringValue = recent.keyPath ?? ""
-            setAuth(recent.auth)
-            if recent.remembers, let secret = (try? store.loadSecret(for: recent)) ?? nil {
-                fillSecret(secret)
-                rememberCheckbox.state = .on
-            } else {
-                rememberCheckbox.state = .off
-            }
-        } else {
-            hostField.stringValue = ""
-            portField.stringValue = "22"
-            userField.stringValue = ""
-            keyPathField.stringValue = ""
-            passwordField.stringValue = ""
-            passphraseField.stringValue = ""
-            setAuth(.password)
-            rememberCheckbox.state = .off
-        }
+        nameField.stringValue = ""
+        hostField.stringValue = ""
+        portField.stringValue = "22"
+        userField.stringValue = ""
+        keyPathField.stringValue = ""
+        passwordField.stringValue = ""
+        passphraseField.stringValue = ""
+        setAuth(.password)
+        refreshSavedList()
     }
 
     /// 聚焦主机输入框。窗口须已就位（window 为 nil 时 makeFirstResponder 无效）。
@@ -208,6 +276,85 @@ final class ConnectionViewController: NSViewController {
         else { passwordField.stringValue = secret }
     }
 
+    // MARK: - 已保存列表
+
+    private func rowText(_ rec: SFTPConnectionRecord) -> String {
+        rec.name.isEmpty ? rec.paramsSummary : "\(rec.name) (\(rec.paramsSummary))"
+    }
+
+    private func refreshSavedList() {
+        records = store.savedConnections
+        savedScroll.isHidden = records.isEmpty
+        savedEmptyLabel.isHidden = !records.isEmpty
+        selectedRecordID = nil
+        deleteButton.isEnabled = false
+        savedTable.deselectAll(nil)
+        savedTable.reloadData()
+    }
+
+    private func selectedRecord() -> SFTPConnectionRecord? {
+        let row = savedTable.selectedRow
+        guard row >= 0, row < records.count else { return nil }
+        return records[row]
+    }
+
+    /// 单击载入：选中行参数回填表单（含 Keychain secret 回读），可改后再保存/连接。
+    private func loadRecordIntoForm(_ rec: SFTPConnectionRecord) {
+        nameField.stringValue = rec.name
+        hostField.stringValue = rec.host
+        portField.stringValue = String(rec.port)
+        userField.stringValue = rec.username
+        keyPathField.stringValue = rec.keyPath ?? ""
+        setAuth(rec.auth)
+        let secret = rec.remembers ? ((try? store.loadSecret(for: rec)) ?? nil) ?? "" : ""
+        fillSecret(secret)
+    }
+
+    /// 双击/Return：以存好的参数+密钥立即连接（成败都不写列表）。
+    private func connectSelected() {
+        guard let rec = selectedRecord() else { return }
+        let secret = rec.remembers ? ((try? store.loadSecret(for: rec)) ?? nil) : nil
+        let request = ConnectionRequest(host: rec.host, port: rec.port, username: rec.username,
+                                        auth: rec.auth, keyPath: rec.keyPath, secret: secret)
+        runConnect(request)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { records.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let id = NSUserInterfaceItemIdentifier("connNameCell")
+        var cell = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView
+        if cell == nil {   // 本 SDK 无 registerClass——makeView 恒 nil，手动建
+            let tf = NSTextField(labelWithString: "")
+            tf.font = .systemFont(ofSize: 11)
+            tf.lineBreakMode = .byTruncatingTail
+            let c = NSTableCellView()
+            c.addSubview(tf)
+            c.textField = tf
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 2),
+                tf.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -2),
+                tf.centerYAnchor.constraint(equalTo: c.centerYAnchor),
+            ])
+            c.identifier = id
+            cell = c
+        }
+        cell?.textField?.stringValue = rowText(records[row])
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let rec = selectedRecord() else {
+            selectedRecordID = nil
+            deleteButton.isEnabled = false
+            return
+        }
+        selectedRecordID = rec.id
+        deleteButton.isEnabled = true
+        loadRecordIntoForm(rec)
+    }
+
     // MARK: - Actions
 
     @objc private func authRadioChanged() {
@@ -227,6 +374,61 @@ final class ConnectionViewController: NSViewController {
 
     @objc private func cancelTapped() {
         view.window?.close()
+    }
+
+    @objc private func saveTapped() {
+        let host = hostField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else {
+            statusLabel.stringValue = L10n.t(.fillHost)
+            return
+        }
+        guard let port = UInt16(portField.stringValue.trimmingCharacters(in: .whitespaces)),
+              port > 0 else {
+            statusLabel.stringValue = L10n.t(.invalidPort)
+            return
+        }
+        let isKey = keyRadio.state == .on
+        let keyPath = keyPathField.stringValue.trimmingCharacters(in: .whitespaces)
+        if isKey && keyPath.isEmpty {
+            statusLabel.stringValue = L10n.t(.chooseKeyFile)
+            return
+        }
+        let secret = isKey ? passphraseField.stringValue : passwordField.stringValue
+        let record = SFTPConnectionRecord(
+            name: nameField.stringValue.trimmingCharacters(in: .whitespaces),
+            id: selectedRecordID ?? UUID().uuidString,
+            host: host, port: port,
+            username: userField.stringValue.trimmingCharacters(in: .whitespaces),
+            auth: isKey ? .keyFile : .password,
+            keyPath: isKey ? keyPath : nil)
+        do {
+            _ = try store.save(record, secret: secret.isEmpty ? nil : secret)
+            statusLabel.stringValue = L10n.t(.savedDone)
+        } catch ConnectionStore.SaveError.listFull {
+            statusLabel.stringValue = L10n.t(.savedListFull)
+        } catch ConnectionStore.SaveError.sameNameExists {
+            let alert = NSAlert()
+            alert.messageText = L10n.t(.savedDuplicateTitle)
+            alert.informativeText = L10n.t(.savedDuplicateBody)
+            alert.addButton(withTitle: L10n.t(.okBtn))
+            alert.addButton(withTitle: L10n.t(.cancelBtn))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            do {
+                _ = try store.save(record, secret: secret.isEmpty ? nil : secret, force: true)
+                statusLabel.stringValue = L10n.t(.savedDone)
+            } catch ConnectionStore.SaveError.listFull {
+                statusLabel.stringValue = L10n.t(.savedListFull)
+                refreshSavedList()
+                return
+            } catch {}
+        } catch {}
+        refreshSavedList()
+    }
+
+    @objc private func deleteTapped() {
+        guard let id = selectedRecordID else { return }
+        store.remove(id: id)
+        refreshSavedList()
     }
 
     @objc private func connectTapped() {
@@ -253,33 +455,30 @@ final class ConnectionViewController: NSViewController {
             host: host, port: port, username: username,
             auth: isKey ? .keyFile : .password,
             keyPath: isKey ? keyPath : nil,
-            secret: secret.isEmpty ? nil : secret,
-            remember: rememberCheckbox.state == .on)
+            secret: secret.isEmpty ? nil : secret)
+        runConnect(request)
+    }
 
+    /// 连接执行公共段：token/连接中/失败态合同（原 connectTapped 内联逻辑抽出，
+    /// 供表单 Connect 与列表双击两路复用）。
+    private func runConnect(_ request: ConnectionRequest) {
+        guard !connecting else { return }
         connecting = true
         connectButton.isEnabled = false
         statusLabel.stringValue = L10n.t(.connecting)
-
-        // SSH 握手同步阻塞——后台队列执行（global 队列为系统预建，本工具链安全）。
-        let store = self.store
         let onConnected = self.onConnected
         let token = connectToken
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result: Result<(SFTPSource, home: String), Error>
-            do { result = .success(try store.connect(request)) }
-            catch { result = .failure(error) }
-            DispatchQueue.main.async {
-                guard token == self.connectToken else { return }   // 表单已重置/窗口已重开
-                self.connecting = false
-                self.connectButton.isEnabled = true
-                switch result {
-                case .success((let source, let home)):
-                    self.view.window?.close()
-                    onConnected?(source, home)
-                case .failure(let error):
-                    let message = (error as? TCError).map(tcErrorDisplay) ?? error.localizedDescription
-                    self.statusLabel.stringValue = L10n.t(.connectFailedPrefix) + message
-                }
+        connectExecutor(request) { [weak self] result in
+            guard let self, token == self.connectToken else { return }   // 表单已重置/窗口已重开
+            self.connecting = false
+            self.connectButton.isEnabled = true
+            switch result {
+            case .success((let source, let home)):
+                self.view.window?.close()
+                onConnected?(source, home)
+            case .failure(let error):
+                let message = (error as? TCError).map(tcErrorDisplay) ?? error.localizedDescription
+                self.statusLabel.stringValue = L10n.t(.connectFailedPrefix) + message
             }
         }
     }
