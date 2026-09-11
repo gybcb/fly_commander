@@ -14,13 +14,25 @@ public struct UpdateManifest: Codable, Equatable {
         self.sha256 = sha256; self.notes = notes
     }
 
-    /// 结构健全性：version 非空；dmgURL 是 https URL；sha256 恰 64 位小写 hex；notes 可空。
-    /// 任一条不满足 → App 视为「清单不可信」静默失败，不弹任何窗（防被劫持清单投毒）。
+    /// 结构健全性 + 信任锚定：version 非空；sha256 恰 64 位 **ASCII** 小写 hex
+    /// （显式排 Unicode 数字——isHexDigit 认全角字符，发布链只产 [0-9a-f]）；
+    /// dmgURL 必须**逐字符**等于官方发布直链模板
+    /// `https://github.com/gybcb/fly_commander/releases/download/v<version>/FlyCommander_<version>_arm64.dmg`
+    /// （tag 恒 = "v"+version，release.yml 双校验保证）。主机/路径/版本自洽全锁死——
+    /// 被篡改清单即便自带合法 sha256 也投毒不进第三方主机或降级包。
+    /// 任一条不满足 → App 视为「清单不可信」静默失败，不弹任何窗。
     public var isValid: Bool {
         guard !version.isEmpty else { return false }
-        guard let u = URL(string: dmgURL), u.scheme == "https" else { return false }
-        guard sha256.count == 64, sha256.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else { return false }
+        let hex = CharacterSet(charactersIn: "0123456789abcdef")
+        guard sha256.unicodeScalars.count == 64,
+              sha256.unicodeScalars.allSatisfy(hex.contains) else { return false }
+        guard dmgURL == Self.expectedDmgURL(version: version) else { return false }
         return true
+    }
+
+    /// 官方发布直链模板（信任锚定唯一真源；release.yml 侧命名镜像校验同式）。
+    public static func expectedDmgURL(version: String) -> String {
+        "https://github.com/gybcb/fly_commander/releases/download/v\(version)/FlyCommander_\(version)_arm64.dmg"
     }
 
     /// 解码 + 校验合一；失败一律 throw `ManifestError.invalid`（调用方静默处理）。

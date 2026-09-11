@@ -31,8 +31,18 @@ final class UpdateFlow {
         guard !installing else { return }
         checker.check(manual: manual) { [weak self] outcome in
             guard let self else { return }
+            // 回调落地时**再**守卫：发起 guard 只封入口——在飞的旧 check（自动首检+手动
+            // 并发是典型场景）回调可能晚于「升级」点击，落进来会把 installing/done 态
+            // 打回 available 并二次驱动安装（把已在跑的新 bundle 再拆一次）。
+            guard !self.installing, self.window.state != .done else { return }
             switch outcome {
             case .available(let m):
+                // 本轮已成功替换过该版本（旧进程 localVersion 仍是旧号，不守卫会反复弹
+                // 同一版本 + 二次替换运行中的 bundle）。
+                if m.version == self.installedVersion {
+                    if manual { self.alert(L10n.t(.upToDate, m.version)) }
+                    return
+                }
                 self.pending = m
                 self.pendingVersion = m.version
                 self.window.presentAvailable(manifest: m, localVersion: self.checker.localVersion)
@@ -48,6 +58,8 @@ final class UpdateFlow {
 
     private var pending: UpdateManifest?
     private var pendingVersion: String?
+    /// 本进程已成功替换过的版本（旧进程 localVersion 不变，靠它记住「已装过」防重复弹窗/二次替换）。
+    private var installedVersion: String?
 
     #if DEBUG
     /// UITest 夹具：不碰网络直接呈现「发现新版本」态（启动参数 -flyUpdateDemoWindow YES 触发）。
@@ -90,6 +102,7 @@ final class UpdateFlow {
         installing = false
         switch result {
         case .success:
+            installedVersion = version   // 防旧进程内对同版本重复提示/重复替换
             window.finishSuccess(version: version)
         case .failure:
             window.finishFailure()

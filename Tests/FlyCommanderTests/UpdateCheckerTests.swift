@@ -19,11 +19,11 @@ final class FakeUpdateFetcher: UpdateFetching {
 /// 不碰网络不死锁。每条带变异证伪注释。
 final class UpdateCheckerTests: XCTestCase {
     private let manifestJSON = """
-    {"version":"9.9.9","dmgURL":"https://example.com/a.dmg","sha256":"\
+    {"version":"9.9.9","dmgURL":"\(UpdateManifest.expectedDmgURL(version: "9.9.9"))","sha256":"\
     \(String(repeating: "a", count: 64))","notes":"big"}
     """
     private let oldJSON = """
-    {"version":"0.0.1","dmgURL":"https://example.com/a.dmg","sha256":"\
+    {"version":"0.0.1","dmgURL":"\(UpdateManifest.expectedDmgURL(version: "0.0.1"))","sha256":"\
     \(String(repeating: "b", count: 64))","notes":"old"}
     """
 

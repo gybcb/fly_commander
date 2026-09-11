@@ -147,12 +147,15 @@ final class UpdateInstaller {
         completion(.success(()))
     }
 
-    /// 就绪重启：启动新 bundle → 退出旧进程。注入面（测试不真启动 app）。
-    /// 注：本缩减 SDK 无 OpenConfiguration.createsNewProcessInstance（探针实证缺失）；
-    /// 旧进程在 completion 里立即退出，随后启动的即新实例。
+    /// 就绪重启：拉起**新实例** → 退出旧进程。注入面（测试不真启动 app）。
+    /// 探针实证：本 SDK 无 `createsNewProcessInstance`，但有 ObjC 正名
+    /// `createsNewApplicationInstance`——不设它，LaunchServices 会复用仍在跑的旧实例
+    /// （净效果=只退出、不重启）。新实例成功拉起后才退出旧进程。
     var relaunch: () -> Void = {
         let url = Bundle.main.bundleURL
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, _ in
             NSApp.terminate(nil)
         }
     }

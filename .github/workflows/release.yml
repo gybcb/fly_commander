@@ -15,7 +15,9 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  # 固定组：并发发布（连续打 tag = 不同 ref）会让 updates 分支 push -f 竞态、
+  # latest.json 可能落后于最新 release。跨 ref 串行化（false=排队不取消）。
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -173,6 +175,8 @@ jobs:
           printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "非法版本: $VERSION"; exit 1; }
           printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "非法 tag: $TAG"; exit 1; }
           printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || { echo "非法 repo: $REPO"; exit 1; }
+          # tag 与版本必须同源（app 端锚定 dmgURL==…/v<version>/…，失一致=清单永被判无效）
+          [ "$TAG" = "v$VERSION" ] || { echo "tag($TAG) ≠ v+version($VERSION)，清单锚定会失配"; exit 1; }
           DMGS=( dist/*.dmg )
           [ "${#DMGS[@]}" -eq 1 ] && [ -f "${DMGS[0]}" ] || { echo "dist/*.dmg 应恰有一个，实为 ${#DMGS[@]} 个"; exit 1; }
           # 文件名与 dmgURL 必须一致（打包侧 DMG_NAME 的镜像校验，防命名漂移 → 死链）
