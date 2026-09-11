@@ -71,6 +71,10 @@ final class SMBConnectionViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            // bottom 必须钉死 → 窗口经 contentViewController 按内容 autogrow。
+            // 缺这条时窗高恒等于 contentRect 初值（280），8 恒可见行需求高溢出
+            // → Connect/Cancel 底缘越出窗口底被裁（用户实测，修前差分 -5pt 复现）。
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
 
         // AX 标识（UI 测试定位用）

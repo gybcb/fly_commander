@@ -34,6 +34,10 @@ final class SMBConnectionWindowController: NSWindowController {
         connectionVC.prepare()
         if let s = pendingServer { connectionVC.prefill(server: s, share: pendingShare, username: pendingUser) }
         pendingServer = nil; pendingShare = nil; pendingUser = nil
+        // center() 前必须先排版：bottom 钉使窗高在首排版时才 autogrow（292→317），
+        // center 若先跑则按旧高居中、显示时向下生长 → 首次落位比之后每次低 ~6pt
+        // （评审 wf_12a5bbb0-534 confirmed，位置台阶锁 testFirstPresentPositionMatchesSecond）。
+        window?.layoutIfNeeded()
         window?.center()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
