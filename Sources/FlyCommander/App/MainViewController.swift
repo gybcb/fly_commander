@@ -16,6 +16,8 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     private let connectionWindow = ConnectionWindowController()
     private let smbConnectionWindow = SMBConnectionWindowController()
     private let themeWindow = ThemeWindowController()
+    /// 更新流程（checker→窗→installer 编排；单窗复用，AppDelegate 首检共用同一入口）。
+    let updateFlow = UpdateFlow()
     private var transferEngine: TransferEngine!
     /// T3：进度面板生命周期旗——presentTransfer 置位，终态（done/failed/idle）复位。
     /// 旁路门控：只有为 true 时 OperationState 终态才喂面板（搜索/删除的 done 不误关）。
@@ -207,6 +209,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
             self?.beginSMBConnection()
         }
         commandExecutor.onOpenTheme = { [weak self] in self?.themeWindow.present() }
+        commandExecutor.onCheckUpdate = { [weak self] in self?.updateFlow.check(manual: true) }
         commandExecutor.onNewTab = { [weak self] in self?.newTab() }
         commandExecutor.onCloseTab = { [weak self] in
             guard let self else { return false }
@@ -325,6 +328,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         themeWindow.refreshLocalizedText()
         PreviewWindowController.refreshLocalizedTextIfCreated()
         TransferProgressWindowController.refreshLocalizedTextIfCreated()
+        UpdateWindowController.refreshLocalizedTextIfCreated()
         updateBars()
     }
 
@@ -586,6 +590,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     @objc func menuSMBConnect(_ sender: Any?) { beginSMBConnection() }
 
     @objc func menuTheme(_ sender: Any?) { themeWindow.present() }
+    @objc func menuCheckUpdate(_ sender: Any?) { updateFlow.check(manual: true) }
 
     @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
 

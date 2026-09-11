@@ -120,6 +120,10 @@ jobs:
     if: github.event_name == 'push'   # 手动 dispatch 永不发布 —— dry-run 安全阀
     runs-on: ubuntu-latest
     steps:
+      # updates 清单步需要 git 仓库（orphan 分支提交）；checkout 同时给
+      # actions 内置 credential helper（后续 git push 用 GITHUB_TOKEN 免密）。
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -155,3 +159,47 @@ jobs:
           name: FlyCommander Alpha-${{ needs.build.outputs.version }}
           prerelease: true
           body_path: notes.md
+
+      # 版本检测+一键升级的版本源自托管清单：app 读
+      # https://raw.githubusercontent.com/<repo>/updates/latest.json（免 GitHub API 限流；
+      # 全 prerelease 使 /releases/latest 端点失效）。失败=升级静默断供 → 不得 continue-on-error。
+      - name: Publish update manifest (updates branch)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # 版本号/tag 全走 env + 锚定正则再校验（injection 硬闸先例同 Resolve version 步）
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "非法版本: $VERSION"; exit 1; }
+          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "非法 tag: $TAG"; exit 1; }
+          printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || { echo "非法 repo: $REPO"; exit 1; }
+          DMGS=( dist/*.dmg )
+          [ "${#DMGS[@]}" -eq 1 ] && [ -f "${DMGS[0]}" ] || { echo "dist/*.dmg 应恰有一个，实为 ${#DMGS[@]} 个"; exit 1; }
+          # 文件名与 dmgURL 必须一致（打包侧 DMG_NAME 的镜像校验，防命名漂移 → 死链）
+          EXPECTED="FlyCommander_${VERSION}_arm64.dmg"
+          [ "$(basename "${DMGS[0]}")" = "$EXPECTED" ] || { echo "dmg 文件名 ${DMGS[0]} ≠ $EXPECTED"; exit 1; }
+          SHA=$(sha256sum "${DMGS[0]}" | awk '{print $1}')
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || { echo "sha256 异常: $SHA"; exit 1; }
+          # JSON 交 python 生成（转义安全，ubuntu 自带 python3）
+          python3 - "$VERSION" "$TAG" "$REPO" "$EXPECTED" "$SHA" <<'PYEOF'
+          import json, sys
+          version, tag, repo, dmg, sha = sys.argv[1:6]
+          manifest = {
+              "version": version,
+              "dmgURL": f"https://github.com/{repo}/releases/download/{tag}/{dmg}",
+              "sha256": sha,
+              "notes": "See the release page for changes.",
+          }
+          with open("latest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          PYEOF
+          cat latest.json
+          # 全新 orphan（不带 main 历史；updates 分支只该有一个清单文件）
+          git checkout --orphan updates
+          git rm -rf --cached . -q   # 清掉 checkout 带进来的工作树索引（文件留在盘上但不再入库）
+          git add latest.json
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(update): latest.json → v${VERSION} [skip ci]"
+          git push -f origin updates   # checkout 已配好 GITHUB_TOKEN credential helper；强推=幂等

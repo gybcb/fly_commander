@@ -4,6 +4,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
     private weak var mainViewController: MainViewController?
     private var activeObserver: NSObjectProtocol?
+    /// 24h 复检计时器（持强引用随 delegate 终身；启动首检走 asyncAfter 不占它）。
+    private var updateTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // App icon：xcassets 编译后系统自动加载 AppIcon；SPM 构建走 Bundle 资源兜底。
@@ -38,6 +40,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.mainViewController?.directoryWatcher.refreshAllWatched()
+        }
+        #if DEBUG
+        // UITest 夹具：启动参数呈现假更新窗（不联网；断言窗标题/按钮 AX 可达）。
+        if UserDefaults.standard.bool(forKey: "flyUpdateDemoWindow") {
+            mainViewController?.updateFlow.presentDemoWindowForTest()
+        }
+        #endif
+        // 版本自动检查（仅真实运行；UI 测试模式下抑制——防测试期联网/弹窗）。
+        // 启动延迟 10s 首检（不抢启动路径），之后每 24h 复检（App 常驻也能收到）。
+        guard !TestIsolation.suppressPreferenceWrites else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.mainViewController?.updateFlow.check(manual: false)
+        }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: UpdateChecker.checkInterval,
+                                           repeats: true) { [weak self] _ in
+            self?.mainViewController?.updateFlow.check(manual: false)
         }
     }
 

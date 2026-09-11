@@ -13,6 +13,8 @@ enum MainMenu {
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
         appMenu.addItem(withTitle: L10n.t(.aboutApp), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        // 检查更新：macOS 惯例放 About 下方；动作走 VC（updateFlow.check manual）。
+        add(appMenu, L10n.t(.checkForUpdates), #selector(MainViewController.menuCheckUpdate(_:)), "", target, [])
         appMenu.addItem(.separator())
         let hideItem = appMenu.addItem(withTitle: L10n.t(.hideApp), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         hideItem.target = NSApp

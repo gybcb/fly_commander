@@ -22,6 +22,8 @@ final class InternalCommandExecutor {
     var onConnectSMB: ((_ server: String?, _ share: String?, _ user: String?) -> Void)?
     /// theme 命令入口（弹主题窗）。
     var onOpenTheme: (() -> Void)?
+    /// update 命令入口（手动检查更新：弹更新窗或「已是最新」提示，全在 flow 侧决策）。
+    var onCheckUpdate: (() -> Void)?
     /// tab new 命令入口（app 侧建标签）。
     var onNewTab: (() -> Void)?
     /// tab close 命令入口（app 侧关活动标签）；返回 false=最后一个标签无法关。
@@ -51,6 +53,7 @@ final class InternalCommandExecutor {
             L10n.t(.helpTabNew),
             L10n.t(.helpTabClose),
             L10n.t(.helpTheme),
+            L10n.t(.helpUpdate),
             L10n.t(.helpRefresh),
             L10n.t(.helpLang),
             L10n.t(.helpHelp),
@@ -82,6 +85,7 @@ final class InternalCommandExecutor {
         case "smb": return doSMB(cmd.args)
         case "tab": return doTab(cmd.args)
         case "theme": onOpenTheme?(); return L10n.t(.themeOpened)
+        case "update": onCheckUpdate?(); return nil   // 反馈全在 flow 侧（弹窗/alert），命令栏不抢回显
         case "refresh":
             // 与 CommandRouter .refresh 同语义（executor 不持 router，就地内联 reloadPane
             // 两行）：远端 loadAsync 防网络卡主线程，load 缺省 preserveFocus:true 保焦点。

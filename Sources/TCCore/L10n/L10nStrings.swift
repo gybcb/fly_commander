@@ -160,6 +160,18 @@ public enum L10nTable {
         .hiddenFilesHidden: "Hidden files hidden",
         .refresh: "Refresh", .refreshed: "Pane refreshed",
         .helpRefresh: "  refresh              Reload the active pane's directory",
+        .updateWindowTitle: "Software Update",
+        .checkForUpdates: "Check for Updates…",
+        .updateAvailable: "A new version {0} is available (you are on {1}).",
+        .upgradeBtn: "Upgrade", .laterBtn: "Later", .skipVersionBtn: "Skip This Version",
+        .upToDate: "You're up to date ({0}).", .checkingUpdate: "Checking for updates…",
+        .updateFailed: "Update check failed. Please try again later.",
+        .updatePhaseDownload: "Downloading…", .updatePhaseVerify: "Verifying…",
+        .updatePhaseReplace: "Installing…",
+        .updateDone: "Updated to {0}.",
+        .gatekeeperHint: "This build is not notarized, so macOS may block its first launch. Right-click the app → Open, or run:",
+        .copyCmdBtn: "Copy command", .restartNowBtn: "Relaunch Now",
+        .helpUpdate: "  update               Check for a new version",
         .testFallbackProbe: "__PROBE_EN__",   // 仅 en 表：验证 zh→en 兜底
     ]
     public static let zh: [L10nKey: String] = [
@@ -322,5 +334,17 @@ public enum L10nTable {
         .hiddenFilesHidden: "已隐藏隐藏文件",
         .refresh: "刷新", .refreshed: "已刷新窗格",
         .helpRefresh: "  refresh              重新载入当前窗格目录",
+        .updateWindowTitle: "软件更新",
+        .checkForUpdates: "检查更新…",
+        .updateAvailable: "发现新版本 {0}（当前版本 {1}）。",
+        .upgradeBtn: "立即升级", .laterBtn: "稍后", .skipVersionBtn: "跳过此版本",
+        .upToDate: "已是最新版本（{0}）。", .checkingUpdate: "正在检查更新…",
+        .updateFailed: "检查更新失败，请稍后重试。",
+        .updatePhaseDownload: "正在下载…", .updatePhaseVerify: "正在校验…",
+        .updatePhaseReplace: "正在安装…",
+        .updateDone: "已更新到 {0}。",
+        .gatekeeperHint: "本版本未做公证，首次启动可能被 macOS 拦截。请右键 App →「打开」，或执行：",
+        .copyCmdBtn: "复制命令", .restartNowBtn: "立即重启",
+        .helpUpdate: "  update               检查是否有新版本",
     ]
 }
