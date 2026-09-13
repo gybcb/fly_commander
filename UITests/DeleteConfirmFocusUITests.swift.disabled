@@ -1,0 +1,391 @@
+import XCTest
+import Carbon
+
+/// 删除确认框 ⏎/Esc 合同的**扰动**回归（真窗 Tier-2）。
+///
+/// 为什么另开一类：`DeleteConfirmUITests` 五条用例都在「干净启动 + 无任何其他窗」下跑，
+/// 用户报的是**时好时坏**——静态接线（keyEquivalent）在干净态是好的（HEAD 实测 5/5 绿），
+/// 坏只发生在有别的窗/别的焦点态参与时。本类逐个把嫌疑扰动加进来，使每条都可判红：
+/// - H1 焦点抢占：非模态窗（预览窗 / 更新窗）在确认框之前或**期间**上屏抢 key window。
+///   更新窗 `presentWindow` 走 `makeKeyAndOrderFront`（UpdateWindowController.swift），
+///   真自动检查在启动 +10s / 每 24h（AppDelegate 接线）——正是「有时坏」的时序形状；
+///   UI 测试下自动路被 TestIsolation 抑制，故用 DEBUG 夹具 `-flyUpdateDemoWindowWhileModal`
+///   把「别的窗抢 key」精确安排到确认框已弹出之后。
+/// - H2 语言扰动：取消键是按标题 `L10n.t(.cancelBtn)` 匹配的（AlertButtons.swift），
+///   切中文后是否仍挂得上 Esc。
+/// - 焦点态扰动：命令行输入框持有焦点时弹框。
+/// - 范围判定：最后一组对**重命名框**做同一扰动，用来区分「删除专有」与「全项目 NSAlert」。
+///
+/// 夹具与定位沿用 DeleteConfirmUITests（多文件目录 + FLY_START_DIR；触发走菜单
+/// File ▸「Move to Trash」= 与 F8/命令行/右键共享的 doTrashDelete 挂点）。
+final class DeleteConfirmFocusUITests: XCTestCase {
+    var app: XCUIApplication!
+    var fixture: URL!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        switchToEnglishInputSource()
+        fixture = try makeFixture()
+        app = XCUIApplication()
+        app.terminate()
+        app.launchArguments = ["-appLanguage", "en", "-flyDisableSessionRestore", "YES"]
+        app.launchEnvironment = ["FLY_START_DIR": fixture.path]
+        app.launch()
+        XCTAssertTrue(app.tables.firstMatch.waitForExistence(timeout: 20), "主窗表格未出现")
+    }
+
+    override func tearDownWithError() throws {
+        app?.terminate()
+        if let fixture { try? FileManager.default.removeItem(at: fixture) }
+    }
+
+    /// 重启 app 并附带额外启动参数（一条用例内需要「先干净启动、再带夹具重启」时用）。
+    private func relaunch(extra: [String]) {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-appLanguage", "en", "-flyDisableSessionRestore", "YES"] + extra
+        app.launchEnvironment = ["FLY_START_DIR": fixture.path]
+        app.launch()
+        XCTAssertTrue(app.tables.firstMatch.waitForExistence(timeout: 20), "主窗表格未出现")
+    }
+
+    private func switchToEnglishInputSource() {
+        guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] else { return }
+        for src in list {
+            guard let prop = TISGetInputSourceProperty(src, kTISPropertyInputSourceID) else { continue }
+            let id = Unmanaged<CFString>.fromOpaque(prop).takeUnretainedValue() as String
+            if id == "com.apple.keylayout.ABC" { TISSelectInputSource(src); return }
+        }
+    }
+
+    private func makeFixture() throws -> URL {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fly_del_focus_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        for name in ["aa.txt", "bb.txt", "cc.txt"] {
+            try "x".write(to: base.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        return base
+    }
+
+    private func leftTable() -> XCUIElement {
+        app.tables.allElementsBoundByIndex.min { $0.frame.minX < $1.frame.minX }!
+    }
+
+    private func rowName(_ index: Int) -> String {
+        let row = leftTable().tableRows.allElementsBoundByIndex[index]
+        return row.staticTexts.allElementsBoundByIndex
+            .min { $0.frame.minX < $1.frame.minX }?.value as? String ?? ""
+    }
+
+    private func fileExists(_ name: String) -> Bool {
+        FileManager.default.fileExists(atPath: fixture.appendingPathComponent(name).path)
+    }
+
+    private func waitForPrompt(timeout: TimeInterval = 3) -> XCUIElement? {
+        for kind in [app.alerts.firstMatch, app.sheets.firstMatch, app.dialogs.firstMatch] {
+            if kind.waitForExistence(timeout: timeout) { return kind }
+        }
+        return nil
+    }
+
+    /// 焦点落到左窗格第 0 行（AX 点击 = 该窗成为 key window + 焦点行确定）。
+    private func focusFirstRow() {
+        leftTable().tableRows.allElementsBoundByIndex[0].click()
+    }
+
+    /// 触发删除：菜单 File ▸「Move to Trash」。中文界面下换成对应标题（语言扰动用例）。
+    private func triggerDelete(fileMenuTitle: String = "File", itemTitle: String = "Move to Trash") {
+        app.menuBarItems.matching(NSPredicate(format: "title == %@", fileMenuTitle)).firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title == %@", itemTitle)).firstMatch.click()
+    }
+
+    private func triggerRename(fileMenuTitle: String = "File", itemTitle: String = "Rename") {
+        app.menuBarItems.matching(NSPredicate(format: "title == %@", fileMenuTitle)).firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title == %@", itemTitle)).firstMatch.click()
+    }
+
+    /// 打开预览窗：菜单 View ▸「Preview」（比裸 F3 的 typeKey 可靠）。
+    private func openPreview() {
+        app.menuBarItems.matching(NSPredicate(format: "title == 'View'")).firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title == 'Preview'")).firstMatch.click()
+        usleep(800_000)   // 等预览窗上屏
+    }
+
+    private func updateWindow() -> XCUIElement {
+        app.windows.matching(NSPredicate(format: "title == 'Software Update'")).firstMatch
+    }
+
+    // MARK: - H1-a 预览窗在确认框之前已开
+
+    /// 扰动=预览窗已开：Esc 仍须关确认框且文件仍在。
+    /// 变异：去掉 PaneTableView Esc 分支的「FR=窗格」/modal 区分 → 键被预览窗或窗格吃掉 → 红。
+    func testEscapeCancelsDeleteWithPreviewOpen() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        openPreview()
+        focusFirstRow()          // 焦点还回主窗（预览窗是独立 key window）
+        triggerDelete()
+        guard let alert = waitForPrompt() else { return XCTFail("扰动下确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "预览窗开着时 Esc 仍应关闭确认框")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    /// 同上扰动，⏎ 仍须确认删除。
+    func testEnterConfirmsDeleteWithPreviewOpen() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        openPreview()
+        focusFirstRow()
+        triggerDelete()
+        guard waitForPrompt() != nil else { return XCTFail("扰动下确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "预览窗开着时 ⏎ 仍应确认删除")
+    }
+
+    // MARK: - H1-b 更新窗在确认框之前已开（常驻非模态窗 + 裸 ⏎/Esc 键等价的共存）
+
+    /// 扰动=更新窗启动即在屏：Esc 关确认框、且**不得**顺手把更新窗也关掉（更新窗合同独立）。
+    func testEscapeCancelsDeleteWithUpdateWindowOpen() throws {
+        let target = rowName(0)
+        relaunch(extra: ["-flyUpdateDemoWindow", "YES"])
+        XCTAssertTrue(updateWindow().waitForExistence(timeout: 5), "更新夹具窗未出现")
+        focusFirstRow()
+        triggerDelete()
+        guard let alert = waitForPrompt() else { return XCTFail("扰动下确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "更新窗在屏时 Esc 仍应关闭确认框")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    /// 扰动=更新窗在屏，⏎ 确认删除（并证明 ⏎ 没被更新窗「立即升级」抢走）。
+    func testEnterConfirmsDeleteWithUpdateWindowOpen() throws {
+        let target = rowName(0)
+        relaunch(extra: ["-flyUpdateDemoWindow", "YES"])
+        XCTAssertTrue(updateWindow().waitForExistence(timeout: 5), "更新夹具窗未出现")
+        focusFirstRow()
+        triggerDelete()
+        guard waitForPrompt() != nil else { return XCTFail("扰动下确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "更新窗在屏时 ⏎ 仍应确认删除")
+    }
+
+    // MARK: - H1-c 确认框弹出**之后**别的人才去抢 key window（真·时好时坏）
+
+    /// 时序：弹确认框 → 1.2s 后更新窗 makeKeyAndOrderFront → 再按 Esc。
+    /// 这是「启动一会儿后才坏 / 有时按了没反应」的直接模型：确认框还开着但已不是 key window。
+    /// 变异：modal 期间允许非模态窗抢 key（去掉 modal 守卫）→ 红（Esc 打到更新窗，框不关、文件仍在→断言红）。
+    func testEscapeCancelsDeleteWhenOtherWindowStealsKeyWhileModal() throws {
+        let target = rowName(0)
+        relaunch(extra: ["-flyUpdateDemoWindowWhileModal", "YES", "-flyUpdateDemoDelayMs", "1500"])
+        focusFirstRow()
+        triggerDelete()
+        guard let alert = waitForPrompt() else { return XCTFail("确认框未出现") }
+        XCTAssertTrue(updateWindow().waitForExistence(timeout: 4), "夹具未能在 modal 期间呈现更新窗")
+        usleep(300_000)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(600_000)
+        XCTAssertFalse(alert.exists, "他窗抢过 key 之后 Esc 仍须关闭确认框")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    /// 同一时序扰动下的 ⏎ 路：必须确认删除，**绝不能**触发更新窗的「立即升级」。
+    func testEnterConfirmsDeleteWhenOtherWindowStealsKeyWhileModal() throws {
+        let target = rowName(0)
+        relaunch(extra: ["-flyUpdateDemoWindowWhileModal", "YES", "-flyUpdateDemoDelayMs", "1500"])
+        focusFirstRow()
+        triggerDelete()
+        guard waitForPrompt() != nil else { return XCTFail("确认框未出现") }
+        XCTAssertTrue(updateWindow().waitForExistence(timeout: 4), "夹具未能在 modal 期间呈现更新窗")
+        usleep(300_000)
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "他窗抢 key 后 ⏎ 仍须确认删除（且不得走升级路）")
+    }
+
+    // MARK: - 焦点态扰动：命令行输入框持焦
+
+    /// 右箭头 → 命令行输入框持焦 → 菜单触发删除 → Esc 关框（不得漏回命令行的「清输入/还焦」语义）。
+    func testEscapeCancelsDeleteWithCommandLineFocused() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: [])   // → 激活命令行
+        usleep(200_000)
+        triggerDelete()
+        guard let alert = waitForPrompt() else { return XCTFail("扰动下确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "命令行持焦时 Esc 仍应关闭确认框")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    // MARK: - H2 语言扰动（取消键按标题匹配 → 中文界面必须同样成立）
+
+    /// 中文界面：Esc 关框。变异：取消键按 `L10n.t(.cancelBtn)` 标题匹配在中文下失配 → 红。
+    func testEscapeCancelsDeleteInChinese() throws {
+        let target = rowName(0)
+        relaunchChinese()
+        focusFirstRow()
+        triggerDelete(fileMenuTitle: "文件", itemTitle: "移到废纸篓")
+        guard let alert = waitForPrompt() else { return XCTFail("中文界面确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "中文界面 Esc 仍应关闭确认框")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    /// 中文界面：⏎ 确认删除。
+    func testEnterConfirmsDeleteInChinese() throws {
+        let target = rowName(0)
+        relaunchChinese()
+        focusFirstRow()
+        triggerDelete(fileMenuTitle: "文件", itemTitle: "移到废纸篓")
+        guard waitForPrompt() != nil else { return XCTFail("中文界面确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "中文界面 ⏎ 仍应确认删除")
+    }
+
+    // MARK: - 范围判定：另一处 NSAlert（重命名）受同一扰动
+
+    /// 重命名框 + 更新窗在屏：Esc 关框。删除专有 vs 全项目 NSAlert 的分诊断言。
+    func testEscapeCancelsRenameWithUpdateWindowOpen() throws {
+        relaunch(extra: ["-flyUpdateDemoWindow", "YES"])
+        XCTAssertTrue(updateWindow().waitForExistence(timeout: 5), "更新夹具窗未出现")
+        focusFirstRow()
+        triggerRename()
+        guard let alert = waitForPrompt() else { return XCTFail("重命名框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "更新窗在屏时重命名框 Esc 应关闭")
+    }
+
+    // MARK: - 重入扰动：重复触发删除（⌘⌫ 连按 / F8 长按）叠框
+
+    /// 连按两次删除入口 → 只应该有一个确认框。叠出第二个同名框 = 用户按一次 Esc
+    /// 只关掉最上层，看起来「Esc 关不掉删除对话框」；按 ⏎ 也只确认一层。
+    func testDoubleTriggerShowsOnlyOneDeletePrompt() throws {
+        focusFirstRow()
+        triggerDelete()
+        _ = waitForPrompt()
+        triggerDelete()                                   // 第一个框还开着再按一次
+        usleep(400_000)
+        XCTAssertEqual(app.alerts.count + app.sheets.count + app.dialogs.count, 1,
+                       "重复触发不得叠出第二个确认框（现形：按一次 Esc 框仍在）")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(anyPromptExists(), "一次 Esc 必须把确认流全部关闭")
+    }
+
+    /// 叠框场景下的 ⏎ 路：按一次 ⏎ 后不应还残留同名框（=「回车没确认」的体感）。
+    func testDoubleTriggerEnterConfirmsWithoutLeftoverPrompt() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        triggerDelete()
+        _ = waitForPrompt()
+        triggerDelete()
+        usleep(400_000)
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "⏎ 应完成删除")
+        usleep(300_000)
+        XCTAssertFalse(anyPromptExists(), "删除完成后不应残留确认框")
+    }
+
+    private func anyPromptExists() -> Bool {
+        app.alerts.firstMatch.exists || app.sheets.firstMatch.exists || app.dialogs.firstMatch.exists
+    }
+
+    // MARK: - 入口路扰动（同一 doTrashDelete 挂点的不同入口）
+
+    /// 右键菜单 →「Move to Trash」：菜单追踪循环结束后弹模态框，焦点交接与菜单条不同。
+    func testEscapeCancelsDeleteViaContextMenu() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        leftTable().tableRows.allElementsBoundByIndex[0].rightClick()
+        app.menuItems.matching(NSPredicate(format: "title == 'Move to Trash'")).firstMatch.click()
+        guard let alert = waitForPrompt() else { return XCTFail("右键入口确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "右键入口的确认框 Esc 应关闭")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    /// 工具栏垃圾桶 → menuTrashDelete → 确认框：⏎ 确认。
+    func testEnterConfirmsDeleteViaToolbarButton() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        app.buttons.matching(NSPredicate(format: "label == 'Move to Trash' || identifier == 'delete'"))
+            .firstMatch.click()
+        guard waitForPrompt() != nil else { return XCTFail("工具栏入口确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(target, timeout: 5)
+        XCTAssertFalse(fileExists(target), "工具栏入口的确认框 ⏎ 应确认删除")
+    }
+
+    /// 真·命令行路：右箭头 → 敲 `del` → ⏎ 执行（确认框在 ⏎ 的事件内弹出）→ Esc。
+    func testEscapeCancelsDeleteViaDelCommand() throws {
+        let target = rowName(0)
+        focusFirstRow()
+        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: [])
+        usleep(200_000)
+        app.typeText("del")
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])   // 执行命令 → 弹确认框
+        guard let alert = waitForPrompt() else { return XCTFail("命令行入口确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "命令行 del 确认框 Esc 应关闭")
+        XCTAssertTrue(fileExists(target), "取消后文件必须仍在")
+    }
+
+    // MARK: - 窗格 / 选择态扰动
+
+    /// 活动窗格 = 右窗格：确认框合同应与左侧完全一致。
+    func testEscapeCancelsDeleteInRightPane() throws {
+        let rightTable = app.tables.allElementsBoundByIndex.max { $0.frame.minX < $1.frame.minX }!
+        rightTable.tableRows.allElementsBoundByIndex[0].click()
+        usleep(200_000)
+        triggerDelete()
+        guard let alert = waitForPrompt() else { return XCTFail("右窗格确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(500_000)
+        XCTAssertFalse(alert.exists, "右窗格确认框 Esc 应关闭")
+    }
+
+    /// 多选（⌃ 单击两个文件）：⏎ 一次确认删两个。
+    func testEnterConfirmsDeleteWithMultiSelection() throws {
+        let first = rowName(0)
+        let second = rowName(1)
+        let rows = leftTable().tableRows.allElementsBoundByIndex
+        rows[0].click()
+        rows[1].click(forDuration: 0.1, withKeyModifierFlags: [.control])
+        usleep(200_000)
+        triggerDelete()
+        guard waitForPrompt() != nil else { return XCTFail("多选确认框未出现") }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        waitUntilGone(first, timeout: 5)
+        XCTAssertFalse(fileExists(first), "⏎ 应确认删除多选第 1 项")
+        XCTAssertFalse(fileExists(second), "⏎ 应确认删除多选第 2 项")
+    }
+
+    // MARK: - 小工具
+
+    private func relaunchChinese() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-appLanguage", "zh", "-flyDisableSessionRestore", "YES"]
+        app.launchEnvironment = ["FLY_START_DIR": fixture.path]
+        app.launch()
+        XCTAssertTrue(app.tables.firstMatch.waitForExistence(timeout: 20), "主窗表格未出现")
+    }
+
+    private func waitUntilGone(_ name: String, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while fileExists(name) && Date() < deadline { usleep(100_000) }
+    }
+}
