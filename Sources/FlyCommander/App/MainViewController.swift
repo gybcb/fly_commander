@@ -29,6 +29,10 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     /// 传播与注入点 = `wirePaneCallbacks`（覆盖 loadView 两初生 pane 与全部新建路）。
     private var showHiddenFiles: Bool = UserDefaults.standard.bool(forKey: "showHiddenFiles")
     private var commandBar: CommandLineBar!
+    /// 底部常驻状态栏（与命令栏同槽 34pt，isHidden 互换；见 BottomStatusBar 头注释）。
+    private var bottomStatus: BottomStatusBar!
+    /// 命令栏当前是否占着底部槽位（内部测试/变异锁读点）。
+    private(set) var isCommandLineVisible = false
     private var commandExecutor: InternalCommandExecutor!
     /// router（本地快路径/元操作）与 transferEngine（远端传输）共用同一引擎，保证语义一致。
     private let engine = OperationEngine()
@@ -196,6 +200,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
 
         // 底部命令栏先建（PaneTableView/SidePaneContainer 需要 commandBar 引用）。
         commandBar = CommandLineBar()
+        bottomStatus = BottomStatusBar()
 
         // 命令栏执行器（T7）：copy/move 复用 router 的传输路径（远端自动走后台）。
         commandExecutor = InternalCommandExecutor(workspace: workspace, engine: engine)
@@ -253,8 +258,19 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
 
         commandBar.onExecute = { [weak self] line in
             guard let self else { return }
-            self.commandBar.showOutput(self.commandExecutor.execute(line: line))
+            let out = self.commandExecutor.execute(line: line)
+            self.commandBar.showOutput(out)
+            // 回显镜像到状态栏：命令栏执行/取消后即收回，回显须活在常驻栏里
+            //（UI 测试的 cmdBarOutput 读点也已迁到 bottomStatusMessage）。
+            self.bottomStatus.showMessage(out)
         }
+        // 命令栏与状态栏同槽互换：activate() 第一时间换出命令栏（先显示后聚焦，
+        // 隐藏视图拿不到第一响应者）；输入框失焦（回车/Esc/点行/切标签…一切回焦路径
+        // 的共同终点）收回。幂等守卫在 setCommandLineVisible 内（自隐递归靠它挡）。
+        commandBar.onActivate = { [weak self] in self?.setCommandLineVisible(true) }
+        commandBar.onResignFocus = { [weak self] in self?.setCommandLineVisible(false) }
+        // Esc 取消：连状态栏里的回显镜像一起清（回车/点行收回不清——回显留到下次命令）。
+        commandBar.onCleared = { [weak self] in self?.bottomStatus.showMessage(nil) }
         // 命令栏 Enter（执行后）/ Esc（清空后）：焦点交回活动窗格（TC 行为）。
         commandBar.onReturnToPane = { [weak self] in
             guard let self else { return }
@@ -268,16 +284,26 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         }
 
         root.addSubview(splitView)
+        root.addSubview(bottomStatus!)
         root.addSubview(commandBar!)
+        // 底部同槽：splitView 底 = root 底 −34（固定），命令栏与状态栏都钉 root 底，
+        // isHidden 互换——每次唤出/收回零约束改写、splitView 不重排（分隔条不抖）。
+        // 两栏终身在层级里：removeFromSuperview 会让 commandBar.activate 的
+        // `guard let win = window` 静默失败（右箭头失效）。
         NSLayoutConstraint.activate([
             commandBar!.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             commandBar!.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             commandBar!.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            bottomStatus!.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bottomStatus!.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bottomStatus!.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             splitView.topAnchor.constraint(equalTo: root.topAnchor),
             splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: commandBar!.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -BottomStatusBar.height),
         ])
+        commandBar!.isHidden = true        // 默认隐藏命令行（用户定档），状态栏常驻
+        bottomStatus!.isHidden = false
 
         self.view = root
         split = splitView
@@ -321,6 +347,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         leftContainer.show(tabGroup: workspace.leftTabs, isActiveSide: workspace.active == .left)
         rightContainer.show(tabGroup: workspace.rightTabs, isActiveSide: workspace.active == .right)
         commandBar!.refreshLocalizedText()
+        bottomStatus!.refreshLocalizedText()
         mainWindowController?.refreshLocalizedLabels()
         searchWindow.refreshLocalizedText()
         connectionWindow.refreshLocalizedText()
@@ -511,6 +538,47 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         // 隐藏项，operationIDs 会回退成 [focusID]——用它状态栏会谎报「已选 1 项」。
         let op = a.operationTargets.count
         statusLabel?.stringValue = op > 0 ? L10n.t(.selectedCount, "\(op)") : ""
+        updateBottomStatus(for: a)
+    }
+
+    /// 底部状态栏内容刷新（工具栏行的既有语义逐字节不动，这里只喂底部）。
+    /// 多选门禁 = `selection.marked` 非空：`operationIDs` 无标记时回退 [focusID]
+    ///（SelectionModel.swift:43），纯焦点会被它误报「已选 1 项」。
+    private func updateBottomStatus(for a: FilePane) {
+        if a.selection.marked.isEmpty {
+            let line = a.focusedItem.map(Self.statusLine) ?? L10n.t(.statusEmptyPane)
+            bottomStatus?.show(fileInfo: line, selectionInfo: nil)
+        } else {
+            let targets = a.operationTargets   // 可见感知（筛选隐藏的不计）
+            guard !targets.isEmpty else {     // 全被筛掉：无可报，清左栏（工具栏同款教训）
+                bottomStatus?.show(fileInfo: "", selectionInfo: nil)
+                return
+            }
+            let bytes = targets.reduce(Int64(0)) { $0 &+ max(0, $1.size) }
+            bottomStatus?.show(fileInfo: "", selectionInfo: L10n.t(
+                .statusSelectedTotal, "\(targets.count)",
+                ByteCountFormatter().string(fromByteCount: bytes)))
+        }
+    }
+
+    /// 焦点文件行文案：「名 · 大小/文件夹 · 日期」。目录不给字节（对齐 FileCellView
+    /// 大小列对目录留空的既有约定）。纯函数便于单测。
+    static func statusLine(_ item: FileItem) -> String {
+        let sizePart = item.isDirectory
+            ? L10n.t(.statusFolder)
+            : ByteCountFormatter().string(fromByteCount: max(0, item.size))
+        return [item.name, sizePart, L10n.localized(date: item.modificationDate)]
+            .joined(separator: " · ")
+    }
+
+    /// 命令栏 ↔ 状态栏同槽互换的唯一收口。幂等守卫兼重入守卫：收回命令栏时
+    /// 输入框随父视图隐藏会再触发一次 resignFirstResponder → 回调自指，靠守卫挡回。
+    func setCommandLineVisible(_ show: Bool) {
+        guard isCommandLineVisible != show else { return }
+        isCommandLineVisible = show
+        commandBar?.isHidden = !show
+        bottomStatus?.isHidden = show
+        if !show { updateBars() }   // 收回瞬间让焦点行回位
     }
 
     // MARK: - Toolbar wiring
@@ -755,7 +823,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         alert.addButton(withTitle: L10n.t(.okBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         alert.setDefaultConfirmCancel()
-        if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
+        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.rename(to: field.stringValue)
         }
     }
@@ -768,7 +836,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         alert.addButton(withTitle: L10n.t(.createBtn))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         alert.setDefaultConfirmCancel()
-        if alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
+        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
             router.makeDirectory(named: field.stringValue)
         }
     }
@@ -783,8 +851,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         alert.addButton(withTitle: L10n.t(.skipAll))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         // 冲突框：覆盖是第 1 按钮 → ⏎ 默认落「覆盖」（破坏性默认，与 TC/mc 一致）。
+        // **必须保持同步**：返回值被传输引擎同步消费（TransferEngine.prompt → promptOnMain 用
+        // DispatchQueue.main.sync 阻塞等结果），改成异步会立即返回错值甚至死锁。
+        // `runConfirmModal()` 本身是同步的（返回 runModal 原值），故这里可以照换。
         alert.setDefaultConfirmCancel()
-        switch alert.runModal() {
+        switch alert.runConfirmModal() {
         case .alertFirstButtonReturn: return .overwrite
         case .alertSecondButtonReturn: return .skip
         case .alertThirdButtonReturn: return .overwriteAll
@@ -806,7 +877,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         alert.addButton(withTitle: L10n.t(.deleteWord))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         alert.setDefaultConfirmCancel()
-        if alert.runModal() != .alertFirstButtonReturn { return }
+        if alert.runConfirmModal() != .alertFirstButtonReturn { return }
         let urls = targets.map { $0.path.url }
         NSWorkspace.shared.recycle(urls) { [weak self] _, _ in
             DispatchQueue.main.async {
@@ -826,7 +897,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         alert.addButton(withTitle: L10n.t(.deleteWord))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         alert.setDefaultConfirmCancel()
-        if alert.runModal() != .alertFirstButtonReturn { return }
+        if alert.runConfirmModal() != .alertFirstButtonReturn { return }
 
         let source = pane.source
         let engine = self.engine

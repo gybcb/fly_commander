@@ -40,6 +40,8 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case accentColorHint, fileColorHint, addRule, restoreDefaults
     // —— 命令栏（CommandLineBar）——
     case commandBarPrompt, commandBarPlaceholder
+    // —— 底部状态栏（BottomStatusBar）——
+    case statusFolder, statusSelectedTotal, statusEmptyPane
     // —— SFTP/SMB 连接窗（ConnectionViewController / SMBConnectionViewController）——
     case fieldPassword, fieldKeyFile, rememberPassword, fieldPassphrase
     case fieldHost, fieldPort, fieldUser, fieldKey, chooseWord

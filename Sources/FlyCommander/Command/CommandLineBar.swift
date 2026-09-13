@@ -1,12 +1,12 @@
 import AppKit
 import TCCore
 
-/// TC 式底部命令栏：左 "命令:" 提示 + 输入行（首响应者在窗格表格，键入经拦截追加），
-/// 右为输出行（执行结果中文回显）。高 34pt，系统色。
+/// TC 式底部命令栏：左 "命令:" 提示 + 输入行，右为输出行（执行结果中文回显）。高 34pt，系统色。
 ///
-/// 输入缓冲由本视图持有（`buffer`）：窗格 keyDown 拦截字符/Backspace/Return/Esc
-/// 调用 append/deleteBackward/execute/clear；鼠标点进输入框打字也走 NSTextField
-/// 自己的编辑，controlTextDidChange 反向同步 buffer——两条路径最终一致。
+/// 默认隐藏，与 `BottomStatusBar` 同槽互换：窗格右箭头 → `activate()`（先经 `onActivate`
+/// 让持有者把自己换出来）；后续键入由输入框原生编辑接管。输入框失去第一响应者
+/// （回车执行 / Esc 清空 / 点表格行 / 切标签等一切回焦路径）→ `onResignFocus` →
+/// 持有者收回本栏、状态栏回位。
 final class CommandLineBar: NSView {
     private let input = CommandBarInputField()
     private let output = NSTextField(labelWithString: "")
@@ -21,6 +21,14 @@ final class CommandLineBar: NSView {
     var onExecute: ((String) -> Void)?
     /// Enter（执行后）或 Esc（清空后）触发：把第一响应者交回活动窗格。
     var onReturnToPane: (() -> Void)?
+    /// `activate()` 入口第一时间触发（先于 makeFirstResponder）：持有者在此把本栏
+    /// 从隐藏态换出来——AppKit 拒绝把第一响应者给隐藏视图，必须先显示再聚焦。
+    var onActivate: (() -> Void)?
+    /// 输入框失去第一响应者（一切回焦路径的共同终点）：持有者在此收回本栏。
+    var onResignFocus: (() -> Void)?
+    /// Esc 清空后触发：持有者在此清掉**状态栏里的回显镜像**（回车不清——TC 语义是
+    /// 回显留到下一条命令或 Esc 为止，点表格行收回同样不清）。
+    var onCleared: (() -> Void)?
     /// cd 补全数据源：返回当前活动窗格所在目录的条目（app 层注入）。
     var suggestionProvider: (() -> [FileItem])?
 
@@ -103,6 +111,7 @@ final class CommandLineBar: NSView {
 
     /// 让输入框成为第一响应者并把光标移到末尾（右箭头激活时用）。
     func activate() {
+        onActivate?()   // 先让持有者把本栏显示出来，再聚焦（隐藏视图拿不到第一响应者）
         guard let win = window else { return }
         win.makeFirstResponder(input)
         focusFieldToEnd()
@@ -229,6 +238,7 @@ final class CommandLineBar: NSView {
     /// Esc：清空输入 + 输出，焦点返回窗格（TC 行为）。
     private func handleEscape() {
         clearAll()
+        onCleared?()        // 状态栏回显镜像只在这里清（回车/点行收回不清）
         onReturnToPane?()
     }
 
@@ -238,6 +248,14 @@ final class CommandLineBar: NSView {
 }
 
 extension CommandLineBar: NSTextFieldDelegate {
+    /// 编辑结束（回车/Esc/点行/切标签…一切离开输入框的路径都经这里）→ 持有者收回本栏。
+    /// **不能用输入框 resignFirstResponder**：makeFirstResponder(字段) 进入编辑态时
+    /// AppKit 经 _NSEditTextCellWithOptions 会先调字段自己的 resignFirstResponder
+    ///（field editor 接管 FR），激活瞬间就误触发收回（实测调用栈钉死）。
+    func controlTextDidEndEditing(_ obj: Notification) {
+        onResignFocus?()
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         // programmatic 写入（Tab/点击补全）经 buffer.didSet 同步 input.stringValue 后也会
         // 触发本回调——此时 buffer==input.stringValue（echo），须跳过重置，否则刚设的

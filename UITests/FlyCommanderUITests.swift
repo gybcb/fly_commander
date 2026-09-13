@@ -543,16 +543,37 @@ final class FlyCommanderUITests: XCTestCase {
                       "Tab 切右栏后 Down 应移动右栏焦点（文件行），预览应弹出；未弹出说明方向键仍落在左窗格")
     }
 
-    // MARK: - 底部命令栏（T7：键入经窗格 keyDown 拦截 → 命令栏 buffer → Return 执行）
+    // MARK: - 底部命令栏（默认隐藏：右箭头唤出 → 输入框原生键入 → Return 执行后自动收回）
 
-    /// 启动后键盘第一响应者是左窗格表格；按右箭头激活命令栏（TC 行为）后，
+    /// 启动后键盘第一响应者是左窗格表格；按右箭头唤出命令栏（TC 行为）后，
     /// 键入交给命令栏字段编辑，Return 执行。
+    /// 回显读点 = 状态栏镜像 `bottomStatusMessage`（常驻）：命令栏执行/Esc 后即收回，
+    /// 其内 cmdBarOutput 随之从 AX 消失，回显镜像活在常驻状态栏里（TC 语义）。
     private var cmdBarOutput: XCUIElement {
         app.windows.element(boundBy: 0).staticTexts
-            .matching(NSPredicate(format: "identifier == 'cmdBarOutput'")).firstMatch
+            .matching(NSPredicate(format: "identifier == 'bottomStatusMessage'")).firstMatch
     }
 
-    /// 从窗格按右箭头激活命令栏（焦点移到输入框）。每用例 app 全新启动、焦点在窗格，
+    private var cmdBarInput: XCUIElement {
+        app.windows.element(boundBy: 0).textFields
+            .matching(NSPredicate(format: "identifier == 'cmdBarInput'")).firstMatch
+    }
+
+    /// 轮询回显镜像直到含指定子串（或超时）。**必须轮询**：镜像 label 启动即存在
+    ///（空串），旧的 `waitForExistence` 对"文本出现"不再提供任何等待（旧版里
+    /// cmdBarOutput 是随命令栏出现的，等存在=等回显——语义已变，别改回去）。
+    private func waitCmdEcho(containing needle: String, timeout: TimeInterval = 3) -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        var text = ""
+        repeat {
+            text = (cmdBarOutput.value as? String) ?? ""
+            if text.contains(needle) { return text }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        return text
+    }
+
+    /// 从窗格按右箭头唤出命令栏（焦点移到输入框）。每用例 app 全新启动、焦点在窗格，
     /// 故只需一次。
     private func activateCommandBar() {
         app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: [])
@@ -562,8 +583,7 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        XCTAssertTrue(cmdBarOutput.waitForExistence(timeout: 2), "命令栏输出行缺失")
-        let text = (cmdBarOutput.value as? String) ?? ""
+        let text = waitCmdEcho(containing: "9 items")
         XCTAssertTrue(text.contains("9 items"), "ls 应回显夹具 9 项，实际：\(text)")
     }
 
@@ -571,7 +591,7 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("help") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        let text = (cmdBarOutput.value as? String) ?? ""
+        let text = waitCmdEcho(containing: "Available commands")
         XCTAssertTrue(text.contains("Available commands"), "help 应回显命令清单，实际：\(text)")
         XCTAssertTrue(text.contains("mkdir") && text.contains("sftp"), "清单应含 mkdir/sftp：\(text)")
     }
@@ -580,14 +600,16 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("ls") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        XCTAssertTrue(((cmdBarOutput.value as? String) ?? "").contains("9 items"), "前置：ls 已回显")
-        // Esc 清输入+输出：再激活命令栏放一个字符，Esc 后应清空输出并回到窗格
+        XCTAssertTrue(waitCmdEcho(containing: "9 items").contains("9 items"), "前置：ls 已回显")
+        // Esc 清输入+输出（含状态栏镜像）并收回命令栏：再激活放一个字符，Esc 后
+        // 输出镜像应清空、cmdBarInput 应从 AX 消失（收回）。
         activateCommandBar()
         app.typeKey(XCUIKeyboardKey(rawValue: "x"), modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
         let text = (cmdBarOutput.value as? String) ?? ""
-        XCTAssertTrue(text.isEmpty, "Esc 后输出行应清空，实际：\(text)")
+        XCTAssertTrue(text.isEmpty, "Esc 后输出镜像应清空，实际：\(text)")
+        XCTAssertFalse(cmdBarInput.exists, "Esc 后命令栏应收回（cmdBarInput 不在 AX 树）")
     }
 
     // MARK: - 多标签（P5：标签条可见 / ⌘T 增 / ⌘W 减 / 每侧保底 1）
@@ -639,8 +661,8 @@ final class FlyCommanderUITests: XCTestCase {
         activateCommandBar()
         for ch in Array("cd sub") { app.typeKey(XCUIKeyboardKey(rawValue: String(ch)), modifierFlags: []) }
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        // 命令栏回显确认真的导航了（否则下方标签断言失败会误导成"标签没更新"）
-        let text = (cmdBarOutput.value as? String) ?? ""
+        // 命令回显镜像确认真的导航了（否则下方标签断言失败会误导成"标签没更新"）
+        let text = waitCmdEcho(containing: "sub")
         XCTAssertTrue(text.contains("sub"), "cd sub 应回显进入子目录，实际：\(text)")
         // 导航前标签是启动目录名；导航进 sub 后标签按钮 title 应变成 sub
         Thread.sleep(forTimeInterval: 0.5)
