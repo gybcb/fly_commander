@@ -13,8 +13,12 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     var rightContainer: SidePaneContainer!
     private var split: NSSplitView!
     private let searchWindow = SearchWindowController()
-    private let connectionWindow = ConnectionWindowController()
-    private let smbConnectionWindow = SMBConnectionWindowController()
+    /// 统一连接窗：executors 注入接线适配层（SFTP 的 home:String→TCPath 转换在此侧）。
+    private let connectionWindow: ConnectionWindowController = {
+        let wc = ConnectionWindowController()
+        wc.executors = RemoteConnectExecutors.defaults
+        return wc
+    }()
     private let themeWindow = ThemeWindowController()
     /// 更新流程（checker→窗→installer 编排；单窗复用，AppDelegate 首检共用同一入口）。
     let updateFlow = UpdateFlow()
@@ -206,12 +210,13 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         commandExecutor = InternalCommandExecutor(workspace: workspace, engine: engine)
         commandExecutor.onDelete = { [weak self] req in self?.doTrashDelete(pane: req.pane, targets: req.targets) }
         commandExecutor.onConnectSFTP = { [weak self] host, port in
-            self?.connectionWindow.setPendingHost(host, port: port)
-            self?.beginConnection()
+            self?.beginConnection(proto: .sftp, host: host, port: port.map(Int.init))
         }
         commandExecutor.onConnectSMB = { [weak self] server, share, user in
-            self?.smbConnectionWindow.setPending(server: server, share: share, user: user)
-            self?.beginSMBConnection()
+            self?.beginConnection(proto: .smb, server: server, share: share, user: user)
+        }
+        commandExecutor.onConnectFTP = { [weak self] host, port in
+            self?.beginConnection(proto: .ftp, host: host, port: port.map(Int.init))
         }
         commandExecutor.onOpenTheme = { [weak self] in self?.themeWindow.present() }
         commandExecutor.onCheckUpdate = { [weak self] in self?.updateFlow.check(manual: true) }
@@ -334,7 +339,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
 
     /// 语言变更后的全量重刷：重建整份主菜单（MainMenu 为纯静态、可重入），
     /// 重设两窗格列头标题，刷新命令栏常驻文案与状态栏。对话框/告警在调用时现取
-    /// t()，本就随语言更新，无需在此重绘。Theme/Connection/SMB/Search 四个常驻窗口
+    /// t()，本就随语言更新，无需在此重绘。Theme/Connection/Search 三个常驻窗口
     /// 缓存其 VC、标签在 loadView 冻结，故各经其 WindowController 就地重刷（含窗口标题）；
     /// 预览窗（第五个常驻单例，首次预览才建）经 PreviewWindowController 的可选单例短路——
     /// 从未预览过时 _shared 为 nil，重刷不建窗、绝不 showWindow（未显示的窗口不被弹出）。
@@ -351,7 +356,6 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         mainWindowController?.refreshLocalizedLabels()
         searchWindow.refreshLocalizedText()
         connectionWindow.refreshLocalizedText()
-        smbConnectionWindow.refreshLocalizedText()
         themeWindow.refreshLocalizedText()
         PreviewWindowController.refreshLocalizedTextIfCreated()
         TransferProgressWindowController.refreshLocalizedTextIfCreated()
@@ -653,11 +657,31 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         return true
     }
 
+    /// 打开统一「连接到远端」窗；成功后在活动侧开新标签接到远端源（远端 home 目录），
+    /// 不覆盖当前活动标签。proto=nil=表单当前协议（缺省 SFTP）；其余参数为预填。
+    private func beginConnection(proto: RemoteProto? = nil, host: String? = nil, port: Int? = nil,
+                                 server: String? = nil, share: String? = nil, user: String? = nil) {
+        connectionWindow.setPending(proto: proto, host: host, port: port,
+                                    server: server, share: share, user: user)
+        connectionWindow.onConnected = { [weak self] source, home in
+            guard let self else { return }
+            let side = self.workspace.active
+            let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
+            let container = (side == .left) ? self.leftContainer! : self.rightContainer!
+            let pane = FilePane(id: side, source: source, startPath: home)
+            tab.add(pane)                                   // 新标签（保留当前活动标签）
+            wirePaneCallbacks(pane)
+            container.addTab(pane: pane, workspace: self.workspace, router: self.router)
+            pane.loadAsync()                                // 远端后台加载
+            self.applyActiveState()
+        }
+        connectionWindow.present()
+    }
+
     @objc func menuConnect(_ sender: Any?) { beginConnection() }
 
-    @objc func menuSMBConnect(_ sender: Any?) { beginSMBConnection() }
-
     @objc func menuTheme(_ sender: Any?) { themeWindow.present() }
+
     @objc func menuCheckUpdate(_ sender: Any?) { updateFlow.check(manual: true) }
 
     @objc func menuSelectAll(_ sender: Any?) { router.execute(.selectAll) }
@@ -773,44 +797,6 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
             }
             pane.revealItem(id: hit.path.pathString)
         }
-    }
-
-    /// 打开 SFTP 连接窗；成功后在活动侧开新标签接到远端源（远端 home 目录），
-    /// 不覆盖当前活动标签。
-    private func beginConnection() {
-        connectionWindow.onConnected = { [weak self] source, home in
-            guard let self else { return }
-            let side = self.workspace.active
-            let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
-            let container = (side == .left) ? self.leftContainer! : self.rightContainer!
-            let path = SFTPSource.tcPath(host: source.config.host,
-                                         port: Int(source.config.port),
-                                         remotePath: home)
-            let pane = FilePane(id: side, source: source, startPath: path)
-            tab.add(pane)                                   // 新标签（保留当前活动标签）
-            wirePaneCallbacks(pane)
-            container.addTab(pane: pane, workspace: self.workspace, router: self.router)
-            pane.loadAsync()                                // 远端后台加载
-            self.applyActiveState()
-        }
-        connectionWindow.present()
-    }
-
-    /// 打开 SMB 连接窗；成功后在活动侧开新标签接到 SMB 源（share 根）。
-    private func beginSMBConnection() {
-        smbConnectionWindow.onConnected = { [weak self] source, home in
-            guard let self else { return }
-            let side = self.workspace.active
-            let tab = (side == .left) ? self.workspace.leftTabs : self.workspace.rightTabs
-            let container = (side == .left) ? self.leftContainer! : self.rightContainer!
-            let pane = FilePane(id: side, source: source, startPath: home)
-            tab.add(pane)                                   // 新标签（保留当前活动标签）
-            wirePaneCallbacks(pane)
-            container.addTab(pane: pane, workspace: self.workspace, router: self.router)
-            pane.loadAsync()                                // 远端后台加载
-            self.applyActiveState()
-        }
-        smbConnectionWindow.present()
     }
 
     private func promptRename() {

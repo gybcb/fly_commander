@@ -20,6 +20,8 @@ final class InternalCommandExecutor {
     var onConnectSFTP: ((_ host: String?, _ port: UInt16?) -> Void)?
     /// smb 命令入口（弹连接窗；server/share/user 可预填，nil=不预填）。
     var onConnectSMB: ((_ server: String?, _ share: String?, _ user: String?) -> Void)?
+    /// ftp 命令入口（弹连接窗并预选 FTP；host/port 可预填，nil=不预填）。
+    var onConnectFTP: ((_ host: String?, _ port: UInt16?) -> Void)?
     /// theme 命令入口（弹主题窗）。
     var onOpenTheme: (() -> Void)?
     /// update 命令入口（手动检查更新：弹更新窗或「已是最新」提示，全在 flow 侧决策）。
@@ -50,6 +52,7 @@ final class InternalCommandExecutor {
             L10n.t(.helpEdit),
             L10n.t(.helpSftp),
             L10n.t(.helpSmb),
+            L10n.t(.helpFtp),
             L10n.t(.helpTabNew),
             L10n.t(.helpTabClose),
             L10n.t(.helpTheme),
@@ -83,6 +86,7 @@ final class InternalCommandExecutor {
         case "edit": return doEdit()
         case "sftp": return doSFTP(cmd.args)
         case "smb": return doSMB(cmd.args)
+        case "ftp": return doFTP(cmd.args)
         case "tab": return doTab(cmd.args)
         case "theme": onOpenTheme?(); return L10n.t(.themeOpened)
         case "update": onCheckUpdate?(); return nil   // 反馈全在 flow 侧（弹窗/alert），命令栏不抢回显
@@ -231,17 +235,35 @@ final class InternalCommandExecutor {
         return nil
     }
 
+    /// `host[:port]` 解析（sftp/ftp 共用；port 非法→nil，不报错——沿用旧行为）。
+    private static func parseHostPort(_ arg: String) -> (host: String, port: UInt16?) {
+        let parts = arg.split(separator: ":", maxSplits: 1)
+        return (String(parts[0]), parts.count == 2 ? UInt16(parts[1]) : nil)
+    }
+
     private func doSFTP(_ args: [String]) -> String? {
         guard args.count <= 1 else { return L10n.t(.sftpUsage) }
-        var host: String?
-        var port: UInt16?
+        var host: String?, port: UInt16?
         if let arg = args.first, !arg.isEmpty {
-            let parts = arg.split(separator: ":", maxSplits: 1)
-            host = String(parts[0])
-            if parts.count == 2 { port = UInt16(parts[1]) }
+            let parsed = Self.parseHostPort(arg)
+            host = parsed.host
+            port = parsed.port
         }
         onConnectSFTP?(host, port)
         return host != nil ? L10n.t(.sftpOpenedHost, host!) : L10n.t(.sftpOpened)
+    }
+
+    /// `ftp host[:port]`：打开统一连接窗并预选 FTP（协议层执行器由并行任务接线）。
+    private func doFTP(_ args: [String]) -> String? {
+        guard args.count <= 1 else { return L10n.t(.ftpUsage) }
+        var host: String?, port: UInt16?
+        if let arg = args.first, !arg.isEmpty {
+            let parsed = Self.parseHostPort(arg)
+            host = parsed.host
+            port = parsed.port
+        }
+        onConnectFTP?(host, port)
+        return host != nil ? L10n.t(.ftpOpenedHost, host!) : L10n.t(.ftpOpened)
     }
 
     private func doSMB(_ args: [String]) -> String? {
