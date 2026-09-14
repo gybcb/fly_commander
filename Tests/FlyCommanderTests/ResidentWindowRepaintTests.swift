@@ -3,10 +3,14 @@ import AppKit
 @testable import FlyCommander
 @testable import TCCore
 
-/// 常驻窗口（搜索/SFTP/SMB/主题）随语言切换即时重刷。
-/// 这四个 VC 的标签在 view-load 时一次性冻结；本测断言 refreshLocalizedText() 能把
+/// 常驻窗口（搜索/连接到远端/主题）随语言切换即时重刷。
+/// 这几个 VC 的标签在 view-load 时一次性冻结；本测断言 refreshLocalizedText() 能把
 /// 静态标签按当前语言重刷，且未加载视图的 VC/窗口刷新不会强行开窗（isViewLoaded 保持 false）。
 /// 视图行为（真实弹窗）仍由 UI 测试覆盖，此处仅走 SPM 可测的 headless loadView + 刷新。
+///
+/// （旧 SFTP / SMB 两个连接 VC 已合并为 RemoteConnectionViewController 一个：三协议的
+///  行标签在 loadView 里**全部创建**，协议切换只改 isHidden，故一条测试即覆盖原两条
+///  的字段面——主机/密钥行 + 服务器/域行 同时可见于视图树。）
 final class ResidentWindowRepaintTests: XCTestCase {
     override func setUp() { super.setUp(); L10n.current = .en }
     override func tearDown() { L10n.current = .en; super.tearDown() }
@@ -37,6 +41,17 @@ final class ResidentWindowRepaintTests: XCTestCase {
     }
     private func containsButtonTitle(_ root: NSView, _ text: String) -> Bool {
         allButtons(root).contains { $0.title == text }
+    }
+    private func allSegmentLabels(_ root: NSView) -> [String] {
+        var out: [String] = []
+        func walk(_ v: NSView) {
+            if let seg = v as? NSSegmentedControl {
+                for i in 0..<seg.segmentCount { out.append(seg.label(forSegment: i) ?? "") }
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(root)
+        return out
     }
 
     // MARK: - SearchViewController
@@ -78,42 +93,35 @@ final class ResidentWindowRepaintTests: XCTestCase {
         XCTAssertFalse(containsField(vc.view, oldZh), "旧中文串不应残留")
     }
 
-    // MARK: - ConnectionViewController (SFTP)
+    // MARK: - RemoteConnectionViewController（SFTP + SMB + FTP 三协议统一表单，一条覆盖全部字段组）
 
-    func testSFTPConnVCRepaintsToChineseAndBack() {
-        let vc = ConnectionViewController()
+    func testRemoteConnVCRepaintsToChineseAndBack() {
+        let vc = RemoteConnectionViewController()
         _ = vc.view
         L10n.current = .zh
         let oldZh = L10n.t(.fieldHost)
         vc.refreshLocalizedText()
+        // SFTP 字段组
         XCTAssertTrue(containsField(vc.view, oldZh), "主机标签应为中文")
         XCTAssertTrue(containsField(vc.view, L10n.t(.fieldPassphrase)), "密码短语标签应为中文")
-        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.connect)), "连接按钮应为中文")
-        // 单选/复选标题
         XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.fieldKeyFile)), "密钥文件单选应为中文")
+        // SMB 字段组（同一次 loadView 全部建出，仅 isHidden 随协议切）
+        XCTAssertTrue(containsField(vc.view, L10n.t(.fieldServer)), "服务器标签应为中文")
+        XCTAssertTrue(containsField(vc.view, L10n.t(.fieldDomain)), "域标签应为中文")
+        // FTP 专有行（TLS 勾选）
+        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.fieldTLS)), "TLS 勾选应为中文")
+        // 公共按钮
+        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.connect)), "连接按钮应为中文")
+        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.cancel)), "取消按钮应为中文")
         XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.saveConnection)), "保存按钮应为中文")
+        // 协议段三段标签（协议专名当前各语言同值，但仍须走绑定表刷新，防将来分化）
+        let segs = allSegmentLabels(vc.view)
+        XCTAssertTrue(segs.contains(L10n.t(.protoSFTP)), "SFTP 段应为当前语言")
+        XCTAssertTrue(segs.contains(L10n.t(.protoFTP)), "FTP 段应为当前语言")
 
         L10n.current = .en
         vc.refreshLocalizedText()
         XCTAssertTrue(containsField(vc.view, L10n.t(.fieldHost)), "主机标签应回到英文")
-        XCTAssertFalse(containsField(vc.view, oldZh), "旧中文串不应残留")
-    }
-
-    // MARK: - SMBConnectionViewController
-
-    func testSMBConnVCRepaintsToChineseAndBack() {
-        let vc = SMBConnectionViewController()
-        _ = vc.view
-        L10n.current = .zh
-        let oldZh = L10n.t(.fieldServer)
-        vc.refreshLocalizedText()
-        XCTAssertTrue(containsField(vc.view, oldZh), "服务器标签应为中文")
-        XCTAssertTrue(containsField(vc.view, L10n.t(.fieldDomain)), "域标签应为中文")
-        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.cancel)), "取消按钮应为中文")
-        XCTAssertTrue(containsButtonTitle(vc.view, L10n.t(.saveConnection)), "保存按钮应为中文")
-
-        L10n.current = .en
-        vc.refreshLocalizedText()
         XCTAssertTrue(containsField(vc.view, L10n.t(.fieldServer)), "服务器标签应回到英文")
         XCTAssertFalse(containsField(vc.view, oldZh), "旧中文串不应残留")
     }
@@ -122,20 +130,17 @@ final class ResidentWindowRepaintTests: XCTestCase {
 
     func testWindowControllersRepaintTitleAndContent() {
         let search = SearchWindowController()
-        let sftp = ConnectionWindowController()
-        let smb = SMBConnectionWindowController()
+        let conn = ConnectionWindowController()
         let theme = ThemeWindowController()
         let checks: [(NSWindowController, L10nKey)] = [
-            (search, .searchWindowTitle), (sftp, .sftpWindowTitle),
-            (smb, .smbWindowTitle), (theme, .themeWindowTitle),
+            (search, .searchWindowTitle), (conn, .sftpWindowTitle), (theme, .themeWindowTitle),
         ]
         // 强制加载内容 VC（此时标签以 en 冻结）。
         for (wc, _) in checks { _ = wc.window?.contentViewController?.view }
 
         L10n.current = .zh
         search.refreshLocalizedText()
-        sftp.refreshLocalizedText()
-        smb.refreshLocalizedText()
+        conn.refreshLocalizedText()
         theme.refreshLocalizedText()
         for (wc, key) in checks {
             XCTAssertEqual(wc.window?.title, L10n.t(key), "窗口标题应为中文（\(key.rawValue)）")
@@ -143,10 +148,19 @@ final class ResidentWindowRepaintTests: XCTestCase {
         // 内容标签也应已切中文（抽查搜索窗提示）。
         XCTAssertTrue(containsField(search.window!.contentViewController!.view, L10n.t(.searchHint)))
 
+        // 统一窗：标题随内容 VC 当前协议现取（切 smb → 标题换 smbWindowTitle）。
+        let connVC = conn.window!.contentViewController as! RemoteConnectionViewController
+        connVC.setProto(.smb)
+        conn.refreshLocalizedText()
+        XCTAssertEqual(conn.window?.title, L10n.t(.smbWindowTitle), "切 SMB 协议后标题应为 SMB 窗标题")
+        connVC.setProto(.ftp)
+        conn.refreshLocalizedText()
+        XCTAssertEqual(conn.window?.title, L10n.t(.ftpWindowTitle), "切 FTP 协议后标题应为 FTP 窗标题")
+        connVC.setProto(.sftp)
+
         L10n.current = .en
         search.refreshLocalizedText()
-        sftp.refreshLocalizedText()
-        smb.refreshLocalizedText()
+        conn.refreshLocalizedText()
         theme.refreshLocalizedText()
         for (wc, key) in checks {
             XCTAssertEqual(wc.window?.title, L10n.t(key), "窗口标题应回到英文（\(key.rawValue)）")
@@ -159,19 +173,16 @@ final class ResidentWindowRepaintTests: XCTestCase {
 
     func testRefreshOnUnloadedVCsDoesNotForceLoad() {
         let search = SearchViewController()
-        let sftp = ConnectionViewController()
-        let smb = SMBConnectionViewController()
+        let conn = RemoteConnectionViewController()
         let theme = ThemeViewController()
-        for vc in [search, sftp, smb, theme] as [NSViewController] {
+        for vc in [search, conn, theme] as [NSViewController] {
             XCTAssertFalse(vc.isViewLoaded, "前置：视图尚未加载")
         }
         search.refreshLocalizedText()
-        sftp.refreshLocalizedText()
-        smb.refreshLocalizedText()
+        conn.refreshLocalizedText()
         theme.refreshLocalizedText()
         XCTAssertFalse(search.isViewLoaded)
-        XCTAssertFalse(sftp.isViewLoaded)
-        XCTAssertFalse(smb.isViewLoaded)
+        XCTAssertFalse(conn.isViewLoaded)
         XCTAssertFalse(theme.isViewLoaded)
     }
 
@@ -181,18 +192,16 @@ final class ResidentWindowRepaintTests: XCTestCase {
         // 价值在 VC 层（裸 VC 刷新，见 testRefreshOnUnloadedVCsDoesNotForceLoad）。
         // WC 层真正要保证的是：语言重刷绝不把窗口弹到屏幕（不 showWindow/orderFront、不崩溃）。
         let search = SearchWindowController()
-        let sftp = ConnectionWindowController()
-        let smb = SMBConnectionWindowController()
+        let conn = ConnectionWindowController()
         let theme = ThemeWindowController()
         L10n.current = .zh
-        for wc in [search, sftp, smb, theme] {
+        for wc in [search, conn, theme] {
             XCTAssertFalse(wc.window?.isVisible ?? true, "刷新前窗口本未显示")
         }
         search.refreshLocalizedText()
-        sftp.refreshLocalizedText()
-        smb.refreshLocalizedText()
+        conn.refreshLocalizedText()
         theme.refreshLocalizedText()
-        for wc in [search, sftp, smb, theme] {
+        for wc in [search, conn, theme] {
             XCTAssertFalse(wc.window?.isVisible ?? true, "语言重刷不应把窗口显示到屏幕")
         }
     }

@@ -9,7 +9,6 @@ extension NSToolbarItem.Identifier {
     static let rename = NSToolbarItem.Identifier("rename")
     static let search = NSToolbarItem.Identifier("search")
     static let connect = NSToolbarItem.Identifier("connect")
-    static let smbConnect = NSToolbarItem.Identifier("smbConnect")
     static let theme = NSToolbarItem.Identifier("theme")
     static let selectionStatus = NSToolbarItem.Identifier("selectionStatus")
 }
@@ -85,7 +84,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     static let toolbarLabelKeys: [NSToolbarItem.Identifier: L10nKey] = [
         .copy: .toolbarCopy, .move: .toolbarMove, .makeDirectory: .newDirectory,
         .delete: .toolbarDelete, .rename: .rename, .search: .find,
-        .connect: .toolbarConnect, .smbConnect: .toolbarSMB, .theme: .toolbarTheme,
+        .connect: .toolbarRemoteConnect, .theme: .toolbarTheme,
     ]
 
     /// 纯函数：给定语言下各工具栏项的 label（走 L10n 表兜底：本语言缺→en 缺→rawValue）。
@@ -140,11 +139,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             return item(id: .search, label: L10n.t(.find), symbol: "magnifyingglass",
                         action: #selector(MainViewController.menuSearch(_:)))
         case .connect:
-            return item(id: .connect, label: L10n.t(.toolbarConnect), symbol: "network",
+            return item(id: .connect, label: L10n.t(.toolbarRemoteConnect), symbol: "network",
                         action: #selector(MainViewController.menuConnect(_:)))
-        case .smbConnect:
-            return item(id: .smbConnect, label: L10n.t(.toolbarSMB), symbol: "server.rack",
-                        action: #selector(MainViewController.menuSMBConnect(_:)))
         case .theme:
             return item(id: .theme, label: L10n.t(.toolbarTheme), symbol: "paintpalette",
                         action: #selector(MainViewController.menuTheme(_:)))
@@ -165,12 +161,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect, .smbConnect, .theme,
+        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect, .theme,
          .space, .selectionStatus]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect, .smbConnect, .theme,
+        [.copy, .move, .makeDirectory, .delete, .rename, .search, .connect, .theme,
          .selectionStatus, .space]
     }
 }

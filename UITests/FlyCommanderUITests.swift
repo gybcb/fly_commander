@@ -236,9 +236,11 @@ final class FlyCommanderUITests: XCTestCase {
     func testToolbarButtonsPresent() {
         // 变异：从 toolbarDefaultItemIdentifiers 删项 / delegate 对应 case 返回 nil
         // → 该按钮 AX 缺席 → 本用例红。SPM 侧 MainWindowControllerTests 真窗锁同红面。
-        for name in ["Copy", "Move", "New Directory", "Delete", "Rename", "Find", "Connect", "SMB"] {
+        for name in ["Copy", "Move", "New Directory", "Delete", "Rename", "Find", "Connect to Remote"] {
             XCTAssertTrue(toolbarButton(name).exists, "工具栏按钮缺失：\(name)")
         }
+        // 统一「连接到远端」后旧第二个入口（SMB）须已消失（工具栏只留一个连接入口）。
+        XCTAssertFalse(toolbarButton("SMB").exists, "旧 SMB 工具栏入口应已移除")
     }
 
     func testToolbarNewDirectoryShowsPrompt() {
@@ -279,13 +281,13 @@ final class FlyCommanderUITests: XCTestCase {
         search.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
-    // MARK: - SFTP 连接窗（只验窗口与控件出现，不真连——
+    // MARK: - 统一连接窗（默认协议 SFTP；只验窗口与控件出现，不真连——
     // 真实连接由 SPM 侧 ConnectionStoreE2ETests 对本地 sshd 覆盖）
 
     func testConnectWindowShowsFields() {
-        toolbarButton("Connect").click()
+        toolbarButton("Connect to Remote").click()
         let conn = app.windows.matching(NSPredicate(format: "title == 'SFTP Connection'")).firstMatch
-        XCTAssertTrue(conn.waitForExistence(timeout: 5), "SFTP 连接窗未弹出")
+        XCTAssertTrue(conn.waitForExistence(timeout: 5), "连接窗未弹出（默认协议 SFTP → 标题 'SFTP Connection'）")
         // 按钮
         XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Connect'")).firstMatch.exists)
         XCTAssertTrue(conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.exists)
@@ -308,29 +310,36 @@ final class FlyCommanderUITests: XCTestCase {
         conn.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
     }
 
-    // MARK: - SMB 连接窗（issue #4 入口回归：工具栏 SMB 按钮直达 SMB 窗，不真连）
+    // MARK: - 统一窗内的协议切换（旧「工具栏 SMB 按钮直达 SMB 窗」的新语义：
+    // 单一入口 + 窗内段控件切协议，标题随协议换）
 
-    func testSMBToolbarButtonOpensSMBWindow() {
+    func testProtoSegmentSwitchesToSMBForm() {
         // 变异证伪（红面映射）：
-        // ① 删 delegate 的 .smbConnect case / 从 default 列表删 .smbConnect →
-        //    首击后 'SMB Connection' 窗永不出现 → waitForExistence 红；
-        // ② item() 的 action 错接到 menuConnect（SFTP）→ 弹出窗 title 是
-        //    'SFTP Connection' → 本用例等 'SMB Connection' 超时红；
-        // ③ SMBConnectionViewController.cancelTapped 的 close() 被改坏
-        //    （删半句/换 no-op）→ 末句 waitForNonExistence 红（关方向零锁补齐）。
-        toolbarButton("SMB").click()
-        let win = app.windows.matching(NSPredicate(format: "title == 'SMB Connection'")).firstMatch
-        XCTAssertTrue(win.waitForExistence(timeout: 5), "SMB 连接窗未弹出（工具栏 SMB 入口失效 → 红）")
-        XCTAssertTrue(win.textFields.matching(NSPredicate(format: "identifier == 'serverField'")).firstMatch.exists,
-                      "SMB 窗主机输入框缺失")
-        // 单例复用不变量：resident SMBConnectionWindowController 第二次 present() 须
-        // 复用同窗。变异=把 MainViewController 的 SMB 窗改成每次点击 new 一个控制器
-        // → 同时存在两扇 'SMB Connection' → count==1 红。
-        toolbarButton("SMB").click()
-        XCTAssertEqual(app.windows.matching(NSPredicate(format: "title == 'SMB Connection'")).count, 1,
-                       "连点两次 SMB 应复用常驻单窗，不得弹第二扇")
-        win.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
-        XCTAssertFalse(win.waitForExistence(timeout: 2), "Cancel 后 SMB 窗应已关闭（关方向闭环）")
+        // ① 删 applyProtoVisibility 的 serverRow/shareRow/domainRow 显隐半句 →
+        //    切 SMB 后 serverField 仍不可见 → waitForExistence 红；
+        // ② 删 setProto 里的标题刷新（改 title 只在 init 现取）→ 切协议后
+        //    'SMB Connection' 窗标题查不到 → 首断言红；
+        // ③ 统一窗改成每次点击 new 一个控制器 → 同时存在两扇 'SFTP Connection'
+        //    → count==1 红（单例复用不变量沿用旧 SMB 用例）。
+        toolbarButton("Connect to Remote").click()
+        let win = app.windows.matching(NSPredicate(format: "title == 'SFTP Connection'")).firstMatch
+        XCTAssertTrue(win.waitForExistence(timeout: 5), "连接窗未弹出")
+        // 单例复用：连点两次只有一扇窗。
+        toolbarButton("Connect to Remote").click()
+        XCTAssertEqual(app.windows.matching(NSPredicate(format: "title == 'SFTP Connection'")).count, 1,
+                       "连点两次应复用常驻单窗，不得弹第二扇")
+        // 段控件按 label 找 SMB 段（AX 里 segment 以 radioButton/cell 呈现，本 SDK 惯用法
+        // 与主题窗外观选择器同族；查不到时退化到按标题文本点击）。
+        let smbSegment = win.descendants(matching: .any)
+            .matching(NSPredicate(format: "title == 'SMB' OR label == 'SMB'")).firstMatch
+        XCTAssertTrue(smbSegment.waitForExistence(timeout: 5), "协议段缺 SMB 段（三协议一窗结构失效）")
+        smbSegment.click()
+        let smbWin = app.windows.matching(NSPredicate(format: "title == 'SMB Connection'")).firstMatch
+        XCTAssertTrue(smbWin.waitForExistence(timeout: 5), "切 SMB 后窗标题应随协议换为 'SMB Connection'")
+        XCTAssertTrue(smbWin.textFields.matching(NSPredicate(format: "identifier == 'serverField'")).firstMatch.exists,
+                      "SMB 表单的服务器输入框缺失（协议字段组显隐失效）")
+        smbWin.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
+        XCTAssertFalse(smbWin.waitForExistence(timeout: 2), "Cancel 后连接窗应已关闭（关方向闭环）")
     }
 
     // MARK: - 搜索（通配符匹配语义由 core 单测 FileSearcherTests 覆盖）

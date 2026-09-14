@@ -53,6 +53,7 @@ private final class Harness {
     var deleted: InternalDeleteRequest?
     var connect: (host: String?, port: UInt16?)?
     var smbConnect: (server: String?, share: String?, user: String?)?
+    var ftpConnect: (host: String?, port: UInt16?)?
     var transfers: [CommandID] = []
     var viewItem: FileItem?
     var editItem: FileItem?
@@ -72,6 +73,7 @@ private final class Harness {
         exec.onDelete = { [weak self] r in self?.deleted = r }
         exec.onConnectSFTP = { [weak self] h, p in self?.connect = (h, p) }
         exec.onConnectSMB = { [weak self] s, sh, u in self?.smbConnect = (s, sh, u) }
+        exec.onConnectFTP = { [weak self] h, p in self?.ftpConnect = (h, p) }
         ws.onCommandTransfer = { [weak self] c in self?.transfers.append(c) }
         ws.onCommandView = { [weak self] i in self?.viewItem = i }
         ws.onCommandEdit = { [weak self] i in self?.editItem = i }
@@ -119,7 +121,7 @@ final class InternalCommandExecutorTests: XCTestCase {
         let h = Harness(local: StubSource(id: "local", remote: false),
                         remote: StubSource(id: "s", remote: true), activeRemote: false)
         let out = h.executor.execute(line: "help")
-        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "smb", "tab", "theme", "lang", "help"] {
+        for kw in ["cd", "ls", "mkdir", "copy", "move", "del", "view", "edit", "sftp", "smb", "ftp", "tab", "theme", "lang", "help"] {
             XCTAssertTrue(out?.contains(kw) ?? false, "help 应含 \(kw)：\(out ?? "nil")")
         }
         XCTAssertTrue(out?.contains("refresh") ?? false, "help 应含 refresh（新命令须入帮助表）")
@@ -465,6 +467,61 @@ final class InternalCommandExecutorTests: XCTestCase {
         let out = h.executor.execute(line: "smb a b c")
         XCTAssertNil(h.smbConnect, "参数过多时不应触发连接钩子")
         XCTAssertEqual(out, "Usage: smb [server[/share]] [user]")
+    }
+
+    // MARK: - ftp 参数（与 sftp 共用 parseHostPort；开统一连接窗并预选 FTP）
+
+    func testFTPNoArg() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "ftp")
+        XCTAssertNil(h.ftpConnect?.0)
+        XCTAssertNil(h.ftpConnect?.1)
+        XCTAssertEqual(out, "FTP connection window opened")
+    }
+
+    func testFTPWithHostPort() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "ftp 10.0.0.5:990")
+        XCTAssertEqual(h.ftpConnect?.0, "10.0.0.5")
+        XCTAssertEqual(h.ftpConnect?.1, 990)
+        XCTAssertEqual(out, "Connection window opened (host: 10.0.0.5)")
+    }
+
+    func testFTPWithHostOnly() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "ftp example.com")
+        XCTAssertEqual(h.ftpConnect?.0, "example.com")
+        XCTAssertNil(h.ftpConnect?.1)
+    }
+
+    /// 非法端口不报错、落 nil（与 sftp 同构的旧容忍度），host 照常预填。
+    func testFTPIllegalPortLeavesNilWithoutError() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "ftp h:notaport")
+        XCTAssertEqual(h.ftpConnect?.0, "h")
+        XCTAssertNil(h.ftpConnect?.1)
+    }
+
+    func testFTPCommandTooManyArgs() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        let out = h.executor.execute(line: "ftp a b")
+        XCTAssertNil(h.ftpConnect, "参数过多时不应触发连接钩子")
+        XCTAssertEqual(out, "Usage: ftp [host[:port]]")
+    }
+
+    /// 与 sftp 命令互不串线（两钩子各自独立；红面=parseHostPort 提取后误共用状态）。
+    func testFTPAndSFTPHooksAreIndependent() {
+        let h = Harness(local: StubSource(id: "local", remote: false),
+                        remote: StubSource(id: "s", remote: true), activeRemote: false)
+        _ = h.executor.execute(line: "ftp f.host")
+        _ = h.executor.execute(line: "sftp s.host")
+        XCTAssertEqual(h.ftpConnect?.0, "f.host")
+        XCTAssertEqual(h.connect?.0, "s.host")
     }
 
     // MARK: - copy/move 走 workspace 钩子

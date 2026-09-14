@@ -9,13 +9,17 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case aboutApp, hideApp, quitApp
     case newTab, closeTab, newDirectory, rename, moveToTrash
     case copyToOtherPane, moveToOtherPane, sftpConnect, smbConnect
+    /// 统一「连接到远端」菜单项 / 工具栏项（三协议合并后取代 sftpConnect/smbConnect/toolbarConnect/toolbarSMB）。
+    case remoteConnectMenu, toolbarRemoteConnect
     case menuEdit, find, selectAll
     case menuView, preview, editItem, switchPane, parentDirectory, themeEllipsis
     case menuLanguage
     // —— 工具栏 ——
     case toolbarCopy, toolbarMove, toolbarDelete, toolbarConnect, toolbarSMB, toolbarTheme
     // —— 窗口标题（各 WindowController）——
-    case themeWindowTitle, sftpWindowTitle, smbWindowTitle, searchWindowTitle
+    case themeWindowTitle, sftpWindowTitle, smbWindowTitle, ftpWindowTitle, searchWindowTitle
+    // —— 统一连接对话框协议段 + TLS 勾选 + 未接线提示 ——
+    case protoSFTP, protoSMB, protoFTP, fieldTLS, protoNotWired
     // —— 命令回显（AppKit 层 InternalCommandExecutor）——
     case entered, cannotEnterNotDirectory
     // —— 状态栏前缀 ——
@@ -61,11 +65,12 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case noFocusedItem, dirNotPreviewable, remoteNoPreview, dirNotEditable, remoteNoEdit
     case sftpUsage, sftpOpenedHost, sftpOpened
     case smbUsage, smbOpenedServer, smbOpened
+    case ftpUsage, ftpOpenedHost, ftpOpened
     case tabCreated, tabClosed, tabCannotCloseLast, tabUsage
     case langUsageCurrent, langSet, langUnknown, langEnglishName, langChineseName
     // —— 命令栏帮助（helpText 拆条）——
     case helpHeader, helpCd, helpLs, helpMkdir, helpCopy, helpMove, helpDel
-    case helpView, helpEdit, helpSftp, helpSmb, helpTabNew, helpTabClose
+    case helpView, helpEdit, helpSftp, helpSmb, helpFtp, helpTabNew, helpTabClose
     case helpTheme, helpHelp, helpLang
     // —— 错误模板（TCError.l10nKey 映射；en 为内部稳定串镜像，zh 逐字搬原中文）——
     case errNotFound, errPermissionDenied, errBusy, errInvalidPath, errCancelled

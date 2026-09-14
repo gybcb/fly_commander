@@ -35,8 +35,7 @@ enum MainMenu {
         add(fileMenu, L10n.t(.copyToOtherPane), #selector(MainViewController.menuCopyToOtherPane(_:)), "", target)
         add(fileMenu, L10n.t(.moveToOtherPane), #selector(MainViewController.menuMoveToOtherPane(_:)), "", target)
         fileMenu.addItem(.separator())
-        add(fileMenu, L10n.t(.sftpConnect), #selector(MainViewController.menuConnect(_:)), "", target)
-        add(fileMenu, L10n.t(.smbConnect), #selector(MainViewController.menuSMBConnect(_:)), "", target)
+        add(fileMenu, L10n.t(.remoteConnectMenu), #selector(MainViewController.menuConnect(_:)), "", target)
 
         // 编辑菜单
         let editMenuItem = NSMenuItem()
