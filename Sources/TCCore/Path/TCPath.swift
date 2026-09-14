@@ -14,7 +14,7 @@ public struct TCPath: Hashable, Equatable {
     }
 
     public init(_ string: String) {
-        if string.hasPrefix("sftp://") || string.hasPrefix("smb://") {
+        if string.hasPrefix("sftp://") || string.hasPrefix("smb://") || string.hasPrefix("ftp://") {
             if let url = URL(string: string) {
                 self.url = url
                 return
