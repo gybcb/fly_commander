@@ -275,8 +275,9 @@ public final class FTPSource: FileSource {
 
 extension Error {
     /// FTPClientError → TCError（不改动 TCCore 的全局 asTCError）。
-    /// `path` = 出错操作的目标远端绝对路径；无主体上下文（连接/认证/泛化透传）不吃 path。
-    /// 文案本期英文，形态与 sftpMappedTCError 对齐。
+    /// `path` = 出错操作的目标远端绝对路径；无主体上下文（连接/认证）不吃 path。
+    /// 有语义的失败一律落**专用 TCError case**（文案走 L10n 表，UI 出中文），
+    /// `.unknown` 只留给 locale 透传（TCError.unknown 的既定收窄）。
     func ftpmappedTCError(path: String = "") -> TCError {
         switch self {
         case let e as FTPClientError:
@@ -284,21 +285,22 @@ extension Error {
             case .authRejected(let method):
                 return .authRejected(method: method)
             case .connectFailed(let detail):
-                return .unknown("FTP connect failed: \(detail)")
+                return .ftpConnectFailed(detail)
             case .unexpectedReply(let code, let message):
                 switch code {
                 case 550: return .notFound(path)          // 主体不存在（isDirectory 判据同源）
                 case 530: return .permissionDenied(path)  // 需要登录/无权限
                 case 552: return .noSpace
                 case 450, 452: return .busy(path)
+                // 无专用语义的服务器应答：码号+自由文本，locale 透传。
                 default:  return .unknown("FTP \(code): \(message)")
                 }
             case .dataConnectFailed(let detail):
-                return .unknown("FTP data connection failed: \(detail)")
+                return .ftpDataConnectFailed(detail)
             case .timeout(let seconds):
-                return .unknown(String(format: "FTP timed out after %.0fs", seconds))
+                return .ftpTimeout(seconds)
             case .closed:
-                return .unknown("FTP connection closed")
+                return .ftpConnectionClosed
             case .unsupported(let what):
                 return .unknown("FTP server unsupported: \(what)")
             case .malformedReply(let detail):

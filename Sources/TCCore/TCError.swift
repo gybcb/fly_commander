@@ -18,6 +18,10 @@ public enum TCError: Error, Equatable {
     case mountPointNotWritable(root: String)         // 多行提权指引（/Volumes 不可写）
     case authRejected(method: String) // "认证被拒绝（method）"（SFTP SSHClientError.authenticationRejected）
     case sftpConnectFailed            // "SFTP 连接失败"（SFTP SSHClientError.connectionFailed）
+    case ftpConnectFailed(String)     // "FTP 连接失败：detail"
+    case ftpDataConnectFailed(String) // "FTP 数据连接失败：detail"
+    case ftpTimeout(Double)           // "FTP 操作超时（N 秒）"
+    case ftpConnectionClosed          // "FTP 连接已关闭"
     case unknown(String)              // 收窄：仅 locale 透传（系统 localizedDescription / Traversio message）
 
     /// 稳定英文内部 message —— 仅供日志/测试/跨模块，不进 UI 显示路径（UI 用 tcErrorDisplay）。
@@ -41,6 +45,10 @@ public enum TCError: Error, Equatable {
         case .pathEscaped(let p):           return "Path escaped the mount point: \(p)"
         case .authRejected(let m):          return "Authentication rejected (\(m))"
         case .sftpConnectFailed:            return "SFTP connection failed"
+        case .ftpConnectFailed(let d):      return "FTP connect failed: \(d.prefix(200))"
+        case .ftpDataConnectFailed(let d):  return "FTP data connection failed: \(d.prefix(200))"
+        case .ftpTimeout(let s):            return "FTP timed out after \(s)s"
+        case .ftpConnectionClosed:          return "FTP connection closed"
         case .mountPointNotWritable(let r):
             return "Cannot create mount point \(r) (/Volumes not writable for current user). "
                  + "Run this once in Terminal:\nsudo mkdir -p \(r) && sudo chown \"$(whoami)\" \(r)"
@@ -68,6 +76,10 @@ public enum TCError: Error, Equatable {
         case .pathEscaped:       return .errPathEscaped
         case .authRejected:      return .errAuthRejected
         case .sftpConnectFailed: return .errSFTPConnectFailed
+        case .ftpConnectFailed: return .errFTPConnectFailed
+        case .ftpDataConnectFailed: return .errFTPDataConnectFailed
+        case .ftpTimeout: return .errFTPTimeout
+        case .ftpConnectionClosed: return .errFTPConnectionClosed
         case .mountPointNotWritable: return .errMountPointHint
         case .unknown:           return .errUnknown
         }
@@ -93,8 +105,12 @@ public enum TCError: Error, Equatable {
             return [p]
         case .authRejected(let m):
             return [m]
-        case .sftpConnectFailed:
+        case .sftpConnectFailed, .ftpConnectionClosed:
             return []
+        case .ftpConnectFailed(let d), .ftpDataConnectFailed(let d):
+            return [String(d.prefix(200))]
+        case .ftpTimeout(let s):
+            return [s == s.rounded() ? String(Int(s)) : String(s)]
         case .mountPointNotWritable(let r):
             return [r]   // 模板内 {0} 出现 3 次，t() 全量替换
         case .unknown(let m):

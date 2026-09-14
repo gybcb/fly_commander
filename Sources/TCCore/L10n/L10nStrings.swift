@@ -140,6 +140,10 @@ public enum L10nTable {
         .errPathEscaped: "Path escaped the mount point: {0}",
         .errAuthRejected: "Authentication rejected ({0})",
         .errSFTPConnectFailed: "SSH handshake failed",
+        .errFTPConnectFailed: "FTP connection failed: {0}",
+        .errFTPDataConnectFailed: "FTP data connection failed: {0}",
+        .errFTPTimeout: "FTP operation timed out ({0}s)",
+        .errFTPConnectionClosed: "FTP connection closed",
         .errMountPointHint: "Cannot create mount point {0} (/Volumes not writable for current user). Run this once in Terminal:\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——显示前缀归外层（statusErrorPrefix / 各失败模板），防状态栏双前缀。
         .errUnknown: "{0}",
@@ -324,6 +328,10 @@ public enum L10nTable {
         .errPathEscaped: "路径逃逸挂载点：{0}",
         .errAuthRejected: "认证被拒绝（{0}）",
         .errSFTPConnectFailed: "SSH 握手失败",
+        .errFTPConnectFailed: "FTP 连接失败：{0}",
+        .errFTPDataConnectFailed: "FTP 数据连接失败：{0}",
+        .errFTPTimeout: "FTP 操作超时（{0} 秒）",
+        .errFTPConnectionClosed: "FTP 连接已关闭",
         // zh 逐字搬 SMBMountManager 被替换的中文现码（全角 ：（）与 \n、命令行原样）。
         .errMountPointHint: "无法创建挂载点 {0}（/Volumes 对当前用户不可写）。请先在终端执行一次：\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——"错误：" 前缀归 statusErrorPrefix，状态栏不再叠字。

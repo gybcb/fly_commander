@@ -98,6 +98,23 @@ extension MainViewController {
             directoryWatcher.noteReloaded(pane)
             return
         }
+        // ftp：没有「活连接池」可复用（FTPSource 自建自管控制连接），按已保存条目重建一条。
+        // 只建对象不建连——FTPSource 首次操作才懒连（同 SFTPSource 语义），故主线程不阻塞；
+        // 失败在 loadAsync 回包时落状态栏，与 sftp/smb 分支同一体验。
+        // （不走 FTPConnectionFactory.connect：它同步阻塞当前线程，主线程调用会冻结 runloop。）
+        if fav.sourceID.hasPrefix("ftp://"),
+           let record = RemoteConnectionStore.shared.record(forSourceID: fav.sourceID),
+           let host = record.host, !host.isEmpty {
+            let secret = try? RemoteConnectionStore.shared.loadSecret(for: record)
+            let source = FTPSource(config: FTPClient.Config(host: host,
+                                                            port: UInt16(record.port ?? 21),
+                                                            username: record.username,
+                                                            password: secret,
+                                                            tls: record.tls ?? false))
+            pane.setSource(source, andPath: fav.tcPath)
+            directoryWatcher.noteReloaded(pane)
+            return
+        }
         setStatus(L10n.t(.favoritesNeedReconnect))
     }
 

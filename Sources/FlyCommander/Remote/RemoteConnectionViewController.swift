@@ -589,10 +589,9 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
 
 // MARK: - 协议元数据 / 请求↔旧记录 转换（供 VC 默认执行器与接线方共用）
 
-/// 默认执行器表（**接线适配层**，不在 VC 里）：把旧两 store 的同步 connect 包成统一
+/// 默认执行器表（**接线适配层**，不在 VC 里）：把各协议的同步 connect 包成统一
 /// 合同——后台 global 队列执行、completion 回主线程（旧 VC 内联合同逐字搬移）。
 /// SFTP 的 `home: String`（远端 realpath）在这里经 `SFTPSource.tcPath` 升成 TCPath。
-/// **不含 ftp**：协议层由并行任务提供，接入时往表里加一项即可（缺项 → 状态行提示未接线）。
 enum RemoteConnectExecutors {
     static let defaults: [RemoteProto: RemoteConnectExecutor] = [
         .sftp: { request, completion in
@@ -613,6 +612,17 @@ enum RemoteConnectExecutors {
                 let result: Result<RemoteConnection, Error>
                 do {
                     let (source, home) = try SMBConnectionStore.shared.connect(request.smbConnectionRequest())
+                    result = .success(RemoteConnection(source: source, home: home))
+                } catch { result = .failure(error) }
+                DispatchQueue.main.async { completion(result) }
+            }
+        },
+        .ftp: { request, completion in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result: Result<RemoteConnection, Error>
+                do {
+                    // connect 内部同步建连+登录+PWD（阻塞当前线程——已在后台队列）。
+                    let (source, home) = try FTPConnectionFactory.connect(request.ftpConnectionRequest())
                     result = .success(RemoteConnection(source: source, home: home))
                 } catch { result = .failure(error) }
                 DispatchQueue.main.async { completion(result) }
@@ -641,6 +651,12 @@ extension RemoteConnectionRequest {
     func smbConnectionRequest() -> SMBConnectionRequest {
         SMBConnectionRequest(server: server ?? "", share: share ?? "", domain: domain,
                              username: username, secret: secret)
+    }
+
+    /// → FTP 协议层入参。缺端口回落 21（Implicit FTPS 的 990 由表单勾 TLS 时显式给）。
+    func ftpConnectionRequest() -> FTPConnectionRequest {
+        FTPConnectionRequest(host: host ?? "", port: UInt16(port ?? 21), username: username,
+                             password: secret, tls: tls)
     }
 }
 
