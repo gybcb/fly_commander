@@ -33,8 +33,8 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.0.6"
-        CURRENT_PROJECT_VERSION: "6"
+        MARKETING_VERSION: "0.0.7"
+        CURRENT_PROJECT_VERSION: "7"
   FlyCommanderUITests:
     type: bundle.ui-testing
     platform: macOS
