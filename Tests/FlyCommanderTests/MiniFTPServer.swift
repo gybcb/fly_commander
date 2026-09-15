@@ -20,6 +20,10 @@ final class MiniFTPServer {
     let advertiseEpsv: Bool
     /// 登录口令（"user"/"secret"）；其它 → 530
     let password: String
+    /// MLST 应答码（RFC 3659 规定 250；本 fixture 默认沿用旧实现的 257）。
+    let mlstReplyCode: Int
+    /// RETR 只发前 N 字节就 RST 数据通道、随后照常回 226（F1 截断注入；nil=关）。
+    let retrTruncateBytes: Int?
 
     private var controlListener: NWListener?
     private(set) var port: UInt16 = 0
@@ -28,12 +32,15 @@ final class MiniFTPServer {
     private var startError: Error?
 
     init(root: URL, advertiseMlsd: Bool = true, refuseMlsd: Bool = false,
-         advertiseEpsv: Bool = false, password: String = "secret") {
+         advertiseEpsv: Bool = false, password: String = "secret",
+         mlstReplyCode: Int = 257, retrTruncateBytes: Int? = nil) {
         self.root = root
         self.advertiseMlsd = advertiseMlsd
         self.refuseMlsd = refuseMlsd
         self.advertiseEpsv = advertiseEpsv
         self.password = password
+        self.mlstReplyCode = mlstReplyCode
+        self.retrTruncateBytes = retrTruncateBytes
     }
 
     /// 同步启动：绑定监听端口后返回实际端口（轮询等待 ready，上限 ~5s）。
@@ -264,7 +271,7 @@ private final class FTPServerSession {
             let mtime = (attrs?[.modificationDate] as? Date) ?? Date()
             let type = isDir.boolValue ? "dir" : "file"
             let facts = "  type=\(type);size=\(size);modify=\(Self.formatMdtm(mtime));"
-            await replyRaw("257-Listing \(target)\r\n\(facts) \(URL(fileURLWithPath: target).lastPathComponent)\r\n257 End")
+            await replyRaw("\(server.mlstReplyCode)-Listing \(target)\r\n\(facts) \(URL(fileURLWithPath: target).lastPathComponent)\r\n\(server.mlstReplyCode) End")
         case "LIST", "MLSD":
             if verb == "MLSD", server.refuseMlsd { await reply("500 MLSD not understood") }
             else { await doList(mlsd: verb == "MLSD", arg: arg) }
@@ -377,7 +384,13 @@ private final class FTPServerSession {
             return
         }
         await reply("150 Opening data connection")
-        await data.sendAll(contents)
+        if let n = server.retrTruncateBytes {
+            // 只发前 n 字节 → 数据通道以 error 收尾（服务端 cancel 产生 RST 类错误），
+            // 但服务器仍自认为发完 → 照发 226（实证「226=发完」不成立）。
+            await data.sendAll(contents.prefix(n))
+        } else {
+            await data.sendAll(contents)
+        }
         data.cancel()
         await reply("226 Transfer complete")
     }

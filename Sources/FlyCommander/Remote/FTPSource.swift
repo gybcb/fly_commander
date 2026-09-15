@@ -168,8 +168,21 @@ public final class FTPSource: FileSource {
     /// 会把 RETR 尾部的 226 当自己的应答读走 → 整条会话错位。FTP 无第二条并行数据通道
     /// 可用（单连接模型），故这里读尽再写。
     /// 不变量照旧：调用前 OperationEngine.resolveConflict 已对「覆盖」先 removeItem(dst)。
+    ///
+    /// **目录**：FileSource 合同要求 copyItem 能复制目录（LocalFileSource=FileManager、
+    /// SFTPSource=服务器端 cp -a 皆可递归），且 OperationEngine 同源分支不拦目录
+    /// （checkCrossSourceDirectory 只管跨源）。FTP 无服务器端复制 → MKD + 逐子项递归，
+    /// 与 SFTPSource 的回退 pump 语义一致（RETR 目录只会 550，落 .notFound 是误导）。
     public func copyItem(from src: TCPath, to dst: TCPath) throws {
         let from = remotePath(src), to = remotePath(dst)
+        if let item = try stat(src), item.isDirectory {
+            try makeDirectory(at: dst)
+            for child in try listDirectory(src) {
+                try copyItem(from: makePath(dir: from, name: child.name),
+                             to: makePath(dir: to, name: child.name))
+            }
+            return
+        }
         try mapped(to) {
             // 1) 读尽源（RETR 完成、226 已在句柄收尾时排干）
             let reader = try conn.openReader(from)
@@ -220,7 +233,16 @@ public final class FTPSource: FileSource {
 
     public func openReader(_ path: TCPath) throws -> ReadHandle {
         let p = remotePath(path)
-        return try mapped(p) { try conn.openReader(p) }
+        return try mapped(p) {
+            let handle = try conn.openReader(p)
+            // 句柄**调用期**抛出的错误（截断/超时/连接关闭）也必须过映射：
+            // 泵送方（OperationEngine.stream、copyItem）直接吃 reader(…) 的错误，
+            // 不过这里就会把 FTPTransferTruncatedError/FTPClientError 原样漏给 UI。
+            return { want in
+                do { return try handle(want) }
+                catch { throw error.ftpmappedTCError(path: p) }
+            }
+        }
     }
 
     public func streamWrite(_ path: TCPath, totalBytes: Int64?,
@@ -279,6 +301,12 @@ extension Error {
     /// 有语义的失败一律落**专用 TCError case**（文案走 L10n 表，UI 出中文），
     /// `.unknown` 只留给 locale 透传（TCError.unknown 的既定收窄）。
     func ftpmappedTCError(path: String = "") -> TCError {
+        // 传输截断（226 确认「服务器发完」但字节数 < SIZE 预期）先判：它不是
+        // FTPClientError，是数据完整性失败，落专用 case（绝不与连接失败/550 混淆——
+        // 用户看到「数据连接失败」会去查网络，而正确处置是重传该文件）。
+        if let t = self as? FTPTransferTruncatedError {
+            return .ftpTransferTruncated(got: t.received, expected: t.expected)
+        }
         switch self {
         case let e as FTPClientError:
             switch e {
@@ -305,6 +333,9 @@ extension Error {
                 return .unknown("FTP server unsupported: \(what)")
             case .malformedReply(let detail):
                 return .unknown("Malformed FTP reply: \(detail)")
+            case .invalidPath:
+                // 命令未发出（路径含 CR/LF，协议无法转义）——控制流完好。
+                return .invalidPath(path)
             }
         default:
             return asTCError(self)

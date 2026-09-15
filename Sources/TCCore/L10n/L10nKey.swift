@@ -79,6 +79,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case errPathOutsideShare, errPathEscaped, errMountPointHint
     case errAuthRejected, errSFTPConnectFailed
     case errFTPConnectFailed, errFTPDataConnectFailed, errFTPTimeout, errFTPConnectionClosed
+    case errFTPTransferTruncated
     // —— OperationState 通道（Plan B：内核只发 key，边界组装）——
     // running 标签复用 Plan A 现键（rename / newDirectory）；done 成品句用 op*Done。
     case opCopying, opMoving, opDeleteRunning, opDeleteDone

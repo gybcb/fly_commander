@@ -144,6 +144,7 @@ public enum L10nTable {
         .errFTPDataConnectFailed: "FTP data connection failed: {0}",
         .errFTPTimeout: "FTP operation timed out ({0}s)",
         .errFTPConnectionClosed: "FTP connection closed",
+        .errFTPTransferTruncated: "FTP transfer incomplete: received {0} of {1} bytes. Re-download the file.",
         .errMountPointHint: "Cannot create mount point {0} (/Volumes not writable for current user). Run this once in Terminal:\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——显示前缀归外层（statusErrorPrefix / 各失败模板），防状态栏双前缀。
         .errUnknown: "{0}",
@@ -332,6 +333,7 @@ public enum L10nTable {
         .errFTPDataConnectFailed: "FTP 数据连接失败：{0}",
         .errFTPTimeout: "FTP 操作超时（{0} 秒）",
         .errFTPConnectionClosed: "FTP 连接已关闭",
+        .errFTPTransferTruncated: "FTP 传输不完整：收到 {0} / 共 {1} 字节，请重新传输该文件。",
         // zh 逐字搬 SMBMountManager 被替换的中文现码（全角 ：（）与 \n、命令行原样）。
         .errMountPointHint: "无法创建挂载点 {0}（/Volumes 对当前用户不可写）。请先在终端执行一次：\nsudo mkdir -p {0} && sudo chown \"$(whoami)\" {0}",
         // R-C1：裸 {0}——"错误：" 前缀归 statusErrorPrefix，状态栏不再叠字。

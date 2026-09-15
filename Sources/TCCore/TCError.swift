@@ -20,6 +20,9 @@ public enum TCError: Error, Equatable {
     case sftpConnectFailed            // "SFTP 连接失败"（SFTP SSHClientError.connectionFailed）
     case ftpConnectFailed(String)     // "FTP 连接失败：detail"
     case ftpDataConnectFailed(String) // "FTP 数据连接失败：detail"
+    /// RETR 收到 226（服务器自认发完）但字节数 < SIZE 预期 = 数据完整性失败，
+    /// **不是**连接失败：文案必须分开，否则用户去查网络而不重传该文件。
+    case ftpTransferTruncated(got: Int64, expected: Int64)
     case ftpTimeout(Double)           // "FTP 操作超时（N 秒）"
     case ftpConnectionClosed          // "FTP 连接已关闭"
     case unknown(String)              // 收窄：仅 locale 透传（系统 localizedDescription / Traversio message）
@@ -47,6 +50,7 @@ public enum TCError: Error, Equatable {
         case .sftpConnectFailed:            return "SFTP connection failed"
         case .ftpConnectFailed(let d):      return "FTP connect failed: \(d.prefix(200))"
         case .ftpDataConnectFailed(let d):  return "FTP data connection failed: \(d.prefix(200))"
+        case .ftpTransferTruncated(let g, let e): return "FTP transfer truncated: got \(g) of \(e) bytes"
         case .ftpTimeout(let s):            return "FTP timed out after \(s)s"
         case .ftpConnectionClosed:          return "FTP connection closed"
         case .mountPointNotWritable(let r):
@@ -78,6 +82,7 @@ public enum TCError: Error, Equatable {
         case .sftpConnectFailed: return .errSFTPConnectFailed
         case .ftpConnectFailed: return .errFTPConnectFailed
         case .ftpDataConnectFailed: return .errFTPDataConnectFailed
+        case .ftpTransferTruncated: return .errFTPTransferTruncated
         case .ftpTimeout: return .errFTPTimeout
         case .ftpConnectionClosed: return .errFTPConnectionClosed
         case .mountPointNotWritable: return .errMountPointHint
@@ -109,6 +114,8 @@ public enum TCError: Error, Equatable {
             return []
         case .ftpConnectFailed(let d), .ftpDataConnectFailed(let d):
             return [String(d.prefix(200))]
+        case .ftpTransferTruncated(let g, let e):
+            return [String(g), String(e)]
         case .ftpTimeout(let s):
             return [s == s.rounded() ? String(Int(s)) : String(s)]
         case .mountPointNotWritable(let r):

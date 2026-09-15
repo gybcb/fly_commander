@@ -50,11 +50,21 @@ final class TransferEngine {
     var progressClock: (() -> TimeInterval)?
     /// 传输连接工厂（单测注入替身）：入参 = 窗格浏览源；返回值 = 替身源 + **收尾清理闭包**
     /// （run 结束无论成败调用；无清理需求返回 {}）。返回 nil = 不替换（回落共享源）。
-    /// 生产实现 = SFTP 源经 ConnectionStore 开独立第二连接；非 SFTP 恒 nil。
+    /// 生产实现：SFTP 经 ConnectionStore 开独立第二连接；FTP 直接拿浏览源的 config
+    /// （含内存中密码）另建一条懒连 FTPSource——FTP 单控制连接不能多路复用，
+    /// 传输整程独占浏览连接会让传输期间该窗格的浏览/刷新全部排队（FTPConnection 的
+    /// 传输租约）；非 SFTP/FTP 恒 nil。
     var transferSourceProvider: (_ browse: FileSource) -> (FileSource, () -> Void)? = { browse in
-        guard let sftp = browse as? SFTPSource,
-              let ts = ConnectionStore.shared.transferSource(for: sftp.sourceID) else { return nil }
-        return (ts, { ts.closeConnection() })
+        if let sftp = browse as? SFTPSource,
+           let ts = ConnectionStore.shared.transferSource(for: sftp.sourceID) {
+            return (ts, { ts.closeConnection() })
+        }
+        if let ftp = browse as? FTPSource {
+            // 懒连（首次操作才握手）；同源判定是 sourceID 字符串相等，config 逐字复制 → 串一致。
+            let ts = FTPSource(config: ftp.config)
+            return (ts, { ts.closeConnection() })
+        }
+        return nil
     }
 
     let engine: OperationEngine

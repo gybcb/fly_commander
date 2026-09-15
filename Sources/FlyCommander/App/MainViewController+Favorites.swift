@@ -107,7 +107,7 @@ extension MainViewController {
            let host = record.host, !host.isEmpty {
             let secret = try? RemoteConnectionStore.shared.loadSecret(for: record)
             let source = FTPSource(config: FTPClient.Config(host: host,
-                                                            port: UInt16(record.port ?? 21),
+                                                            port: UInt16(record.effectiveFTPPort),
                                                             username: record.username,
                                                             password: secret,
                                                             tls: record.tls ?? false))

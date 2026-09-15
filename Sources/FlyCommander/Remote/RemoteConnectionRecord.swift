@@ -73,11 +73,16 @@ struct RemoteConnectionRecord: Codable, Equatable {
         case .sftp:
             return "\(host ?? ""):\(port ?? 22):\(username)"
         case .ftp:
-            return "\(host ?? ""):\(port ?? 21):\(username)"
+            return "\(host ?? ""):\(effectiveFTPPort):\(username)"
         case .smb:
             return "\(server ?? "")|\(domain ?? "")|\(share ?? "")|\(username)"
         }
     }
+
+    /// FTP 条目的生效端口：缺省按 TLS 取默认（明文 21 / Implicit FTPS 990）。
+    /// 与活源 FTPClient.Config.defaultPort(tls:) 同口径——两套口径必须共用一个判据，
+    /// 否则 tls+990 的条目在 record(forSourceID:) 恒查不到（收藏点不中）。
+    var effectiveFTPPort: Int { port ?? Int(FTPClient.Config.defaultPort(tls: tls ?? false)) }
 
     /// 数据源标识（同源判定用），与各 source 的 sourceID 一致。
     var sourceID: String {
@@ -89,8 +94,11 @@ struct RemoteConnectionRecord: Codable, Equatable {
         case .smb:
             return "smb://\(server ?? "")/\(share ?? "")"
         case .ftp:
+            // 省略的是**该 tls 形态的默认端口**（tls→990 / 否则→21），与
+            // FTPClient.Config.sourceID 逐字同构（F10：只省 21 会让 ftps 条目两边串永不相等）。
             var s = "ftp://\(host ?? "")"
-            if let port, port != 21 { s += ":\(port)" }
+            let p = effectiveFTPPort
+            if p != Int(FTPClient.Config.defaultPort(tls: tls ?? false)) { s += ":\(p)" }
             return s
         }
     }
@@ -103,7 +111,8 @@ struct RemoteConnectionRecord: Codable, Equatable {
         case .smb:
             "\(server ?? "")/\(share ?? "") (\(username))"
         case .ftp:
-            (port ?? 21) == 21 ? "\(host ?? "")/\(username)" : "\(host ?? ""):\(port ?? 21)/\(username)"
+            effectiveFTPPort == Int(FTPClient.Config.defaultPort(tls: tls ?? false))
+                ? "\(host ?? "")/\(username)" : "\(host ?? ""):\(effectiveFTPPort)/\(username)"
         }
     }
 

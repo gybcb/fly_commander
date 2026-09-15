@@ -136,6 +136,9 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
         passwordRadio.action = #selector(authRadioChanged)
         keyRadio.target = self
         keyRadio.action = #selector(authRadioChanged)
+        // TLS 勾选回写端口（见 tlsToggled）
+        tlsCheckbox.target = self
+        tlsCheckbox.action = #selector(tlsToggled)
         passwordRadio.state = .on
 
         statusLabel.font = .systemFont(ofSize: 12)
@@ -211,6 +214,7 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
         passwordField.setAccessibilityIdentifier("passwordField")
         keyPathField.setAccessibilityIdentifier("keyPathField")
         passphraseField.setAccessibilityIdentifier("passphraseField")
+        tlsCheckbox.setAccessibilityIdentifier("tlsCheckbox")
         saveButton.setAccessibilityIdentifier("saveConnectionButton")
         deleteButton.setAccessibilityIdentifier("deleteConnectionButton")
         savedTable.setAccessibilityIdentifier("savedTable")
@@ -280,7 +284,10 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
         serverField.stringValue = ""
         shareField.stringValue = ""
         domainField.stringValue = ""
-        portField.stringValue = ""
+        // 默认端口按**当前 proto** 回填（合并回归锁：工具栏/菜单入口 present() 不调
+        // setProto，端口留空串 → 点 Connect 直接「端口无效」。旧 SFTP VC prepare 里
+        // 就填 "22"）。
+        portField.stringValue = String(proto.defaultPort)
         userField.stringValue = ""
         passwordField.stringValue = ""
         keyPathField.stringValue = ""
@@ -505,6 +512,18 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
         setAuth(keyRadio.state == .on ? .keyFile : .password)
     }
 
+    /// TLS 勾选 ↔ 默认端口联动（FTPS 回归锁）：勾上且端口还停在明文默认 21 → 换 990；
+    /// 取消且端口停在 990 → 换回 21。用户手填过非默认端口则不动。
+    /// 缺这支 = 按 UI 标签勾 TLS 不端口即得 TLS-over-21，Implicit FTPS 握手必失败。
+    @objc private func tlsToggled() {
+        let p = trimmed(portField)
+        if tlsCheckbox.state == .on, p == String(RemoteProto.ftp.defaultPort) {
+            portField.stringValue = String(RemoteProto.ftp.tlsDefaultPort)
+        } else if tlsCheckbox.state == .off, p == String(RemoteProto.ftp.tlsDefaultPort) {
+            portField.stringValue = String(RemoteProto.ftp.defaultPort)
+        }
+    }
+
     @objc private func browseTapped() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -638,6 +657,9 @@ extension RemoteProto {
 
     /// 该协议表单默认端口（sftp 22 / ftp 21 / smb 走 SMB 协议本身无端口字段）。
     var defaultPort: Int { self == .ftp ? 21 : 22 }
+
+    /// FTP 的 Implicit FTPS 惯例端口（TLS 勾选联动用；与 FTPClient.Config.defaultPort(tls:true) 同值）。
+    var tlsDefaultPort: Int { Int(FTPClient.Config.defaultPort(tls: true)) }
 }
 
 extension RemoteConnectionRequest {
@@ -653,10 +675,13 @@ extension RemoteConnectionRequest {
                              username: username, secret: secret)
     }
 
-    /// → FTP 协议层入参。缺端口回落 21（Implicit FTPS 的 990 由表单勾 TLS 时显式给）。
+    /// → FTP 协议层入参。缺端口回落**该 tls 形态的默认端口**（明文 21 / Implicit FTPS 990），
+    /// 与表单 TLS↔端口联动（tlsToggled）同一判据；恒填 21 会让勾了 TLS 的缺端口入参
+    /// 得到 TLS-over-21 → 握手必失败。
     func ftpConnectionRequest() -> FTPConnectionRequest {
-        FTPConnectionRequest(host: host ?? "", port: UInt16(port ?? 21), username: username,
-                             password: secret, tls: tls)
+        let defaultPort = Int(FTPClient.Config.defaultPort(tls: tls))
+        return FTPConnectionRequest(host: host ?? "", port: UInt16(port ?? defaultPort),
+                                    username: username, password: secret, tls: tls)
     }
 }
 

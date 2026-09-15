@@ -734,7 +734,14 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
             .prefix(48))   // 定长十六进制，避开非法文件名字符
         let cacheURL = cacheDir.appendingPathComponent("\(digest)-\(item.name)")
         let path = item.path
+        // 远端下载走**独立传输连接**（同 TransferEngine 的合同）：FTP 单控制连接不能
+        // 多路复用，用浏览源下载会整程独占它 → 该窗格浏览/刷新全部排队，而命令栏 cd
+        // 在主线程同步 stat（InternalCommandExecutor.doCd），最长挂满 controlTimeout。
+        let transfer = transferEngine.transferSourceProvider(source)
+        let dlSource = transfer?.0 ?? source
+        let cleanup = transfer?.1 ?? {}
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { cleanup() }
             // 命中缓存（同 key 同大小）→ 直接开；否则 openReader 泵到临时件再改名落位。
             if FileManager.default.fileExists(atPath: cacheURL.path),
                (try? Data(contentsOf: cacheURL)) != nil {
@@ -743,7 +750,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
             }
             do {
                 try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-                let reader = try source.openReader(path)
+                let reader = try dlSource.openReader(path)
                 let tmp = cacheDir.appendingPathComponent(UUID().uuidString)
                 FileManager.default.createFile(atPath: tmp.path, contents: nil)
                 guard let fh = FileHandle(forWritingAtPath: tmp.path) else { throw TCError.unknown("cache open") }

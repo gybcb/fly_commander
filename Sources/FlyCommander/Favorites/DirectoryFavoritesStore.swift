@@ -8,15 +8,22 @@ struct DirectoryFavorite: Codable, Equatable {
     let path: String          // url.path（恒以 / 开头）
     let displayName: String   // 收藏时的 tabTitle 快照
 
-    /// 重组完整 TCPath。按 scheme 三分派：
+    /// 重组完整 TCPath。按 scheme 四分支：
     /// - sftp：必须走 `SFTPSource.tcPath`（逐段 percent-encode）——裸拼在含空格名上
     ///   URL(string:)==nil → TCPath 回落本地分支（静默错路由，SFTPSource:80 实证坑）；
+    /// - ftp：同 sftp，走 `FTPSource.tcPath`。缺这支会落兜底 TCPath(path)→file URL：
+    ///   目录监视按 path.isRemote 判本地 → 给远端窗格挂本地 FSEvents 流、同步 load
+    ///   打网络（正是 noteReloaded 注释明令避免的），tabTitle 也退化成只显示目录名；
     /// - smb：`smb://` 串走 TCPath 直解（SMBSource 以 id==pathString 维持该形态）；
     /// - local：直连。
     var tcPath: TCPath {
         if sourceID.hasPrefix("sftp://"),
            let comps = URLComponents(string: sourceID), let host = comps.host {
             return SFTPSource.tcPath(host: host, port: comps.port ?? 22, remotePath: path)
+        }
+        if sourceID.hasPrefix("ftp://"),
+           let comps = URLComponents(string: sourceID), let host = comps.host {
+            return FTPSource.tcPath(host: host, port: comps.port ?? 21, remotePath: path)
         }
         if sourceID.hasPrefix("smb://") { return TCPath("\(sourceID)\(path)") }
         return TCPath(path)
