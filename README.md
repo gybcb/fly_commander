@@ -1,5 +1,7 @@
 # FlyCommander
 
+[English](README.md) | [简体中文](README_zh.md)
+
 A keyboard-first, dual-pane file manager for macOS, modeled on Total Commander.
 Built with Swift (AppKit) and a headless, unit-tested core (`TCCore`).
 
@@ -8,26 +10,31 @@ Licensed under **AGPL-3.0-or-later** (SPDX: `AGPL-3.0-or-later`) — see [Licens
 ## Requirements
 - macOS 14 (Sonoma) or later
 - Xcode 15+ (for `swift build` / `swift test` / `swift run`)
-- Release 二进制目前仅覆盖 **Apple Silicon (arm64)**；Intel Mac 请自行从源码构建
+- Release binaries currently cover **Apple Silicon (arm64)** only; Intel Macs
+  need to build from source
 
-## 安装（Alpha：未签名、未公证）
+## Installation (Alpha: unsigned, not notarized)
 
-本项目不使用 Apple 开发者证书，因此 GitHub Release 下载的应用会被 Gatekeeper
-拦截（提示「无法验证开发者」甚至「已损坏」——**这不是应用损坏，只是没公证**）。
-步骤：
+This project does not use an Apple Developer certificate, so the app downloaded
+from GitHub Releases is blocked by Gatekeeper (it may say "cannot verify
+developer" or even "is damaged" — **the app is not damaged, it is merely not
+notarized**). Steps:
 
-1. Releases 页下载 `FlyCommander_<版本>_arm64.dmg`，双击挂载；
-2. 把 FlyCommander.app 拖进 Applications；
-3. 首次启动任选一种放行：
-   - System Settings → Privacy & Security → 底部「**仍要打开**」（macOS Sequoia
-     起官方唯一路径；老的右键→打开对未公证应用已不可靠）；
-   - 或终端：`xattr -dr com.apple.quarantine /Applications/FlyCommander.app`
+1. Download `FlyCommander_<version>_arm64.dmg` from the Releases page and mount it;
+2. Drag FlyCommander.app into Applications;
+3. On first launch, allow it one of two ways:
+   - System Settings → Privacy & Security → "**Open Anyway**" at the bottom
+     (the only official path since macOS Sequoia; the old right-click → Open is
+     no longer reliable for un-notarized apps);
+   - or in Terminal: `xattr -dr com.apple.quarantine /Applications/FlyCommander.app`
 
-构建与发布由 GitHub Actions 自动执行（`.github/workflows/`，tag `v*` 触发）。
+Builds and releases run automatically via GitHub Actions
+(`.github/workflows/`, triggered by `v*` tags).
 
 ## Build & run
     swift build          # build library + app
-    swift test           # run all unit tests (TCCore + app, incl. local-sshd SFTP e2e)
+    swift test           # run all unit tests (TCCore + app, incl. local-sshd SFTP e2e
+                         # and an in-process mini FTP server e2e)
     swift run FlyCommander
 
 UI regression (Tier 2, real windows):
@@ -62,48 +69,72 @@ No shell passthrough — commands act on the panes only.
 
 | Command | Meaning |
 |---|---|
-| `cd [path]` | enter directory (no arg → local home / remote home; remote pane only accepts `sftp://host:port/path`) |
+| `cd [path]` | enter directory (no arg → local home / remote home; a remote pane only accepts its own scheme, e.g. `sftp://host:port/path`) |
 | `ls` | echo active pane item count |
 | `mkdir name` | new directory (local or remote) |
 | `copy` / `move` | copy/move marked items to the other pane (same as F5/F6; cross-source runs in background) |
 | `del [items… \| *]` | delete (no arg = focused item; remote = confirm + direct delete, no trash) |
 | `view` / `edit` | preview focused file / open with external editor (local only) |
-| `sftp [host[:port]]` | open the SFTP connection window (host/port prefilled) |
+| `sftp [host[:port]]` | open the Connect-to-Remote dialog with protocol SFTP preselected (host/port prefilled) |
+| `smb [server]` | same dialog, protocol SMB preselected |
+| `ftp [host[:port]]` | same dialog, protocol FTP preselected |
+| `tab [new\|close]` | open / close a pane tab |
+| `theme` | open the theme window |
+| `lang [en\|zh]` | switch UI language |
+| `refresh` | reload the active pane |
+| `update` | check for a new version |
 | `help` | list commands |
 
-## SFTP remote (P4)
+## Remote connections (SFTP / SMB / FTP)
 
-- Connect via the toolbar "连接" button or the `sftp` command.
-- Auth: SSH key file (optionally with passphrase) **or** username + password.
-  Passwords can be stored in the macOS Keychain ("记住密码").
-- Remote panes support: browsing, upload/download, move/copy/rename/mkdir,
-  and direct delete (no trash on the server — always confirmed).
-- Remote paths use the `sftp://host:port/path` scheme; `cd` with no argument
-  returns to the remote home directory.
-- Implemented on top of [Traversio](https://github.com/GitSwiftHQ/Traversio)
-  (SSH/SFTP library).
+One toolbar button (**Connect to Remote**) opens a single dialog that switches
+between the three protocols. Saved connections persist across launches
+(passwords live in the macOS Keychain, "Remember password").
+
+- **SFTP** — implemented on top of
+  [Traversio](https://github.com/GitSwiftHQ/Traversio) (SSH/SFTP library).
+  Auth: SSH key file (optionally with passphrase) **or** username + password.
+  Paths use the `sftp://host:port/path` scheme.
+- **SMB** — mounts the share via macOS `mount_smbfs` and browses it as a local
+  source. Paths use the `smb://server/share/path` scheme.
+- **FTP** — a built-in pure-Swift FTP client (Network.framework, no third-party
+  dependency): browsing, upload/download, move/rename/mkdir/delete, streaming
+  transfers through the same `FileSource` interface as local/SFTP. Supports
+  plaintext FTP (port 21) and **implicit FTPS** (port 990, TLS from the first
+  byte). *Explicit `AUTH TLS` is not supported yet.* Paths use the
+  `ftp://host[:port]/path` scheme.
+- All remote panes support: browsing, upload/download,
+  move/copy/rename/mkdir, and direct delete (no trash on the server — always
+  confirmed). `cd` with no argument returns to the remote home directory.
 
 ## License
 
-FlyCommander 以 **GNU Affero General Public License v3.0（或后续版本）** 授权
-（SPDX: `AGPL-3.0-or-later`），与全文见 [LICENSE](LICENSE)。之所以采用 AGPL：
-应用**静态链接**了同样以 AGPL-3.0-or-later（+ 商业双许可）发布的依赖
-[Traversio](https://github.com/GitSwiftHQ/Traversio)，按 GPL/AGPL 的链接规则，
-整个组合作品须以同协议授权。
+FlyCommander is licensed under the **GNU Affero General Public License v3.0
+(or any later version)** (SPDX: `AGPL-3.0-or-later`); see
+[LICENSE](LICENSE) for the full text. The reason for AGPL: the app **statically
+links** [Traversio](https://github.com/GitSwiftHQ/Traversio), a dependency
+itself published under AGPL-3.0-or-later (+ commercial dual license), and the
+GPL/AGPL linking rules require the whole combined work to carry the same license.
 
-- **对应源码（corresponding source）**：每个 GitHub Release 都与同名的 git tag
-  一一对应，该 tag 的仓库内容（`Package.swift` / `Package.resolved` /
-  `project.yml` / 全部源码 / 构建 workflow）即构建该 `.app` 的完整输入——Release
-  页的 `Source code` 归档与 [`tree/<tag>`](https://github.com/gybcb/fly_commander/tags)
-  即为可复现本二进制的对应源码。
-- **AGPL §13（网络交互条款）在本项目不实际触发**：FlyCommander 是运行在你自己
-  机器上的桌面程序，不对外提供网络服务；它的 SFTP/SMB 功能是「作为客户端访问
-  你的服务器」，不构成 §13 所指的「通过计算机网络远程使用本程序」。
-- **商业许可**：若需在闭源产品中 incorporating Traversio，请直接向 GitSwift
-  购买其商业许可（见 Traversio 仓库 `COMMERCIAL-LICENSE.md`）；FlyCommander
-  本身只提供 AGPL 授权。
-- 若你为闭源分发而需要替换 SFTP 后端，可移除 Traversio 依赖（删除
-  `Sources/FlyCommander/Remote/` 的 SFTP 接线），此组合变更不影响其余代码的授权。
+- **Corresponding source**: every GitHub Release maps one-to-one to a git tag of
+  the same name; the repository content at that tag (`Package.swift` /
+  `Package.resolved` / `project.yml` / all sources / the build workflow) is the
+  complete input that builds the `.app` — the `Source code` archive on the
+  Release page and the [`tree/<tag>`](https://github.com/gybcb/fly_commander/tags)
+  view are the corresponding source to reproduce the binary.
+- **AGPL §13 (network interaction clause) does not actually trigger here**:
+  FlyCommander is a desktop program running on your own machine and provides no
+  network service; its SFTP/SMB/FTP features are "accessing *your* server as a
+  client", which is not "using the program remotely over a computer network" in
+  the sense of §13.
+- **Commercial licensing**: to incorporate Traversio into a closed-source
+  product, purchase its commercial license directly from GitSwift (see
+  `COMMERCIAL-LICENSE.md` in the Traversio repository); FlyCommander itself is
+  offered under AGPL only.
+- If you need to replace the SFTP backend for closed-source distribution, you can
+  remove the Traversio dependency (delete the SFTP wiring under
+  `Sources/FlyCommander/Remote/`); that combination change does not affect the
+  license of the rest of the code.
 
 ## Notes
 - Local delete (F8) moves items to the macOS Trash (recoverable).
@@ -111,5 +142,5 @@ FlyCommander 以 **GNU Affero General Public License v3.0（或后续版本）**
 - Because this is a locally-run, non-sandboxed app, macOS may prompt for
   authorization the first time you open protected folders (e.g. ~/Desktop,
   ~/Documents). Grant access in System Settings → Privacy & Security if needed.
-- Roadmap status: P0–P2 done, P3 (archives) skipped by user, P4 (command line
-  + SFTP) done. P5 (tabs & view modes) remains.
+- Roadmap status: P0–P4 done; P3 (archives) skipped by user; P5 (tabs & view
+  modes) partially done — tabs shipped, view modes remain.
