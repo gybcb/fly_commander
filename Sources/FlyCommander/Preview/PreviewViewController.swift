@@ -155,9 +155,7 @@ final class PreviewViewController: NSViewController {
                               load: @escaping @Sendable () -> T?,
                               fallback: @escaping () -> NSView,
                               on: @escaping (T?) -> NSView?) {
-        let placeholder = NSView()
-        placeholder.wantsLayer = true
-        placeholder.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let placeholder = ThemedBackgroundView(color: .controlBackgroundColor)
         swapContent(placeholder)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let loaded = load()
@@ -273,9 +271,7 @@ final class PreviewViewController: NSViewController {
         text.string = pt.text
         fallbackURL = url
 
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
         container.addSubview(scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         var topAnchor = container.topAnchor
@@ -339,9 +335,7 @@ final class PreviewViewController: NSViewController {
     }
 
     private func makeImageView(url: URL) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
 
         if let image = NSImage(contentsOf: url) {
             let imageView = NSImageView()
@@ -377,9 +371,7 @@ final class PreviewViewController: NSViewController {
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.translatesAutoresizingMaskIntoConstraints = false
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
         container.addSubview(pdfView)
         NSLayoutConstraint.activate([
             pdfView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -398,17 +390,13 @@ final class PreviewViewController: NSViewController {
         scroll.drawsBackground = false
         guard let text = scroll.documentView as? NSTextView,
               let storage = text.textStorage else {
-            let v = NSView()
-            v.wantsLayer = true
-            v.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            let v = ThemedBackgroundView(color: .controlBackgroundColor)
             return v
         }
         text.isEditable = false
         text.isSelectable = true
         storage.setAttributedString(attributedString)
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
         container.addSubview(scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -432,9 +420,7 @@ final class PreviewViewController: NSViewController {
         playerView.player = player
         playerView.translatesAutoresizingMaskIntoConstraints = false
         currentPlayer = player
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
         container.addSubview(playerView)
         NSLayoutConstraint.activate([
             playerView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -446,9 +432,7 @@ final class PreviewViewController: NSViewController {
     }
 
     private func makeFallbackView(item: FileItem) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let container = ThemedBackgroundView(color: .controlBackgroundColor)
 
         let title = NSTextField(labelWithString: L10n.t(.cannotPreview))
         title.font = .systemFont(ofSize: 14, weight: .medium)

@@ -18,7 +18,7 @@ final class BottomStatusBar: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        applyBackgroundColor()
 
         info.font = .systemFont(ofSize: 12)
         info.textColor = .labelColor
@@ -48,6 +48,19 @@ final class BottomStatusBar: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// init 与外观切换共用：重解动态色写回 layer（CGColor 存的是解算值，
+    /// 系统切明暗不重跑赋值就定格旧外观色）。
+    private func applyBackgroundColor() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applyBackgroundColor()
+        }
+    }
 
     /// 左栏：多选汇总优先于焦点行（selectionInfo 非空即覆盖）。
     func show(fileInfo: String, selectionInfo: String?) {

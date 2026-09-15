@@ -26,6 +26,11 @@ final class TabBarView: NSView {
     /// 常驻收藏夹按钮：与 filterButton 同款兄弟视图纪律（rebuild 不销毁）。
     let favoritesButton = NSButton()
 
+    /// 上次 rebuild 的入参（外观切换时重跑用）。软底标签的 `.labelColor` 前景画进
+    /// recessed cell 后不随明暗重绘（探针实证见 AppearanceRefreshTests），重跑 rebuild
+    /// 确定性重解析；accent 底是固定 RGBA，重跑幂等。
+    private var lastRebuild: (titles: [String], activeIndex: Int, isActiveSide: Bool)?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -118,6 +123,7 @@ final class TabBarView: NSView {
 
     /// 重建标签。titles 顺序 = TabGroup.panes 顺序。
     func rebuild(titles: [String], activeIndex: Int, isActiveSide: Bool) {
+        lastRebuild = (titles, activeIndex, isActiveSide)
         for v in stack.arrangedSubviews { v.removeFromSuperview() }
         for (i, t) in titles.enumerated() {
             let title = NSButton(title: Self.truncate(t, max: 18),
@@ -163,6 +169,13 @@ final class TabBarView: NSView {
         // 语言切换走的正是 rebuild 这条路。
         filterButton.toolTip = L10n.t(.filterButtonTip)
         favoritesButton.toolTip = L10n.t(.favoritesButtonTip)
+    }
+
+    /// 系统明暗切换：用上次的入参重跑 rebuild，重解软底标签的 labelColor 前景。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard let a = lastRebuild else { return }
+        rebuild(titles: a.titles, activeIndex: a.activeIndex, isActiveSide: a.isActiveSide)
     }
 
     @objc private func tabClicked(_ sender: NSButton) { onSwitchTab?(sender.tag) }

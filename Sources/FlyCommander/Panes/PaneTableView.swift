@@ -258,8 +258,20 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     func setActive(_ active: Bool) {
         isActive = active
-        layer?.borderColor = (active ? ThemeStore.shared.accentColor.cgColor : NSColor.separatorColor.cgColor)
+        // 同 FileCellView：动态色解算钉进 effectiveAppearance，与调用时机（点击切
+        // 窗格、外观钩子）和宿主明暗解绑——环境 currentDrawing 可能是旧外观。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = (active ? ThemeStore.shared.accentColor.cgColor : NSColor.separatorColor.cgColor)
+        }
         layer?.borderWidth = active ? 1 : 0.5
+    }
+
+    /// 系统明暗切换：非活动边框 separatorColor 是动态色的 CGColor 解算值，须重跑
+    /// setActive 重解（活动态 accent 是固定 RGBA，重跑幂等无副作用）。
+    /// setActive 内部已自钉 effectiveAppearance，此处不再包 perform。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        setActive(isActive)
     }
 
     /// 语言切换后重刷列头标题 + 单元格本地化格式（日期列随 L10n.current）：

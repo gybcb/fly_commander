@@ -39,7 +39,6 @@ final class CommandLineBar: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         prompt.font = .systemFont(ofSize: 12)
         prompt.textColor = .secondaryLabelColor
@@ -64,9 +63,6 @@ final class CommandLineBar: NSView {
         // cd 下拉建议：输入行上方弹出（NSView 默认不裁剪子视图 → 可延伸到窗格区域之上）。
         dropdown.translatesAutoresizingMaskIntoConstraints = false
         dropdown.wantsLayer = true
-        dropdown.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        dropdown.layer?.borderColor = NSColor.separatorColor.cgColor
-        dropdown.layer?.borderWidth = 0.5
         dropdown.isHidden = true
         dropdownStack.translatesAutoresizingMaskIntoConstraints = false
         dropdownStack.orientation = .vertical
@@ -95,10 +91,29 @@ final class CommandLineBar: NSView {
             dropdownStack.topAnchor.constraint(equalTo: dropdown.topAnchor),
             dropdownStack.bottomAnchor.constraint(equalTo: dropdown.bottomAnchor),
         ])
+        applyBackgroundColors()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// init 与外观切换共用：重解动态色写回本栏 + cd 下拉的 layer（CGColor 存解算值，
+    /// 系统切明暗不重跑就定格旧色）。放 init 末尾——dropdown.wantsLayer 须已就位。
+    private func applyBackgroundColors() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        dropdown.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        dropdown.layer?.borderColor = NSColor.separatorColor.cgColor
+        dropdown.layer?.borderWidth = 0.5
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // 钩子里 currentDrawing 可能仍是旧外观（真机实证，见 FileCellView 同款注释），
+        // 解算须钉进 performAsCurrentDrawingAppearance。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applyBackgroundColors()
+        }
+    }
 
     /// 语言切换后重刷常驻文案：prompt/placeholder 在属性初始化时冻结，须显式重设。
     /// 输出行是当前回显（一次性），不在此重刷（切语言后下次执行自然用新语言）。

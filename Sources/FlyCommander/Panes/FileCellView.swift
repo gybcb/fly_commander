@@ -11,6 +11,16 @@ final class FileCellView: NSTableCellView {
 
     private static let iconCache = NSCache<NSString, NSImage>()
 
+    /// 上次 configure 的入参（外观切换时重跑用）。行底色是动态 CGColor，系统切明暗
+    /// 不会重跑 configure → 定格旧色；存参数，钩子里原样重跑即随外观重解。
+    private struct ConfigureArgs {
+        let item: FileItem
+        let focus: Bool
+        let marked: Bool
+        let column: Int
+    }
+    private var lastConfigure: ConfigureArgs?
+
     /// 每列一套布局约束（互斥激活）。旧写法四视图共用一条横向链跑所有列——size 列里
     /// 隐藏的图标(16pt)+空名称标签仍占左缘 ~32pt、空日期标签占右缘，右对齐的大小文本
     /// (需 ~49pt)被挤到 cell 右缘外 ~11pt（issue #2「大小栏右边字被遮挡」）。按列只钉
@@ -99,6 +109,7 @@ final class FileCellView: NSTableCellView {
 
     /// 按列填充内容：0=图标+名称，1=大小，其余=日期；行高亮底色三列都铺。
     func configure(item: FileItem, focus: Bool, marked: Bool, column: Int) {
+        lastConfigure = ConfigureArgs(item: item, focus: focus, marked: marked, column: column)
         wantsLayer = true
         applyLayout(column: column)
         switch column {
@@ -118,19 +129,34 @@ final class FileCellView: NSTableCellView {
             dateLabel.stringValue = L10n.localized(date: item.modificationDate)
         }
 
-        if focus {
-            nameLabel.textColor = .selectedControlTextColor
-            nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
-            layer?.backgroundColor = NSColor.selectedContentBackgroundColor.cgColor
-        } else if marked {
-            nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
-            nameLabel.font = .systemFont(ofSize: 12)
-            layer?.backgroundColor = ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor
-        } else {
-            nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
-            nameLabel.font = .systemFont(ofSize: 12)
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // 动态色解算必须钉进本视图 effectiveAppearance：NSColor.cgColor 读的是
+        // currentDrawing() 上下文，而该上下文在**钩子内、点击/滚动引发的 configure、
+        // cell 复用重配**等常态路径里都可能是旧外观（真机实证：修钩子后切换即时
+        // 正常，点一下行触发重配 → 行底又回白）。effectiveAppearance 恒为视图当前
+        // 真实外观，钉它之后解算与调用时机、宿主明暗全部无关。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            if focus {
+                nameLabel.textColor = .selectedControlTextColor
+                nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+                layer?.backgroundColor = NSColor.selectedContentBackgroundColor.cgColor
+            } else if marked {
+                nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
+                nameLabel.font = .systemFont(ofSize: 12)
+                layer?.backgroundColor = ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor
+            } else {
+                nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
+                nameLabel.font = .systemFont(ofSize: 12)
+                layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            }
         }
+    }
+
+    /// 系统明暗切换：行底/焦点底是动态色的 CGColor 解算值，须原样重跑 configure 重解
+    /// （configure 内部已自钉 effectiveAppearance，此处不再包 perform）。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard let a = lastConfigure else { return }
+        configure(item: a.item, focus: a.focus, marked: a.marked, column: a.column)
     }
 
     /// 远端图标类型推导（纯函数，可单测）：目录→folder；文件按扩展名→UTType；无扩展名→data。
