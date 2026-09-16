@@ -22,6 +22,10 @@ final class SFTPServerFixture {
 
     private var sshdProcess: Process?
     private var tmpDir: URL?
+    // restartInPlace 复用（同 config 同端口重拉需要）。
+    private var configURL: URL?
+    private var logURL: URL?
+    private var currentPort: Int?
 
     func start() -> Live? {
         let sshd = "/usr/sbin/sshd"
@@ -44,6 +48,8 @@ final class SFTPServerFixture {
             try fm.createDirectory(at: remoteBase, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
             self.tmpDir = base
+            self.configURL = configURL
+            self.logURL = logURL
         } catch { return nil }
 
         let user = NSUserName()
@@ -84,16 +90,10 @@ final class SFTPServerFixture {
         catch { cleanup(); return nil }
 
         // 4) 起 sshd（-D 前台，日志落文件）。
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: sshd)
-        p.arguments = ["-D", "-f", configURL.path]
-        do {
-            let logHandle = try FileHandle(forWritingTo: logURL)
-            p.standardOutput = logHandle
-            p.standardError = logHandle
-        } catch { cleanup(); return nil }
-        do { try p.run() } catch { cleanup(); return nil }
-        sshdProcess = p
+        guard launchSSHD(configURL: configURL, logURL: logURL) != nil else {
+            cleanup(); return nil
+        }
+        currentPort = port
 
         // 5) 端口就绪探测（sshd 未就绪时 connect 被拒）。
         guard Self.waitPortReady(port: port, deadline: 10) else {
@@ -108,6 +108,85 @@ final class SFTPServerFixture {
         return Live(port: port, username: user, password: nil,
                     keyPath: privURL.path, keyPassphrase: passphrase,
                     remoteBase: remoteBase)
+    }
+
+    /// 起一个前台 sshd（-D）挂在 configURL 上；成功返回进程，失败 nil。
+    private func launchSSHD(configURL: URL, logURL: URL) -> Process? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/sshd")
+        p.arguments = ["-D", "-f", configURL.path]
+        do {
+            let logHandle = try FileHandle(forWritingTo: logURL)
+            p.standardOutput = logHandle
+            p.standardError = logHandle
+        } catch { return nil }
+        do { try p.run() } catch { return nil }
+        sshdProcess = p
+        return p
+    }
+
+    /// 杀 sshd **进程树**（父 + 全部后代）——sshd fork-per-connection + 特权分离：
+    /// 直接子 = monitor，真正服务 socket 的是 monitor 再 fork 的非特权子（ppid≠父）。
+    /// 只杀父/直接子 → 非特权子 reparent 后继续服务，客户端连接不死（实测）。
+    /// 必须递归杀全树，OS 才对活连接发 RST。
+    func killServerTree() {
+        guard let parent = sshdProcess else { return }
+        killDescendants(of: parent.processIdentifier)
+        kill(parent.processIdentifier, SIGKILL)
+        parent.waitUntilExit()
+        sshdProcess = nil
+    }
+
+    /// BFS 收集全部后代 pid，先杀后代再返回（杀完后轮询确认消失，最多 ~2s）。
+    private func killDescendants(of pid: pid_t) {
+        var queue: [pid_t] = [pid]
+        var all: [pid_t] = []
+        var head = 0
+        while head < queue.count {
+            defer { head += 1 }
+            let r = Self.runCapture(["/usr/bin/pgrep", "-P", String(queue[head])])
+            for line in r.split(whereSeparator: { $0.isNewline }) {
+                guard let child = Int32(line), !all.contains(child) else { continue }
+                all.append(child)
+                queue.append(child)
+            }
+        }
+        for child in all.reversed() { kill(child, SIGKILL) }
+        // 等全部后代真正消失（reap 有微小时差）
+        for _ in 0..<20 {
+            let alive = all.contains { kill($0, 0) == 0 }
+            if !alive { return }
+            usleep(100_000)
+        }
+    }
+
+    /// 原地重启（模拟唤醒）：杀进程树 → 同 config 同端口重新拉起。
+    /// 旧连接被打死，服务器可重连——修复后的连接层应懒重连恢复。
+    func restartInPlace() -> Bool {
+        guard let configURL, let logURL, let port = currentPort else { return false }
+        killServerTree()
+        // 端口释放有微小时差：轮询重拉（bind 失败重试），最多 ~3s。
+        for i in 0..<15 {
+            if launchSSHD(configURL: configURL, logURL: logURL) != nil,
+               Self.waitPortReady(port: port, deadline: 2) {
+                return true
+            }
+            usleep(UInt32(200_000 * (i + 1)))
+        }
+        return false
+    }
+
+    private static func runCapture(_ cmd: [String]) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: cmd[0])
+        p.arguments = Array(cmd.dropFirst())
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     func cleanup() {

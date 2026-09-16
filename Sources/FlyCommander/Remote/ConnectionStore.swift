@@ -148,6 +148,12 @@ final class ConnectionStore {
         for id in sources.keys { disconnect(id) }
     }
 
+    /// 丢弃全部活动源的**内层连接**（系统唤醒用）——不移除表项：窗格直接持有同一
+    /// SFTPSource 实例，closeConnection 只清死连接，下次操作懒重建（对齐懒重连语义）。
+    func closeAllConnections() {
+        for s in sources.values { s.closeConnection() }
+    }
+
     var activeIDs: [String] { sources.keys.sorted() }
     var savedConnections: [SFTPConnectionRecord] { saved }
 

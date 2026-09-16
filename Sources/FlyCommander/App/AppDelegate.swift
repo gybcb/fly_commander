@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
     private weak var mainViewController: MainViewController?
     private var activeObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     /// 24h 复检计时器（持强引用随 delegate 终身；启动首检走 asyncAfter 不占它）。
     private var updateTimer: Timer?
 
@@ -40,6 +41,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.mainViewController?.directoryWatcher.refreshAllWatched()
+        }
+        // 休眠唤醒：TCP 已被 OS/服务器拆掉，但连接层缓存的对象还在（SFTP 修复前
+        // 每个操作都在死连接上执行、永不自愈，必须重启 App）。唤醒即主动丢弃全部
+        // 活动源的**内层连接**（窗格源 + ConnectionStore 里的传输源）；closeConnection
+        // 不移除表项，下次操作懒重建——窗格不用重建，用户无感。
+        // 只碰已实现 closeConnection 的远端源（SFTP/FTP）；本地/SMB 源不在此列。
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let ws = self.mainViewController?.workspace
+            for group in [ws?.leftTabs, ws?.rightTabs] {
+                for pane in group?.panes ?? [] {
+                    (pane.source as? SFTPSource)?.closeConnection()
+                    (pane.source as? FTPSource)?.closeConnection()
+                }
+            }
+            ConnectionStore.shared.closeAllConnections()
         }
         #if DEBUG
         // UITest 夹具：启动参数呈现假更新窗（不联网；断言窗标题/按钮 AX 可达）。

@@ -54,7 +54,43 @@ public final class SFTPSource: FileSource {
     private func mapped<T>(_ path: String, _ body: () throws -> T) throws -> T {
         do { return try body() }
         catch {
+            dropConnectionIfDead(error)
             throw (error as? SSHClientError)?.sftpMappedTCError(path: path) ?? asTCError(error)
+        }
+    }
+
+    /// 死连接判丢（镜像 FTP `keepsConnection`：**服务器答过话 → 连接留着**）。
+    /// 判据 = 错误是否携带 SFTP 协议层应答：
+    /// - `operationFailed` 且 diagnostics.sftpStatus 非 nil（noSuchFile/permissionDenied/
+    ///   eof 等）= 服务器对这条请求给了语义否定 → 传输仍活，留着（否则每次撞不存在
+    ///   路径都重付一次 TCP/SSH 握手，且刷新风暴 = 重连风暴）；
+    /// - `connectionScopeEnded`（对端拆流/休眠后 TCP 死）/ 无 sftpStatus 的
+    ///   `operationFailed`（传输层诊断）/ 一切非 SSHClientError → 判丢，
+    ///   `_connection = nil` 下次 conn() 懒重建。
+    /// 认证类错误（authenticationRejected）不丢：连接活着，只是凭据不对。
+    private func dropConnectionIfDead(_ error: Error) {
+        guard let c = _connection else { return }
+        var dead: Bool
+        switch error {
+        case let e as SSHClientError:
+            switch e {
+            case .operationFailed(let f):
+                dead = f.diagnostics.sftpStatus == nil
+            case .connectionScopeEnded:
+                dead = true
+            default:
+                // authenticationRejected / passwordChangeRequired / connectionFailed：
+                // 前者连接活（凭据问题），后两者发生在 conn() 新建路径（缓存里本就没有连接）
+                dead = false
+            }
+        default:
+            dead = true
+        }
+        guard dead else { return }
+        // 仅当还是同一个连接（句柄闭包错误也走到这里时可能已被前次判丢替换）
+        if _connection === c {
+            c.close()
+            _connection = nil
         }
     }
 
