@@ -10,7 +10,9 @@ Swift + AppKit 编写，核心为无头、全单元测试的 `TCCore`。
 ## 环境要求
 - macOS 14（Sonoma）或更新系统
 - Xcode 15+（用于 `swift build` / `swift test` / `swift run`）
-- Release 二进制目前仅覆盖 **Apple Silicon (arm64)**；Intel Mac 请自行从源码构建
+- Release 二进制按 CPU 架构分发：`FlyCommander_<版本>_arm64.dmg`（Apple
+  Silicon）与 `FlyCommander_<版本>_x86_64.dmg`（Intel）；App 内一键升级会自动
+  选择匹配本机的架构
 
 ## 安装（Alpha：未签名、未公证）
 
@@ -18,7 +20,8 @@ Swift + AppKit 编写，核心为无头、全单元测试的 `TCCore`。
 Gatekeeper 拦截（提示「无法验证开发者」甚至「已损坏」——**这不是应用损坏，
 只是没公证**）。步骤：
 
-1. Releases 页下载 `FlyCommander_<版本>_arm64.dmg`，双击挂载；
+1. Releases 页下载 `FlyCommander_<版本>_arm64.dmg`（Apple Silicon）或
+   `FlyCommander_<版本>_x86_64.dmg`（Intel），双击挂载；
 2. 把 FlyCommander.app 拖进 Applications；
 3. 首次启动任选一种放行：
    - 系统设置 → 隐私与安全性 → 底部「**仍要打开**」（macOS Sequoia

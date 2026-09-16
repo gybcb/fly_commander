@@ -28,6 +28,7 @@ final class UpdateCheckerTests: XCTestCase {
     """
 
     private func makeChecker(json: String, local: String = "0.0.5",
+                             arch: String = UpdateManifest.arm64Key,
                              fetcher: FakeUpdateFetcher? = nil)
         -> (UpdateChecker, FakeUpdateFetcher, UpdateStore, () -> TimeInterval) {
         let d = UserDefaults(suiteName: "cktest_\(UUID().uuidString)")!
@@ -35,7 +36,8 @@ final class UpdateCheckerTests: XCTestCase {
         var fakeNow: TimeInterval = 100_000
         let fetch = fetcher ?? FakeUpdateFetcher()
         if fetcher == nil { fetch.behavior = .canned(Data(json.utf8)) }   // 显式注入者自管 behavior
-        let c = UpdateChecker(fetcher: fetch, store: store, localVersion: local)
+        // arch 显式注入：默认 arm64——fixture 是 arm64 模板，测试必须跨机（Intel 上跑 CI 测试）确定。
+        let c = UpdateChecker(fetcher: fetch, store: store, localVersion: local, archKey: arch)
         c.now = { fakeNow }
         // 同步线程注入：后台闭包直调、回调不排 main queue（裸进程无 main runloop）。
         c.runInBackground = { work in work() }

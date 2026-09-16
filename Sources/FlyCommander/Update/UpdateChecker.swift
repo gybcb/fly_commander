@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import TCCore
 
 /// latest.json 取数抽象（测试注入 canned Data，真实现走 URLSession）。
@@ -51,11 +52,25 @@ final class UpdateChecker {
 
     static let checkInterval: TimeInterval = 24 * 3600
 
+    /// 本机 CPU 架构键（"arm64"/"x86_64"）：sysctl hw.optional.arm64=1 → arm64。
+    /// 用硬件位而非进程架构：Apple Silicon 上即便 app 跑在 Rosetta（x86_64 切片）下，
+    /// hw.optional.arm64 恒 1 → 仍选 arm64 包（原生优于转译）；Intel 上该 sysctl 不存在 → x86_64。
+    static func detectArchKey() -> String {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("hw.optional.arm64", &value, &size, nil, 0) == 0, value == 1 {
+            return UpdateManifest.arm64Key
+        }
+        return UpdateManifest.x86_64Key
+    }
+
     let manifestURL: URL
     private let fetcher: UpdateFetching
     private let store: UpdateStore
     /// 当前 app 版本（UpdateFlow 回显「已是最新 vX」也要读 → internal）。
     let localVersion: String
+    /// 本清单按此架构键选产物（默认探测本机 CPU）。
+    let archKey: String
     /// 可注入时钟（仿 TransferEngine.progressClock.now），测试冻结/脚本化 24h 边界。
     var now: () -> TimeInterval = { Date().timeIntervalSince1970 }
     /// 后台/主线程派发（测试注同步闭包）。
@@ -69,11 +84,13 @@ final class UpdateChecker {
     init(manifestURL: URL = URL(string: "https://raw.githubusercontent.com/gybcb/fly_commander/updates/latest.json")!,
          fetcher: UpdateFetching = URLSessionUpdateFetcher(),
          store: UpdateStore = .shared,
-         localVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0") {
+         localVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0",
+         archKey: String = UpdateChecker.detectArchKey()) {
         self.manifestURL = manifestURL
         self.fetcher = fetcher
         self.store = store
         self.localVersion = localVersion
+        self.archKey = archKey
     }
 
     /// 检查一次。manual=true（菜单/命令）→ 忽略节流与跳过，一切结果都回调；
@@ -89,10 +106,11 @@ final class UpdateChecker {
         let url = manifestURL
         let local = localVersion
         let skipped = store.skippedVersion
+        let arch = archKey
         runInBackground { [fetcher] in
             let outcome: Outcome
             do {
-                let manifest = try UpdateManifest.decode(try fetcher.fetch(url))
+                let manifest = try UpdateManifest.decode(try fetcher.fetch(url), arch: arch)
                 if VersionCompare.isUpdate(manifest.version, newerThan: local) {
                     outcome = (!manual && manifest.version == skipped) ? .skipped : .available(manifest)
                 } else {

@@ -60,8 +60,9 @@ jobs:
         run: xcodebuild -resolvePackageDependencies -project FlyCommander.xcodeproj -scheme FlyCommander -derivedDataPath build
 
       # 版本号用 xcodebuild 位置参数 KEY=VALUE 覆盖（project.yml 里的值只是本地默认）。
-      # ARCHS=arm64：锁死单架构——Release 默认 ARCHS_STANDARD 在 Apple Silicon 上仍含
-      # x86_64，会悄悄产出 universal，与「仅 arm64」决策及 README 安装说明矛盾。
+      # 双架构各自单架构构建（非 universal，双 dmg 分发）：
+      # - ARCHS 锁死单架构——Release 默认 ARCHS_STANDARD 会悄悄产出 universal，与分发决策矛盾。
+      # - x86_64 在 arm64 runner 上交叉编译（xcodebuild 原生支持，Traversio SPM 同样出 x86_64 切片）。
       # 用 build 而非 test action：结构上不会触发 scheme test 段的 XCUITest。
       - name: Build (Release, ad-hoc signed, arm64)
         env:
@@ -69,45 +70,66 @@ jobs:
           BUILD_NUMBER: ${{ steps.ver.outputs.build_number }}
         run: |
           xcodebuild -project FlyCommander.xcodeproj -scheme FlyCommander \
-            -configuration Release -derivedDataPath build \
+            -configuration Release -derivedDataPath build-arm64 \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
             build
 
-      - name: Verify bundle (license / version / signature)
+      - name: Build (Release, ad-hoc signed, x86_64)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ver.outputs.build_number }}
+        run: |
+          xcodebuild -project FlyCommander.xcodeproj -scheme FlyCommander \
+            -configuration Release -derivedDataPath build-x86_64 \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Verify bundle (license / version / signature / arch)
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          APP=build/Build/Products/Release/FlyCommander.app
-          test -d "$APP"
-          # 防版本漂移：产物版本必须等于 tag 解出的版本
-          plutil -p "$APP/Contents/Info.plist"
-          V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
-          [ "$V" = "$VERSION" ] || { echo "版本不符: $V"; exit 1; }
-          # AGPL：发布包内应含许可文本。注意顺序——往已签名 bundle 加文件会破坏
-          # 签名 seal（实测 "a sealed resource is missing or invalid"），必须补文件后重签再校验。
-          cp LICENSE "$APP/Contents/Resources/LICENSE"
-          codesign --force --sign - "$APP"
-          codesign --verify --strict --verbose=2 "$APP"
-
-      - name: Package dmg
-        env:
-          DMG_NAME: FlyCommander_${{ steps.ver.outputs.version }}_arm64.dmg
-        run: |
-          STAGE=$(mktemp -d)
-          cp -R build/Build/Products/Release/FlyCommander.app "$STAGE/"
-          ln -s /Applications "$STAGE/Applications"
-          # hdiutil 在 CI 上偶发 transient 失败 → 重试 3 次
-          for i in 1 2 3; do
-            if hdiutil create -volname FlyCommander -srcfolder "$STAGE" -ov -format UDZO "$DMG_NAME"; then
-              break
-            fi
-            [ "$i" = 3 ] && exit 1
-            sleep 5
+          for pair in "build-arm64 arm64" "build-x86_64 x86_64"; do
+            set -- $pair
+            APP=$1/Build/Products/Release/FlyCommander.app
+            test -d "$APP"
+            # 防版本漂移：产物版本必须等于 tag 解出的版本
+            V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
+            [ "$V" = "$VERSION" ] || { echo "版本不符: $V"; exit 1; }
+            # 防架构漂移：主二进制 fat 头必须只含目标架构
+            lipo -archs "$APP/Contents/MacOS/FlyCommander" | grep -Exw "$2" \
+              || { echo "$1 实际架构 $(lipo -archs "$APP/Contents/MacOS/FlyCommander") ≠ $2"; exit 1; }
+            # AGPL：发布包内应含许可文本。注意顺序——往已签名 bundle 加文件会破坏
+            # 签名 seal（实测 "a sealed resource is missing or invalid"），必须补文件后重签再校验。
+            cp LICENSE "$APP/Contents/Resources/LICENSE"
+            codesign --force --sign - "$APP"
+            codesign --verify --strict --verbose=2 "$APP"
           done
-          ls -lh "$DMG_NAME"
+
+      - name: Package dmg (per arch)
+        env:
+          DMG_PREFIX: FlyCommander_${{ steps.ver.outputs.version }}
+        run: |
+          for pair in "build-arm64 arm64" "build-x86_64 x86_64"; do
+            set -- $pair
+            STAGE=$(mktemp -d)
+            cp -R $1/Build/Products/Release/FlyCommander.app "$STAGE/"
+            ln -s /Applications "$STAGE/Applications"
+            # hdiutil 在 CI 上偶发 transient 失败 → 重试 3 次
+            for i in 1 2 3; do
+              if hdiutil create -volname FlyCommander -srcfolder "$STAGE" -ov -format UDZO "${DMG_PREFIX}_$2.dmg"; then
+                break
+              fi
+              [ "$i" = 3 ] && exit 1
+              sleep 5
+            done
+          done
+          ls -lh FlyCommander_*.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -141,7 +163,7 @@ jobs:
             echo "FlyCommander Alpha-${VERSION} —— 早期预览版，功能与快捷键仍会变动。"
             echo
             echo "## 运行要求"
-            echo "- macOS 14 (Sonoma)+，Apple Silicon (arm64)"
+            echo "- macOS 14 (Sonoma)+；arm64 与 Intel (x86_64) 各有对应 dmg，App 内一键升级会自动选本机架构"
             echo
             echo "## 首次打开（重要）"
             echo "本应用未做 Apple 开发者签名与公证，Gatekeeper 会拦截（提示「已损坏」并非损坏）。"
@@ -177,21 +199,33 @@ jobs:
           printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || { echo "非法 repo: $REPO"; exit 1; }
           # tag 与版本必须同源（app 端锚定 dmgURL==…/v<version>/…，失一致=清单永被判无效）
           [ "$TAG" = "v$VERSION" ] || { echo "tag($TAG) ≠ v+version($VERSION)，清单锚定会失配"; exit 1; }
-          DMGS=( dist/*.dmg )
-          [ "${#DMGS[@]}" -eq 1 ] && [ -f "${DMGS[0]}" ] || { echo "dist/*.dmg 应恰有一个，实为 ${#DMGS[@]} 个"; exit 1; }
-          # 文件名与 dmgURL 必须一致（打包侧 DMG_NAME 的镜像校验，防命名漂移 → 死链）
-          EXPECTED="FlyCommander_${VERSION}_arm64.dmg"
-          [ "$(basename "${DMGS[0]}")" = "$EXPECTED" ] || { echo "dmg 文件名 ${DMGS[0]} ≠ $EXPECTED"; exit 1; }
-          SHA=$(sha256sum "${DMGS[0]}" | awk '{print $1}')
-          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || { echo "sha256 异常: $SHA"; exit 1; }
+          # 每架构 dmg 恰一个 + 命名与 dmgURL 模板逐字一致（防命名漂移 → 死链）。
+          # arch 键必须与 app 侧 UpdateManifest.expectedDmgURL 模板的 "_<arch>.dmg" 完全一致。
+          for arch in arm64 x86_64; do
+            DMG="dist/FlyCommander_${VERSION}_${arch}.dmg"
+            [ -f "$DMG" ] || { echo "缺产物: $DMG"; exit 1; }
+            SHA=$(sha256sum "$DMG" | awk '{print $1}')
+            printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || { echo "sha256 异常: $SHA"; exit 1; }
+            echo "{\"arch\":\"$arch\",\"sha\":\"$SHA\"}" >> arch_shas.jsonl
+          done
           # JSON 交 python 生成（转义安全，ubuntu 自带 python3）
-          python3 - "$VERSION" "$TAG" "$REPO" "$EXPECTED" "$SHA" <<'PYEOF'
+          python3 - "$VERSION" "$TAG" "$REPO" <<'PYEOF'
           import json, sys
-          version, tag, repo, dmg, sha = sys.argv[1:6]
+          version, tag, repo = sys.argv[1:4]
+          assets = {}
+          for line in open("arch_shas.jsonl"):
+              rec = json.loads(line)
+              assets[rec["arch"]] = {
+                  "dmgURL": f"https://github.com/{repo}/releases/download/{tag}/FlyCommander_{version}_{rec['arch']}.dmg",
+                  "sha256": rec["sha"],
+              }
           manifest = {
               "version": version,
-              "dmgURL": f"https://github.com/{repo}/releases/download/{tag}/{dmg}",
-              "sha256": sha,
+              "assets": assets,
+              # 旧格式镜像（arm64 顶层字段）：v0.0.8 及以前的存量 app 只认顶层
+              # dmgURL/sha256，缺这支它们的升级检测会静默失效。新 app 优先读 assets。
+              "dmgURL": assets["arm64"]["dmgURL"],
+              "sha256": assets["arm64"]["sha256"],
               "notes": "See the release page for changes.",
           }
           with open("latest.json", "w") as f:

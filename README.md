@@ -10,8 +10,10 @@ Licensed under **AGPL-3.0-or-later** (SPDX: `AGPL-3.0-or-later`) — see [Licens
 ## Requirements
 - macOS 14 (Sonoma) or later
 - Xcode 15+ (for `swift build` / `swift test` / `swift run`)
-- Release binaries currently cover **Apple Silicon (arm64)** only; Intel Macs
-  need to build from source
+- Release binaries are provided per CPU architecture:
+  `FlyCommander_<version>_arm64.dmg` (Apple Silicon) and
+  `FlyCommander_<version>_x86_64.dmg` (Intel); the in-app updater automatically
+  picks the dmg matching your machine
 
 ## Installation (Alpha: unsigned, not notarized)
 
@@ -20,7 +22,8 @@ from GitHub Releases is blocked by Gatekeeper (it may say "cannot verify
 developer" or even "is damaged" — **the app is not damaged, it is merely not
 notarized**). Steps:
 
-1. Download `FlyCommander_<version>_arm64.dmg` from the Releases page and mount it;
+1. From the Releases page download `FlyCommander_<version>_arm64.dmg` (Apple
+   Silicon) or `FlyCommander_<version>_x86_64.dmg` (Intel), and mount it;
 2. Drag FlyCommander.app into Applications;
 3. On first launch, allow it one of two ways:
    - System Settings → Privacy & Security → "**Open Anyway**" at the bottom
