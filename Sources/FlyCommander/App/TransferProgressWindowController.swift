@@ -201,14 +201,17 @@ final class TransferProgressWindowController: NSWindowController {
         if let done = info.bytesDone, let total = info.bytesTotal, total > 0 {
             progressBar.stopAnimation(nil)
             progressBar.isIndeterminate = false
-            progressBar.doubleValue = Double(done) / Double(total) * 100
+            // 直传跨条目累计基线可让 done 瞬时 > total（askDirect 基线 + 接缝当前
+            // 文件自报 total 的错位窗口）→ 钳 100，防回绕显示。
+            progressBar.doubleValue = min(100, Double(done) / Double(total) * 100)
             samples.append((CFAbsoluteTimeGetCurrent(), done))
             if samples.count > 64 { samples.removeFirst(samples.count - 64) }
             // 字节计数纯数字+斜杠（无文案）不需 L10n 键。
             var detail = "\(Self.byteString(done)) / \(Self.byteString(total))"
             if let speed = TransferSpeed.estimate(samples: samples) {
                 detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
-                let remaining = Double(total - done) / speed
+                // 剩余钳 ≥0：done>total 的越界帧会给负剩余（同 reason 同钳位）。
+                let remaining = max(0, Double(total - done) / speed)
                 if remaining < 3600 * 24 {   // >24h 的估算没有意义，宁缺毋假
                     detail += "  " + L10n.t(.transRemaining, Self.durationString(remaining))
                 }

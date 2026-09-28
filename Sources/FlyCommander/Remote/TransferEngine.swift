@@ -121,6 +121,41 @@ final class TransferEngine {
         }
     }
 
+    /// 字节帧构造（文件级/路由字段由调用方语义决定：字节帧无名字、无 route）。
+    /// **total==0 → bytesTotal=nil**：直传路目录条目无预扫描、总量未知（接缝合同
+    /// 「第二参 0=总量未知」），面板 `total > 0` 判定消费的是 nil——0 会穿进
+    /// 「有总量」分支渲染 0/0。变异证伪见 TransferPanelDirectRouteTests。
+    static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int)
+        -> TransferProgressInfo {
+        TransferProgressInfo(name: "", fileDone: fileDone, fileTotal: fileTotal,
+                             bytesDone: done, bytesTotal: total > 0 ? total : nil, route: nil)
+    }
+
+    /// 直传接缝的启用判定（纯函数，可单测）：两端皆 SFTP + 不同服务器 + 源端 keyFile
+    /// 认证（密码认证先天无 A→B 信任，A 上 ssh 必然要口令）才可能；否则不挂接缝
+    /// = 引擎零调用。锁在 TransferPanelDirectRouteTests.testSeamGateTable。
+    static func directSeamSources(src: FileSource, dst: FileSource)
+        -> (ssrc: SFTPSource, sdst: SFTPSource)? {
+        guard let ssrc = src as? SFTPSource, let sdst = dst as? SFTPSource,
+              ssrc.sourceID != sdst.sourceID, ssrc.supportsDirectCross
+        else { return nil }
+        return (ssrc, sdst)
+    }
+
+    /// 接缝单次调用的参数装配（纯函数，可单测）。
+    /// dstPath 直接用 destDir —— 接缝合同里它**已是全目标路径**（Task 1
+    /// testSeamReceivesJoinedDest），此处再拼一次名 = 「src 尾斜杠吞掉路径名」类坑。
+    /// totalHint：目录无预扫描 = 0（不定量），文件 = size。
+    static func directSeamArgs(ssrc: SFTPSource, sdst: SFTPSource, item: FileItem, destDir: TCPath)
+        -> (item: DirectRsync.ItemTarget, peer: DirectRsync.Peer, totalHint: Int64) {
+        (DirectRsync.ItemTarget(remotePath: item.path.pathString,
+                                dstPath: destDir.pathString,
+                                isDirectory: item.isDirectory),
+         // peer = **目标**服务器：命令构造器把它拼成 rsync 的 `user@host:` 推送目的地。
+         sdst.peer,
+         item.isDirectory ? 0 : item.size)
+    }
+
     /// 兼容入口：无取消/无逐文件进度（既有工具栏语义原样保留）。
     func run(_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) {
         run(isCopy, srcPane, dstPane, cancel: CancelFlag(), onProgress: nil)
@@ -187,13 +222,29 @@ final class TransferEngine {
                 throttle.lastByteReportTime = -ThrottleState.sentinel
                 onMain { onProgress(info) }
             }
-            // 字节级：节流上报；total==0（大小未知）引擎根本不会调到这里（宁缺毋假）。
+            // 字节级：节流上报。
             let byteProgress: (Int64, Int64) -> Void = { done, total in
                 guard onProgress != nil, throttle.shouldReportByte() else { return }
-                let info = TransferProgressInfo(name: "", fileDone: throttle.fileDone,
-                                                fileTotal: targets.count,
-                                                bytesDone: done, bytesTotal: total, route: nil)
+                let info = TransferEngine.byteFrame(done: done, total: total,
+                                                    fileDone: throttle.fileDone,
+                                                    fileTotal: targets.count)
                 onMain { onProgress?(info) }
+            }
+
+            // 跨服务器直传接缝（Task 4）：启用判定与参数装配在纯静态里
+            // （directSeamSources/directSeamArgs，peer 方向性由单测直锁）。
+            // per-run 赋值（防跨 run 泄漏旧连接），run 结束无论成败置 nil。
+            if let (ssrc, sdst) = Self.directSeamSources(src: srcSource, dst: dstSource) {
+                engine.directCrossTransfer = { item, destDir, bp in
+                    let a = Self.directSeamArgs(ssrc: ssrc, sdst: sdst, item: item, destDir: destDir)
+                    let out = try ssrc.runDirectRsync(item: a.item, peer: a.peer,
+                                                      totalHint: a.totalHint,
+                                                      byteProgress: bp, cancel: cancel)
+                    // 路由镜像（两条都抄）：rsync 写在 src 连接，面板读 dst——黄点场景
+                    // （needsAuth/rsyncMissing 回退）全靠这一行。抛错路不经过这里（面板走错误态）。
+                    sdst.mirrorRoute(ssrc.lastCopyRoute ?? .relayed(.channelGone))
+                    return out
+                }
             }
 
             onMain { state?(.running(label: label, args: args, progress: 0)) }
@@ -222,6 +273,9 @@ final class TransferEngine {
                 onMain { state?(.failed(.unknown(error.localizedDescription))) }
             }
             // 临时传输连接：成功/失败/取消一律关闭（生命周期 = 一次传输）。
+            // 接缝同时置 nil：闭包捕获本 run 的连接，留着会被下一次 run 的引擎调用
+            // （连接已关 → 未定义行为）。
+            engine.directCrossTransfer = nil
             for close in cleanups { close() }
             onMain { self.onFinished?(srcPane, dstPane) }
         }

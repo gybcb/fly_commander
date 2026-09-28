@@ -63,6 +63,10 @@ final class RsyncProgressParser {
                    let fileBytesTotal: Int64; let fileDone: Int; let fileTotal: Int }
     var onEvent: ((Event) -> Void)?
     private(set) var fileBytesDone: Int64 = 0   // 已完成文件累计 + 当前行 done
+    /// 最新数值行的 total（跨文件语义下 = **当前文件**的总量，非整棵目录的和——
+    /// --progress 无预扫描，目录总量先天未知）。消费方：SFTPConnection.runDirectRsync
+    /// 的进度桥（Task 4 brief 引用此属性，Task 3 落地时漏了，在此补）。
+    private(set) var fileBytesTotal: Int64 = 0
     private(set) var totalKnown = false
     private(set) var fileDone = 0
     private(set) var fileTotal = 0
@@ -118,6 +122,7 @@ final class RsyncProgressParser {
         }
         let evTotal = max(total ?? done, done)     // 不一致时信 total；无 total 信 done
         if total != nil { totalKnown = true }
+        fileBytesTotal = evTotal                   // 持久态：当前文件总量（消费方 = runDirectRsync 进度桥）
         let completing = (percent == 100) || (total.map { done >= $0 } ?? false)
         let event = Event(fileName: pendingName, fileBytesDone: cumulative + done,
                           fileBytesTotal: evTotal, fileDone: fileDone, fileTotal: fileTotal)
