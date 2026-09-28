@@ -135,6 +135,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         tv.onRowClick = { [weak self] row, event, double in
             self?.handleMouseClick(row: row, event: event, doubleClick: double)
         }
+        tv.onEmptyClick = { [weak self] _ in self?.activateFromClick() }
         input.delegate = self
         input.target = self
         input.action = #selector(filterFieldReturn(_:))
@@ -187,6 +188,19 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
+
+    /// 空白点击激活（与行点击同款两行，不碰选择/焦点）。
+    private func activateFromClick() {
+        window?.makeFirstResponder(self)
+        if workspace.active != id { workspace.activate(id) }
+    }
+
+    /// 兜底：点落在本窗格但没被 tableView/筛选行等子视图接住（缝隙/回弹区）→ 同样激活，
+    /// 之后照常 super 派发（不影响子视图自己的点击路——它们在自己 hit 内收事件）。
+    override func mouseDown(with event: NSEvent) {
+        activateFromClick()
+        super.mouseDown(with: event)
+    }
 
     // MARK: - Public
 
@@ -862,12 +876,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 /// 不做原生选中/焦点切换，行点击统一转给窗格容器处理。
 final class ClickForwardingTableView: NSTableView {
     var onRowClick: ((Int, NSEvent, Bool) -> Void)?
+    /// 空白区（row<0：行下方/列右侧）点击回调。旧实现直接 return 吞事件 →
+    /// 点空白无法激活窗格（用户报），改为上抛让窗格做激活。
+    var onEmptyClick: ((NSEvent) -> Void)?
 
     override var acceptsFirstResponder: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
         let row = row(at: convert(event.locationInWindow, from: nil))
-        guard row >= 0 else { return }
+        guard row >= 0 else { onEmptyClick?(event); return }
         onRowClick?(row, event, event.clickCount >= 2)
     }
 }

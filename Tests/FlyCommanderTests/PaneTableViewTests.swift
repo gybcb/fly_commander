@@ -226,6 +226,67 @@ final class PaneTableViewTests: XCTestCase {
         XCTAssertEqual(pane.path.url.lastPathComponent, "sub")
     }
 
+    // MARK: - 空白区点击激活窗格（用户报：点另一侧空白不能激活）
+
+    /// 真窗铺满 + 真 mouseDown 打到表格空白（行下方，row<0）→ 激活本侧。
+    /// 回归根因：旧 ClickForwardingTableView.mouseDown 对 row<0 直接 return 吞事件。
+    /// 变异（恢复吞掉）→ 本条红；前提自检（点须解析成 row -1）防参数退化假绿。
+    func testEmptyTableClickActivatesPane() throws {
+        let win = try installInWindow()
+        defer { win.orderOut(nil) }
+        workspace.activate(.right)
+
+        let tv = paneView.tableView!
+        // 空白点 = 末行下沿再往下 20pt（3 行小目录，600×400 窗里必然落在行外）。
+        let lastRect = tv.rect(ofRow: paneView.numberOfRows(in: tv) - 1)
+        let emptyInTV = NSPoint(x: lastRect.midX, y: lastRect.maxY + 20)
+        let emptyInWindow = tv.convert(emptyInTV, to: nil)
+        XCTAssertEqual(tv.row(at: tv.convert(emptyInWindow, from: nil)), -1,
+                       "前提自检：该点必须解析为空白行，否则测试退化假绿")
+
+        let event = NSEvent.mouseEvent(with: .leftMouseDown, location: emptyInWindow,
+                                       modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+        tv.mouseDown(with: event)
+        XCTAssertEqual(workspace.active, .left, "空白点击必须激活本侧窗格")
+    }
+
+    /// 空白点击只管激活：不碰焦点/标记（幂等合同）。
+    func testEmptyClickKeepsSelectionState() throws {
+        let win = try installInWindow()
+        defer { win.orderOut(nil) }
+        pane.toggleMark(at: 1)
+        let before = (focus: pane.selection.focusIndex, marked: pane.selection.markedIDs)
+
+        let tv = paneView.tableView!
+        let lastRect = tv.rect(ofRow: paneView.numberOfRows(in: tv) - 1)
+        let emptyInWindow = tv.convert(NSPoint(x: lastRect.midX, y: lastRect.maxY + 20), to: nil)
+        let event = NSEvent.mouseEvent(with: .leftMouseDown, location: emptyInWindow,
+                                       modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+        tv.mouseDown(with: event)
+        XCTAssertEqual(pane.selection.focusIndex, before.focus)
+        XCTAssertEqual(pane.selection.markedIDs, before.marked)
+    }
+
+    /// 真窗夹具：paneView 铺进 600×400 窗口并排版（同右键坐标回归的先例形状）。
+    private func installInWindow() throws -> NSWindow {
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                           styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        win.contentView = host
+        host.addSubview(paneView)
+        NSLayoutConstraint.activate([
+            paneView.topAnchor.constraint(equalTo: host.topAnchor),
+            paneView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            paneView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            paneView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        win.makeKeyAndOrderFront(nil)
+        win.layoutIfNeeded()
+        return win
+    }
+
     func testSetActiveBorder() {
         ThemeStore.shared.update(Theme.default)   // 主题驱动：活动边框 = accent
         paneView.setActive(true)
