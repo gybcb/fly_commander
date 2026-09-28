@@ -233,7 +233,11 @@ final class TransferEngine {
 
             // 跨服务器直传接缝（Task 4）：启用判定与参数装配在纯静态里
             // （directSeamSources/directSeamArgs，peer 方向性由单测直锁）。
-            // per-run 赋值（防跨 run 泄漏旧连接），run 结束无论成败置 nil。
+            // **每次 run 无条件重赋**（gate 不过显式置 nil）：engine 是共享实例，
+            // 传输非模态（F5 中途再按 = 两 run 叠飞）——run2 不过 gate 时若不清，
+            // 引擎仍持 run1 的闭包 → 拿 run2 的条目往 run1 的两台服务器间推
+            // （同名路径 = 错服务器静默成功）。反向代价（有意的取舍）：run1 飞着
+            // 时 run2 挂上 gate → run1 丢接缝落 pump——数据恒对，只是少一次加速。
             if let (ssrc, sdst) = Self.directSeamSources(src: srcSource, dst: dstSource) {
                 engine.directCrossTransfer = { item, destDir, bp in
                     let a = Self.directSeamArgs(ssrc: ssrc, sdst: sdst, item: item, destDir: destDir)
@@ -245,6 +249,8 @@ final class TransferEngine {
                     sdst.mirrorRoute(ssrc.lastCopyRoute ?? .relayed(.channelGone))
                     return out
                 }
+            } else {
+                engine.directCrossTransfer = nil
             }
 
             onMain { state?(.running(label: label, args: args, progress: 0)) }

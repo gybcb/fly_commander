@@ -84,7 +84,10 @@ final class SFTPConnection {
     /// 服务器 cp 是否支持 -a（连接级缓存：nil=未知，false=BSD 方言用 -Rp）。
     /// 类盒先例 = ReadCursor：@Sendable 闭包捕获类常量、锁内改属性。
     private let cpFlags = CPSupport()
-    /// 上一次 copyFile 实际走过的路径（锁内写，无锁读——竞态仅影响 UI 展示时机，不影响正确性）。
+    /// 上一次复制实际走过的路径。写纪律：**后台传输线程**（copyFile 在 lock 内写；
+    /// runDirectRsync/setRoute 在接缝闭包里写——接缝本就只被 performCopy/performMove
+    /// 的后台块调用，与 lock 无涉）。读取（lastCopyRoute）无锁——UI 只经
+    /// TransferEngine 的文件级帧拿值，竞态仅影响展示时机，不影响正确性。
     /// 供 TransferEngine 逐文件上报 CopyRoute，让 UI 显示「服务器端复制 / 本机中转（原因）」。
     private(set) var lastCopyRoute: CopyRoute = .relayed(.channelGone)
 
