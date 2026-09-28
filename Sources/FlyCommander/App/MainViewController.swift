@@ -822,29 +822,16 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
 
     private func promptRename() {
         guard let item = workspace.activePane.focusedItem else { return }
-        let alert = NSAlert()
-        alert.messageText = L10n.t(.renameTitle)
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.stringValue = item.name
-        alert.accessoryView = field
-        alert.addButton(withTitle: L10n.t(.okBtn))
-        alert.addButton(withTitle: L10n.t(.cancelBtn))
-        alert.setDefaultConfirmCancel()
-        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
-            router.rename(to: field.stringValue)
+        if let name = InputAlert.run(message: L10n.t(.renameTitle), initial: item.name,
+                                     confirmTitle: L10n.t(.okBtn)) {
+            router.rename(to: name)
         }
     }
 
     private func promptMakeDirectory() {
-        let alert = NSAlert()
-        alert.messageText = L10n.t(.newDirTitle)
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        alert.accessoryView = field
-        alert.addButton(withTitle: L10n.t(.createBtn))
-        alert.addButton(withTitle: L10n.t(.cancelBtn))
-        alert.setDefaultConfirmCancel()
-        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
-            router.makeDirectory(named: field.stringValue)
+        if let name = InputAlert.run(message: L10n.t(.newDirTitle),
+                                     confirmTitle: L10n.t(.createBtn)) {
+            router.makeDirectory(named: name)
         }
     }
 
@@ -881,7 +868,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L10n.t(.trashConfirm, "\(targets.count)")
-        alert.addButton(withTitle: L10n.t(.deleteWord))
+        alert.addButton(withTitle: L10n.t(.trashWord))
         alert.addButton(withTitle: L10n.t(.cancelBtn))
         alert.setDefaultConfirmCancel()
         if alert.runConfirmModal() != .alertFirstButtonReturn { return }

@@ -46,6 +46,7 @@ private final class NavFixture {
         let router = CommandRouter(workspace: ws, engine: OperationEngine())
         pane = left
         let v = PaneTableView(pane: left, workspace: ws, router: router, id: .left)
+        v.setActive(true)   // 焦点底色双态依赖 isActive（视觉 polish 一期）
         pv = v
         left.onReload = { [weak v] _ in v?.reload() }                        // 复刻接线
         left.onSelectionChange = { [weak v] _ in v?.refreshSelection() }     // 快路
@@ -76,6 +77,20 @@ private final class NavFixture {
 }
 
 final class KeyboardNavPerfTests: XCTestCase {
+    /// 视觉 polish 一期关斑马：本类断言「普通态底色」，斑马开时奇数行是微染底，
+    /// 与零重建/就地刷的鉴别无关 → 统一关掉，tearDown 复原共享单例。
+    /// 焦点/标记底色同步改走 Style 令牌（accent 实底 / 18% 淡底）。
+    override func setUp() {
+        super.setUp()
+        var t = Theme.default
+        t.zebraStriping = false
+        ThemeStore.shared.update(t)
+    }
+    override func tearDown() {
+        ThemeStore.shared.update(Theme.default)
+        super.tearDown()
+    }
+
     /// 锁 1（零重建）：方向键快路后，仍可见的格必须是**同一批实例**。
     /// 变异=refreshSelection 回退旧可见行 reloadData 半句 → 格被丢弃重建 → 红。
     func testSelectionFastPathReusesCellInstances() throws {
@@ -98,14 +113,14 @@ final class KeyboardNavPerfTests: XCTestCase {
         guard let old = fx.cell(0), let new = fx.cell(1) else {
             return XCTFail("前置：row0/row1 格应存在")
         }
-        XCTAssertTrue(cgColorEqual(old.layer?.backgroundColor, .selectedContentBackgroundColor),
-                      "前置：初始焦点在 row0")
+        XCTAssertTrue(cgColorEqual(old.layer?.backgroundColor, Style.rowFocused),
+                      "前置：初始焦点在 row0（活动窗格=accent 实底）")
         fx.pane.moveFocusBy(delta: 1, mode: .simple)
         fx.pv.layoutSubtreeIfNeeded()
         XCTAssertTrue(cgColorEqual(old.layer?.backgroundColor, .controlBackgroundColor),
                       "旧焦点格须落回普通底色（configure 就地刷被删 → 残留高亮 → 红）")
-        XCTAssertTrue(cgColorEqual(new.layer?.backgroundColor, .selectedContentBackgroundColor),
-                      "新焦点格须进选中底色")
+        XCTAssertTrue(cgColorEqual(new.layer?.backgroundColor, Style.rowFocused),
+                      "新焦点格须进 accent 实底焦点色")
         XCTAssertEqual(new.nameLabel.font, NSFont.systemFont(ofSize: 12, weight: .medium),
                        "焦点行名称须升 medium 字重（视觉合同）")
         XCTAssertEqual(old.nameLabel.font, NSFont.systemFont(ofSize: 12),
@@ -120,9 +135,8 @@ final class KeyboardNavPerfTests: XCTestCase {
         guard let c = fx.cell(1) else { return XCTFail("前置：row1 格应存在") }
         fx.pane.toggleMark(at: 1)
         fx.pv.layoutSubtreeIfNeeded()
-        let expect = ThemeStore.shared.accentColor.withAlphaComponent(0.25)
-        XCTAssertTrue(cgColorEqual(c.layer?.backgroundColor, expect),
-                      "标记行格须同实例刷进 accent 底色")
+        XCTAssertTrue(cgColorEqual(c.layer?.backgroundColor, Style.rowMarked),
+                      "标记行格须同实例刷进 accent 淡底色")
     }
 
     /// 锁 4（预算哨兵）：50 次方向键平均成本设 50ms/键上界——实测修复前 223ms、
@@ -173,9 +187,16 @@ final class KeyboardNavPerfTests: XCTestCase {
         for _ in 0..<40 { fx.pane.moveFocusBy(delta: 1, mode: .simple) }
         fx.pv.layoutSubtreeIfNeeded()
         let vis = fx.pv.tableView.rows(in: fx.pv.tableView.visibleRect)
-        let target = vis.location - 2   // 上边距存活行（探针实测边距≈2 行）
-        guard vis.location >= 5, target >= 0, fx.cell(target) != nil else {
-            return XCTFail("前置失败：须存在「滚出可视区但在保留边内存活」的行（vis=\(vis.location)..<\(vis.location + vis.length), target=\(target), alive=\(fx.cell(target) != nil)）——边距语义变了须重设计本锁")
+        // 上边距存活行：边距是**像素**制（~40pt），存活行数=边距÷行高——行高 20→22
+        // （视觉 polish 一期）后 2 行边距不再存活。改为在覆盖窗（lo=vis.location-4）
+        // 内从最上行往下找第一个实例存活的行：任何边距行都满足本锁鉴别对象资格
+        // （覆盖窗内+可视区外），全不存活=边距语义真变了才红。
+        guard vis.location >= 5 else {
+            return XCTFail("前置失败：未滚动到位（vis=\(vis.location)）")
+        }
+        let candidates = ((vis.location - 4)...(vis.location - 1)).filter { fx.cell($0) != nil }
+        guard let target = candidates.first else {
+            return XCTFail("前置失败：覆盖窗上沿 (vis-4..vis-1) 无存活格——边距语义变了须重设计本锁")
         }
         guard let before = fx.cell(target) else { return XCTFail("前置：target 格存在") }
         XCTAssertTrue(cgColorEqual(before.layer?.backgroundColor, .controlBackgroundColor),
@@ -186,8 +207,7 @@ final class KeyboardNavPerfTests: XCTestCase {
         fx.pane.toggleMark(at: selIndex)
         fx.pv.layoutSubtreeIfNeeded()
         XCTAssertTrue(before === fx.cell(target), "边距行不得触发重建（重建=本锁失去鉴别对象）")
-        let expect = ThemeStore.shared.accentColor.withAlphaComponent(0.25)
-        XCTAssertTrue(cgColorEqual(before.layer?.backgroundColor, expect),
+        XCTAssertTrue(cgColorEqual(before.layer?.backgroundColor, Style.rowMarked),
                       "上边距存活格须被覆盖窗就地刷进标记底色（纯 visibleRect 覆盖窗 → 陈旧 → 红）")
     }
 }

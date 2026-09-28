@@ -4,6 +4,7 @@ import TCCore
 final class ThemeViewController: NSViewController {
     private var appearanceSegment: NSSegmentedControl!
     private var accentWell: NSColorWell!
+    private var zebraCheckbox: NSButton!
     private var rulesStack: NSStackView!
 
     /// 语言切换重刷绑定：闭包捕获控件 + key，刷新时按当前语言重算回写（含 segment 段标签）。
@@ -56,6 +57,12 @@ final class ThemeViewController: NSViewController {
         well.action = #selector(accentChanged(_:))
         accentWell = well
 
+        // 2b) 斑马纹开关（视觉 polish 一期：列表行隔行底色，默认开）
+        let zebra = NSButton(checkboxWithTitle: L10n.t(.zebraStriping), target: self,
+                             action: #selector(zebraChanged(_:)))
+        zebra.translatesAutoresizingMaskIntoConstraints = false
+        zebraCheckbox = zebra
+
         // 3) 文件类型配色（标题 + 滚动列表 + 添加按钮）
         let rulesLabel = NSTextField(labelWithString: L10n.t(.fileColorHint))
         rulesLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -86,7 +93,7 @@ final class ThemeViewController: NSViewController {
         let restoreBtn = NSButton(title: L10n.t(.restoreDefaults), target: self, action: #selector(restoreDefault))
         restoreBtn.translatesAutoresizingMaskIntoConstraints = false
 
-        [appearanceLabel, segment, accentLabel, well, rulesLabel, rulesScroll, addBtn, restoreBtn]
+        [appearanceLabel, segment, accentLabel, well, zebra, rulesLabel, rulesScroll, addBtn, restoreBtn]
             .forEach { container.addArrangedSubview($0) }
         root.addSubview(container)
         NSLayoutConstraint.activate([
@@ -101,6 +108,7 @@ final class ThemeViewController: NSViewController {
 
         bind(appearanceLabel, .appearance)
         bind(accentLabel, .accentColorHint)
+        bind(zebra, .zebraStriping)
         bind(rulesLabel, .fileColorHint)
         bind(addBtn, .addRule)
         bind(restoreBtn, .restoreDefaults)
@@ -119,6 +127,7 @@ final class ThemeViewController: NSViewController {
     func reload() {
         appearanceSegment.selectedSegment = Self.appearanceIndex(ThemeStore.shared.theme.appearance)
         accentWell.color = ThemeStore.shared.accentColor
+        zebraCheckbox.state = ThemeStore.shared.theme.zebraStriping ? .on : .off
         for sub in rulesStack.arrangedSubviews { rulesStack.removeArrangedSubview(sub); sub.removeFromSuperview() }
         for rule in ThemeStore.shared.theme.fileColorRules {
             rulesStack.addArrangedSubview(makeRuleRow(rule))
@@ -136,6 +145,12 @@ final class ThemeViewController: NSViewController {
     @objc private func accentChanged(_ sender: NSColorWell) {
         var t = ThemeStore.shared.theme
         t.accent = Self.colorWellToThemeColor(sender.color)
+        ThemeStore.shared.update(t)
+    }
+
+    @objc private func zebraChanged(_ sender: NSButton) {
+        var t = ThemeStore.shared.theme
+        t.zebraStriping = sender.state == .on
         ThemeStore.shared.update(t)
     }
 

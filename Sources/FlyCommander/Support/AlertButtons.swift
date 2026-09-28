@@ -37,6 +37,52 @@ extension NSAlert {
     }
 }
 
+/// 文本输入框确认框（重命名/新建目录）的唯一收口——四份手抄实现（MainViewController
+/// 与 PaneTableView 各一对）合并至此。行为合同（回归锁=DeleteConfirmKeyRoutingProbeTests
+/// .testFunnelDoesNotChangeAccessoryFocus 同款构造）：accessory 裸 `NSTextField(frame:240×24)`
+/// 逐字节同款构造 + 收口呈现；⏎ 提交空串=无效（调用方自判）。
+///
+/// 焦点自给（二期新增，真机 issue「重命名/新建要再点一下才能输入」）：SDK 对带
+/// accessory 的框不保证把焦点给文本框（探针里 fieldEditor/panel 两态都出现过）。双保险：
+/// ① `panel.initialFirstResponder = field`（面板成 key 时标准交接）；
+/// ② local monitor 一次性兜底——模态会话里第一个**不带修饰、非 Tab** 的键事件先落进
+/// 文本框再放行（覆盖「面板没成 key、①不触发」的 F-key 入口形态；只交一次，不抢
+/// 用户后续主动 Tab 到按钮的路径）。
+enum InputAlert {
+    /// - returns: 用户确认且文本非空 → 文本；取消 → nil。
+    @discardableResult
+    static func run(message: String, informative: String? = nil, initial: String = "",
+                    confirmTitle: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = informative ?? ""
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = initial
+        alert.accessoryView = field
+        alert.addButton(withTitle: confirmTitle)
+        alert.addButton(withTitle: L10n.t(.cancelBtn))
+        alert.setDefaultConfirmCancel()
+        let panel = alert.window          // 提前建面板（initialFirstResponder 须面板存在）
+        panel.initialFirstResponder = field
+        var refocused = false
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard NSApp.modalWindow === panel, !refocused,
+                  event.keyCode != 48 /* Tab */,
+                  event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            else { return event }
+            refocused = true
+            if panel.firstResponder !== field.currentEditor() {
+                panel.makeFirstResponder(field)
+            }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        guard alert.runConfirmModal() == .alertFirstButtonReturn else { return nil }
+        let text = field.stringValue
+        return text.isEmpty ? nil : text
+    }
+}
+
 /// 确认框收口实现。收口理由同 `NSAlert.runConfirmModal()` 的注释。
 enum ConfirmModal {
     /// 重入守卫：已有一个确认框在跑时，第二次进入按"取消"处理（第二按钮语义），

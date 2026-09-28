@@ -8,7 +8,7 @@ import TCCore
 // 旧版激活/非激活全部差异=recessed state=.on 的极浅系统底（肉眼难辨），且
 // rebuild(isActiveSide:) 是死参数——另一侧 pane 的活动 tab 也画亮态。
 // 新三态（TabBarView.tabVisual 纯函数出参，底色+字重+文字色三通道）：
-//   当前侧活动=accent 实底+medium+白字；另一侧活动=accent 25%+medium；非活动=无底+regular。
+//   当前侧活动=accent 实底+medium+白字；另一侧活动=Style.tabActivePill(accent 15%)+medium；非活动=无底+regular。
 // rebuild 里 state 恒 .off（recessed 自绘底与 layer 底色打架）。
 //
 // 为什么主锁走纯函数：attributedTitle 读回无法区分「被刷过 vs 未设」（AppKit 由 title
@@ -64,8 +64,8 @@ final class TabActiveVisualTests: XCTestCase {
         XCTAssertTrue(solid.foreground === NSColor.white, "当前侧活动=白字（实例身份）")
 
         let soft = TabBarView.tabVisual(isActiveTab: true, isActiveSide: false)
-        XCTAssertTrue(cgColorEqual(soft.background?.cgColor, accent.withAlphaComponent(0.25)),
-                      "另一侧活动=accent 25% 软底")
+        XCTAssertTrue(cgColorEqual(soft.background?.cgColor, Style.tabActivePill),
+                      "另一侧活动=accent 15% 胶囊淡底（Style.tabActivePill）")
         XCTAssertEqual(soft.font, NSFont.systemFont(ofSize: 11, weight: .medium))
         // soft 前景须 labelColor 实例：变异恒 .white（评审 wf_855e5db8 实测全绿逃逸）
         // → 本断言红。软底上白字近不可读且不跟暗色模式（生产注释同款论证）。
@@ -115,23 +115,21 @@ final class TabActiveVisualTests: XCTestCase {
         let plain = bar.titleButtonsForTest()[1]
         XCTAssertFalse(cgColorEqual(plain.layer?.backgroundColor, ThemeStore.shared.accentColor),
                        "非活动按钮不得吃 accent")
-        XCTAssertFalse(cgColorEqual(plain.layer?.backgroundColor,
-                                    ThemeStore.shared.accentColor.withAlphaComponent(0.25)),
-                       "非活动按钮不得吃 accent 25%")
+        XCTAssertFalse(cgColorEqual(plain.layer?.backgroundColor, Style.tabActivePill),
+                       "非活动按钮不得吃 accent 15% 胶囊淡底")
         XCTAssertEqual(plain.font, NSFont.systemFont(ofSize: 11))
         XCTAssertEqual(plain.state, .off)
     }
 
-    /// 另一侧（isActiveSide:false）rebuild 接线：活动按钮须吃 25% 软底而非实底。
+    /// 另一侧（isActiveSide:false）rebuild 接线：活动按钮须吃 15% 胶囊淡底而非实底。
     /// 变异（评审 wf_855e5db8 实测逃逸）：rebuild 里硬编码 isActiveSide: true（死参数回潮）
-    /// → 本用例红（实底 accent ≠ 25% 软底）。锁A 不经 rebuild，看不见此接线层变异。
+    /// → 本用例红（实底 accent ≠ 15% 胶囊淡底）。锁A 不经 rebuild，看不见此接线层变异。
     func testRebuildAppliesSoftTintOnInactiveSide() {
         let bar = TabBarView(frame: NSRect(x: 0, y: 0, width: 400, height: TabBarView.barHeight))
         bar.rebuild(titles: ["alpha", "beta"], activeIndex: 0, isActiveSide: false)
         let act = bar.titleButtonsForTest()[0]
-        XCTAssertTrue(cgColorEqual(act.layer?.backgroundColor,
-                                   ThemeStore.shared.accentColor.withAlphaComponent(0.25)),
-                      "另一侧活动按钮=accent 25%（硬编码 true 变异=实底即红）")
+        XCTAssertTrue(cgColorEqual(act.layer?.backgroundColor, Style.tabActivePill),
+                      "另一侧活动按钮=accent 15%（硬编码 true 变异=实底即红）")
         let fg = act.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
         XCTAssertTrue(fg === NSColor.labelColor, "软底上前景=labelColor 实例（恒 .white 变异红）")
     }

@@ -179,17 +179,28 @@ final class AppearanceRefreshTests: XCTestCase {
         toLight()
         assertSameColor(bg(cell), ref.light, "切回浅色普通行底须翻浅")
 
-        // 焦点行底=selectedContentBackgroundColor（动态）——同款双向。真机回归曾定格
-        // 浅白（钩子裸解撞上旧绘制上下文），钉外观解算后两向逐位命中。
+        // 焦点行底（活动窗格）=accent 实底：固定 RGBA 跨明暗**恒定**（视觉 polish 一期
+        // 语义，与 pvA accent 边框同纪律——固定主题色不随明暗）。旧=
+        // selectedContentBackgroundColor 双向翻，已由 Style.rowFocused 取代。
         let cellF = FileCellView()
         install(cellF)
-        cellF.configure(item: item, focus: true, marked: false, column: 0)
+        cellF.configure(item: item, focus: true, marked: false, column: 0, paneActive: true)
         window.display()
-        let refF = resolved(.selectedContentBackgroundColor)
+        let accBefore = bg(cellF)
         toDark()
-        assertSameColor(bg(cellF), refF.dark, "切深色后焦点行底须翻深")
+        assertSameColor(bg(cellF), accBefore, "accent 焦点行底跨明暗恒定")
+
+        // 焦点行底（非活动窗格）=unemphasizedSelectedContentBackgroundColor（动态）——
+        // 双向随外观翻。
+        let cellI = FileCellView()
+        install(cellI)
+        cellI.configure(item: item, focus: true, marked: false, column: 0, paneActive: false)
+        window.display()
+        let refI = resolved(.unemphasizedSelectedContentBackgroundColor)
+        toDark()
+        assertSameColor(bg(cellI), refI.dark, "切深色后非活动焦点行底须翻深")
         toLight()
-        assertSameColor(bg(cellF), refF.light, "切回浅色焦点行底须翻浅")
+        assertSameColor(bg(cellI), refI.light, "切回浅色非活动焦点行底须翻浅")
     }
 
     func testThemedBackgroundViewFollowsAppearance() {

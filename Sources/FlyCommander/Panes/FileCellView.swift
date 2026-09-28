@@ -18,6 +18,8 @@ final class FileCellView: NSTableCellView {
         let focus: Bool
         let marked: Bool
         let column: Int
+        let paneActive: Bool
+        let zebra: Bool
     }
     private var lastConfigure: ConfigureArgs?
 
@@ -44,9 +46,9 @@ final class FileCellView: NSTableCellView {
         sizeLabel.translatesAutoresizingMaskIntoConstraints = false
         dateLabel.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
-        nameLabel.font = .systemFont(ofSize: 12)
-        sizeLabel.font = .systemFont(ofSize: 11)
-        dateLabel.font = .systemFont(ofSize: 11)
+        nameLabel.font = Style.cellNameFont
+        sizeLabel.font = Style.cellMetaFont
+        dateLabel.font = Style.cellMetaFont
         sizeLabel.alignment = .right
         // 日期列对齐合同：HEAD 里 dateLabel 只钉 trailing，靠固有宽度贴 cell 右缘=视觉右
         // 对齐。改版铺满整格后必须显式 .right，否则 .natural 落到左起排=整列位置跳变。
@@ -108,8 +110,13 @@ final class FileCellView: NSTableCellView {
     }
 
     /// 按列填充内容：0=图标+名称，1=大小，其余=日期；行高亮底色三列都铺。
-    func configure(item: FileItem, focus: Bool, marked: Bool, column: Int) {
-        lastConfigure = ConfigureArgs(item: item, focus: focus, marked: marked, column: column)
+    /// - paneActive：所属窗格是否活动窗格（焦点行双态的主信号，视觉 polish 一期）。
+    /// - zebra：斑马纹偶数行（仅普通行生效，焦点/标记优先级更高）。
+    /// 默认值=旧语义（活动窗格焦点+无斑马）：外观回归夹具与旧调用点零改动。
+    func configure(item: FileItem, focus: Bool, marked: Bool, column: Int,
+                   paneActive: Bool = true, zebra: Bool = false) {
+        lastConfigure = ConfigureArgs(item: item, focus: focus, marked: marked,
+                                      column: column, paneActive: paneActive, zebra: zebra)
         wantsLayer = true
         applyLayout(column: column)
         switch column {
@@ -136,17 +143,25 @@ final class FileCellView: NSTableCellView {
         // 真实外观，钉它之后解算与调用时机、宿主明暗全部无关。
         effectiveAppearance.performAsCurrentDrawingAppearance {
             if focus {
-                nameLabel.textColor = .selectedControlTextColor
-                nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
-                layer?.backgroundColor = NSColor.selectedContentBackgroundColor.cgColor
+                if paneActive {
+                    nameLabel.textColor = Style.rowFocusedText
+                    nameLabel.font = Style.cellNameFontFocused
+                    layer?.backgroundColor = Style.rowFocused.cgColor
+                } else {
+                    // 非活动窗格的焦点行：灰调非强调选中底 + 正文色（不反白）。
+                    // 「哪侧窗格活动」由此升级为主信号（旧=仅 1pt 边框）。
+                    nameLabel.textColor = Style.rowFocusedInactiveText
+                    nameLabel.font = Style.cellNameFontFocused
+                    layer?.backgroundColor = Style.rowFocusedInactive.cgColor
+                }
             } else if marked {
                 nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
-                nameLabel.font = .systemFont(ofSize: 12)
-                layer?.backgroundColor = ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor
+                nameLabel.font = Style.cellNameFont
+                layer?.backgroundColor = Style.rowMarked.cgColor
             } else {
                 nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
-                nameLabel.font = .systemFont(ofSize: 12)
-                layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+                nameLabel.font = Style.cellNameFont
+                layer?.backgroundColor = (zebra ? Style.rowZebra : Style.rowPlain).cgColor
             }
         }
     }
@@ -156,7 +171,8 @@ final class FileCellView: NSTableCellView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         guard let a = lastConfigure else { return }
-        configure(item: a.item, focus: a.focus, marked: a.marked, column: a.column)
+        configure(item: a.item, focus: a.focus, marked: a.marked, column: a.column,
+                  paneActive: a.paneActive, zebra: a.zebra)
     }
 
     /// 远端图标类型推导（纯函数，可单测）：目录→folder；文件按扩展名→UTType；无扩展名→data。

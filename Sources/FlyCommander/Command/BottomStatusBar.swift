@@ -14,6 +14,9 @@ final class BottomStatusBar: NSView {
     private let info = NSTextField(labelWithString: "")
     private let message = NSTextField(labelWithString: "")
 
+    /// 顶部 0.5pt 分隔线（视觉 polish 一期「仪表」制：状态栏与列表区拉一道细线）。
+    private let separator = NSBox()
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -32,10 +35,20 @@ final class BottomStatusBar: NSView {
         message.translatesAutoresizingMaskIntoConstraints = false
         message.setAccessibilityIdentifier("bottomStatusMessage")
 
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        // layer-backed（本视图 wantsLayer=true）下 NSBox 分隔线不跟 appearance 重解
+        // （与 ThemedBackgroundView 同款坑，见 AppearanceRefreshTests）：手动钉 0.5pt。
+        separator.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
+
+        addSubview(separator)
         addSubview(info)
         addSubview(message)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Self.height),
+            separator.topAnchor.constraint(equalTo: topAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             info.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             info.centerYAnchor.constraint(equalTo: centerYAnchor),
             info.trailingAnchor.constraint(equalTo: message.leadingAnchor, constant: -8),
@@ -53,6 +66,7 @@ final class BottomStatusBar: NSView {
     /// 系统切明暗不重跑赋值就定格旧外观色）。
     private func applyBackgroundColor() {
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        separator.fillColor = .separatorColor
     }
 
     override func viewDidChangeEffectiveAppearance() {

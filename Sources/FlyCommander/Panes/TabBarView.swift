@@ -92,13 +92,13 @@ final class TabBarView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// 三态激活视觉（用户「激活 tab 要不一样」）。旧版激活差异只有 recessed state=.on
-    /// 的极浅系统底=肉眼难辨，且 isActiveSide 是死参数（另一侧 pane 的活动 tab 也画亮态）。
-    /// 现由底色+字重+文字色三通道驱动，state 恒 .off（recessed pressed 自绘底会与
-    /// layer 底色打架）：
-    ///   当前侧活动 = accent 实底 + medium + 白字（字面 .white，见 tabVisual 内注释）
-    ///   另一侧活动 = accent 25% 底 + medium（FileCellView 标记行同款）
+    /// 三态激活视觉（用户「激活 tab 要不一样」；视觉 polish 一期改「仪表」胶囊制）：
+    ///   当前侧活动 = accent 实底胶囊 + medium + 白字
+    ///   另一侧活动 = Style.tabActivePill（accent 15%）+ medium + labelColor
     ///   非活动     = 无自定义底 + regular
+    /// 旧三态另一侧用 accent 25%（与文件标记行同款）——与当前侧实底层级差不足，
+    /// 且标记淡底占用了 accent 语义；胶囊制拉开实底/淡底两级，淡底强度下调至 15%。
+    /// state 恒 .off（recessed pressed 自绘底会与 layer 底色打架）。
     /// 色+字重双通道 → 不靠纯色分辨（无障碍）。纯函数出参供回归锁直测。
     struct TabVisual {
         let background: NSColor?     // nil=不覆盖系统底
@@ -110,8 +110,7 @@ final class TabBarView: NSView {
             return TabVisual(background: nil, font: .systemFont(ofSize: 11), foreground: nil)
         }
         return TabVisual(
-            background: isActiveSide ? ThemeStore.shared.accentColor
-                                     : ThemeStore.shared.accentColor.withAlphaComponent(0.25),
+            background: isActiveSide ? ThemeStore.shared.accentColor : Style.tabActivePill,
             font: .systemFont(ofSize: 11, weight: .medium),
             // 白字须字面值：本 SDK 下 recessed 按钮对**目录语义色**做 cell 级重映射
             // （selectedControlTextColor 实测=labelColor 别名解析为黑；alternateSelected
@@ -134,6 +133,7 @@ final class TabBarView: NSView {
             if let bg = visual.background {
                 title.wantsLayer = true
                 title.layer?.backgroundColor = bg.cgColor
+                title.layer?.cornerRadius = 4   // 胶囊圆角（recessed 系统底已让位，圆角不与其打架）
                 let ps = NSMutableParagraphStyle()
                 ps.alignment = .center
                 var attrs: [NSAttributedString.Key: Any] = [.font: visual.font, .paragraphStyle: ps]

@@ -73,7 +73,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.themeEllipsis), "主题…")
     }
     func testDialogColumnKeysEnglish() {
-        XCTAssertEqual(L10n.t(.conflictQuestion, "x"), "“x” already exists. How to handle?")
+        XCTAssertEqual(L10n.t(.conflictQuestion, "x"), "“x” already exists. What would you like to do?")
         XCTAssertEqual(L10n.t(.selectedCount, "3"), "3 selected")
         XCTAssertEqual(L10n.t(.colName), "Name")
         XCTAssertEqual(L10n.t(.colSize), "Size")
@@ -90,6 +90,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.skipAll), "Skip All")
         XCTAssertEqual(L10n.t(.trashConfirm, "5"), "Move 5 item(s) to Trash?")
         XCTAssertEqual(L10n.t(.deleteWord), "Delete")
+        XCTAssertEqual(L10n.t(.trashWord), "Move to Trash")
         XCTAssertEqual(L10n.t(.remoteDeleteConfirm, "2"), "Delete 2 item(s) from the server?")
         XCTAssertEqual(L10n.t(.remoteNoTrash), "Remote has no Trash; deletion is permanent.")
         XCTAssertEqual(L10n.t(.cannotOpenFile), "Cannot open file")
@@ -99,14 +100,14 @@ final class L10nTests: XCTestCase {
     }
     func testDialogColumnKeysChinese() {
         L10n.current = .zh
-        XCTAssertEqual(L10n.t(.conflictQuestion, "x"), "“x” 已存在，如何处理？")
+        XCTAssertEqual(L10n.t(.conflictQuestion, "x"), "“x” 已存在，要如何处理？")
         XCTAssertEqual(L10n.t(.selectedCount, "3"), "已选 3 项")
         XCTAssertEqual(L10n.t(.colName), "名称")
         XCTAssertEqual(L10n.t(.colSize), "大小")
         XCTAssertEqual(L10n.t(.colDate), "修改日期")
         XCTAssertEqual(L10n.t(.newDirTitle), "新建目录")
         XCTAssertEqual(L10n.t(.conflictTitle), "目标已存在")
-        XCTAssertEqual(L10n.t(.trashConfirm, "5"), "删除 5 个文件到废纸篓？")
+        XCTAssertEqual(L10n.t(.trashConfirm, "5"), "将 5 个项目移入废纸篓？")
         XCTAssertEqual(L10n.t(.remoteDeleteConfirm, "2"), "从服务器删除 2 个文件？")
         XCTAssertEqual(L10n.t(.remoteNoTrash), "远端没有废纸篓，删除后无法恢复。")
         XCTAssertEqual(L10n.t(.cannotOpenFile), "无法打开文件")
@@ -164,7 +165,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.appearance), "Appearance")
         XCTAssertEqual(L10n.t(.lightMode), "Light")
         XCTAssertEqual(L10n.t(.darkMode), "Dark")
-        XCTAssertEqual(L10n.t(.accentColorHint), "Accent (marked-row background / active-pane border)")
+        XCTAssertEqual(L10n.t(.accentColorHint), "Accent (focused-row background in active pane / marked-row tint / active tab pill)")
         XCTAssertEqual(L10n.t(.fileColorHint), "File-type colors (extensions comma-separated; press Return to apply)")
         XCTAssertEqual(L10n.t(.addRule), "Add Rule")
         XCTAssertEqual(L10n.t(.restoreDefaults), "Restore Defaults")
@@ -195,7 +196,7 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.appearance), "外观")
         XCTAssertEqual(L10n.t(.lightMode), "浅色")
         XCTAssertEqual(L10n.t(.darkMode), "深色")
-        XCTAssertEqual(L10n.t(.accentColorHint), "强调色（标记行底色 / 活动窗格边框）")
+        XCTAssertEqual(L10n.t(.accentColorHint), "强调色（活动窗格焦点行底色 / 标记行淡底 / 活动标签胶囊）")
         XCTAssertEqual(L10n.t(.fileColorHint), "文件类型配色（扩展名逗号分隔；编辑后按回车生效）")
         XCTAssertEqual(L10n.t(.addRule), "添加规则")
         XCTAssertEqual(L10n.t(.restoreDefaults), "恢复默认")

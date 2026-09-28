@@ -37,11 +37,37 @@ private final class Rec {
 }
 
 /// 承接「F8 形状」的第一响应者：在 keyDown 里**同步**启动 modal（与 PaneTableView 同形状）。
-private final class KeyDownModalView: NSView {
+final class KeyDownModalView: NSView {
     var onF8: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 100 { onF8?() } else { super.keyDown(with: event) }
+    }
+}
+
+/// modal 会话期的注入/收尾小工具（InputAlertFocusTests 复用同款纪律）。
+/// Timer 必须挂 RunLoop.main(.common)：DispatchQueue.main.asyncAfter 在 runModal
+/// 嵌套循环里不保证被排空（本轮实测：整条用例挂死、xctest 0% CPU）。
+enum ModalProbe {
+    static func after(_ dt: TimeInterval, _ timers: inout [Timer], _ body: @escaping () -> Void) {
+        let t = Timer(timeInterval: dt, repeats: false) { _ in body() }
+        RunLoop.main.add(t, forMode: .common)
+        timers.append(t)
+    }
+
+    static func key(code: UInt16, chars: String, window target: NSWindow) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                         timestamp: ProcessInfo.processInfo.systemUptime,
+                         windowNumber: target.windowNumber, context: nil,
+                         characters: chars, charactersIgnoringModifiers: chars,
+                         isARepeat: false, keyCode: code)!
+    }
+
+    static func spin(until done: () -> Bool, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !done() && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
     }
 }
 

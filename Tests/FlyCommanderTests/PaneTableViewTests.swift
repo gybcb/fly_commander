@@ -44,11 +44,18 @@ final class PaneTableViewTests: XCTestCase {
         workspace = Workspace(left: left, right: right, active: .left)
         router = CommandRouter(workspace: workspace, engine: OperationEngine())
         paneView = PaneTableView(pane: left, workspace: workspace, router: router, id: .left)
+        // 视觉 polish 一期：焦点行底色双态依赖 isActive（默认 false=灰底）——本类
+        // 「焦点高亮」断言的活动态须显式给。斑马关：普通态断言不踩微染行。
+        paneView.setActive(true)
+        var t = Theme.default
+        t.zebraStriping = false
+        ThemeStore.shared.update(t)
         pane.load()
         paneView.reload()
     }
 
     override func tearDownWithError() throws {
+        ThemeStore.shared.update(Theme.default)
         try? FileManager.default.removeItem(at: dir.deletingLastPathComponent())
     }
 
@@ -109,27 +116,29 @@ final class PaneTableViewTests: XCTestCase {
 
     func testFocusHighlightUsesSystemSelectionColor() {
         paneView.reload()
+        // 视觉 polish 一期：活动窗格焦点行=accent 实底（Style.rowFocused），
+        // 旧 selectedContentBackgroundColor 语义已由 Style 取代。
         XCTAssertEqual(cell(atColumn: 0, row: 0)?.layer?.backgroundColor,
-                       NSColor.selectedContentBackgroundColor.cgColor)
+                       Style.rowFocused.cgColor)
         XCTAssertNotEqual(cell(atColumn: 0, row: 1)?.layer?.backgroundColor,
-                         NSColor.selectedContentBackgroundColor.cgColor)
+                         Style.rowFocused.cgColor)
     }
 
     func testMoveFocusMovesHighlight() {
         pane.moveFocusBy(delta: 2, mode: .sticky)   // 焦点到 z.txt（行 2）
         paneView.reload()
         XCTAssertEqual(cell(atColumn: 0, row: 2)?.layer?.backgroundColor,
-                       NSColor.selectedContentBackgroundColor.cgColor)
+                       Style.rowFocused.cgColor)
         XCTAssertNotEqual(cell(atColumn: 0, row: 0)?.layer?.backgroundColor,
-                         NSColor.selectedContentBackgroundColor.cgColor)
+                         Style.rowFocused.cgColor)
     }
 
     func testMarkedRowUsesAccentColor() {
-        ThemeStore.shared.update(Theme.default)   // 主题驱动：标记底色 = accent 25% 透明
+        ThemeStore.shared.update(Theme.default)   // 主题驱动：标记底色 = Style.rowMarked
         pane.toggleMark(at: 1)                       // 标记 b.dat（非焦点）
         paneView.reload()
         XCTAssertEqual(cell(atColumn: 0, row: 1)?.layer?.backgroundColor,
-                       ThemeStore.shared.accentColor.withAlphaComponent(0.25).cgColor)
+                       Style.rowMarked.cgColor)
     }
 
     func testFocusWinsOverMark() {
@@ -137,7 +146,7 @@ final class PaneTableViewTests: XCTestCase {
         paneView.reload()
         // 焦点行取焦点色而非标记色
         XCTAssertEqual(cell(atColumn: 0, row: 0)?.layer?.backgroundColor,
-                       NSColor.selectedContentBackgroundColor.cgColor)
+                       Style.rowFocused.cgColor)
     }
 
     func testSetFocusIsSticky() {

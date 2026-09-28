@@ -183,10 +183,16 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
             savedEmptyLabel.centerYAnchor.constraint(equalTo: listBox.centerYAnchor),
         ])
 
+        // 「仪表」制分组线（视觉 polish 一期）：表单区与已保存列表区拉一道细线。
+        // container 非 layer-backed → NSBox separator 自绘随外观自随动（无需手动重解）。
+        let formSeparator = NSBox()
+        formSeparator.boxType = .separator
+        formSeparator.translatesAutoresizingMaskIntoConstraints = false
+
         let stack = NSStackView(views: [protoSegment, nameRow, hostRow, serverRow, shareRow,
                                         domainRow, portRow, userRow, passwordRow, authRadioRow,
                                         keyPathRow, passphraseRow, tlsRow, statusLabel,
-                                        savedTitleLabel, listBox, buttonRow])
+                                        formSeparator, savedTitleLabel, listBox, buttonRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -197,6 +203,7 @@ final class RemoteConnectionViewController: NSViewController, NSTableViewDataSou
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             stack.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -40),
+            formSeparator.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // bottom 必须钉死 → 窗口经 contentViewController 按内容 autogrow（旧两窗同款教训：
             // 缺这条时窗高恒等于 contentRect 初值，底缘按钮被裁）。
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),

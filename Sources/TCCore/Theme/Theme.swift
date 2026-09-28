@@ -29,11 +29,27 @@ public struct Theme: Codable, Equatable {
     public var appearance: Appearance
     public var accent: ThemeColor
     public var fileColorRules: [FileColorRule]
+    /// 文件列表斑马纹（隔行微底色）。默认开；旧持久化 JSON 无此键 → true（decodeIfPresent）。
+    public var zebraStriping: Bool
 
-    public init(appearance: Appearance, accent: ThemeColor, fileColorRules: [FileColorRule]) {
+    public init(appearance: Appearance, accent: ThemeColor, fileColorRules: [FileColorRule],
+                zebraStriping: Bool = true) {
         self.appearance = appearance
         self.accent = accent
         self.fileColorRules = fileColorRules
+        self.zebraStriping = zebraStriping
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case appearance, accent, fileColorRules, zebraStriping
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appearance = try c.decode(Appearance.self, forKey: .appearance)
+        accent = try c.decode(ThemeColor.self, forKey: .accent)
+        fileColorRules = try c.decode([FileColorRule].self, forKey: .fileColorRules)
+        zebraStriping = try c.decodeIfPresent(Bool.self, forKey: .zebraStriping) ?? true
     }
 
     /// 出厂主题：跟随系统 + 系统蓝强调色 + 预置文件类型规则。

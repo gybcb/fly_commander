@@ -22,6 +22,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     var tableView: ClickForwardingTableView!
     private var scrollView: NSScrollView!
+    /// 三列表头单元（排序箭头宿主）：建列时按 identifier 建，重刷指示器时按 id 找回。
+    private var headerCells: [String: SortableHeaderCell] = [:]
 
     /// display 顺序（item id 列表）：`pane.visibleItemIDs`（无筛选时 = `selection.items`）
     /// 经视图层排序后的投影——筛选态下即「可见 ∩ 已排序」，被筛掉的项不在此列。
@@ -61,7 +63,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         tv.usesAlternatingRowBackgroundColors = false
         tv.selectionHighlightStyle = .none
         tv.intercellSpacing = NSSize(width: 4, height: 0)
-        tv.rowHeight = 20
+        tv.rowHeight = Style.rowHeight
         tv.autoresizingMask = [.width]
         tv.autosaveTableColumns = true
         tv.autosaveName = "FlyCommanderPane\((id == .left) ? "L" : "R")\(ObjectIdentifier(pane).hashValue)"
@@ -117,6 +119,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         filterInput = input
         filterClearButton = clear
         filterCountLabel = count
+        // 自绘排序箭头表头（视觉 polish：盘点实证旧版无排序指示器，原生 sortIndicator
+        // 在本 SDK view-based 表头不绘制）——super.init 后才能写存储属性（缩减 SDK 坑）。
+        for col in tv.tableColumns {
+            let hc = SortableHeaderCell()
+            hc.title = col.title
+            col.headerCell = hc
+            headerCells[col.identifier.rawValue] = hc
+        }
+        updateSortIndicators()
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         tv.delegate = self
@@ -233,6 +244,7 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             }
             let focused = pane.selection.isFocus(displayIDs[row])
             let marked = pane.selection.isMarked(displayIDs[row])
+            let zebra = zebraRow(row)
             var inPlace = true
             for col in 0..<columnCount {
                 guard let cell = tableView.view(atColumn: col, row: row,
@@ -240,7 +252,8 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
                     inPlace = false
                     break
                 }
-                cell.configure(item: item, focus: focused, marked: marked, column: col)
+                cell.configure(item: item, focus: focused, marked: marked, column: col,
+                               paneActive: isActive, zebra: zebra)
             }
             // 边距行取不到格=格不存在（还没滚进来），跳过即可；可见行取不到才需重建。
             if !inPlace, visible.contains(row) { fallback.insert(row) }
@@ -264,14 +277,41 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             layer?.borderColor = (active ? ThemeStore.shared.accentColor.cgColor : NSColor.separatorColor.cgColor)
         }
         layer?.borderWidth = active ? 1 : 0.5
+        // 焦点行底色双态依赖 isActive（视觉 polish 一期）：切换窗格须原地重绘已装载格。
+        repaintLoadedRows()
     }
 
-    /// 系统明暗切换：非活动边框 separatorColor 是动态色的 CGColor 解算值，须重跑
-    /// setActive 重解（活动态 accent 是固定 RGBA，重跑幂等无副作用）。
-    /// setActive 内部已自钉 effectiveAppearance，此处不再包 perform。
+    /// 原地重绘已装载行（~20µs/格，无重建）：活动态/外观切换后的陈旧底色自愈。
+    private func repaintLoadedRows() {
+        guard !displayIDs.isEmpty else { return }
+        let columnCount = tableView.tableColumns.count
+        let visible = tableView.rows(in: tableView.visibleRect)
+        let lo = max(0, visible.location - 4)
+        let hi = min(displayIDs.count, visible.location + visible.length + 4)
+        let byID = pane.itemByID
+        for row in lo..<hi {
+            guard row < displayIDs.count, let item = byID[displayIDs[row]] else { continue }
+            let focused = pane.selection.isFocus(displayIDs[row])
+            let marked = pane.selection.isMarked(displayIDs[row])
+            let zebra = zebraRow(row)
+            for col in 0..<columnCount {
+                (tableView.view(atColumn: col, row: row,
+                                makeIfNecessary: false) as? FileCellView)?
+                    .configure(item: item, focus: focused, marked: marked, column: col,
+                               paneActive: isActive, zebra: zebra)
+            }
+        }
+    }
+
+    /// 系统明暗切换：非活动边框 separatorColor 是动态色的 CGColor 解算值，须重解边框
+    /// （活动态 accent 是固定 RGBA，重跑幂等无副作用）。行底色不用管——每格自己的
+    /// viewDidChangeEffectiveAppearance 原样重跑 configure（旧版这里重跑整个 setActive
+    /// 连带全表重刷是多余功，视觉 polish 一期拆出 repaintLoadedRows 后解耦）。
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        setActive(isActive)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = (isActive ? ThemeStore.shared.accentColor.cgColor : NSColor.separatorColor.cgColor)
+        }
     }
 
     /// 语言切换后重刷列头标题 + 单元格本地化格式（日期列随 L10n.current）：
@@ -286,6 +326,9 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             case Self.dateColumnID: col.title = L10n.t(.colDate)
             default: break
             }
+            // 自绘表头与 column.title 是两份——同步（SortableHeaderCell 接管绘制后
+            // col.title 不再直达屏幕）。
+            headerCells[col.identifier.rawValue]?.title = col.title
         }
         tableView.headerView?.needsLayout = true
         tableView.tile()
@@ -364,8 +407,15 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
         cell.configure(item: item,
                        focus: pane.selection.isFocus(idOfRow),
                        marked: pane.selection.isMarked(idOfRow),
-                       column: tableView.tableColumns.firstIndex(of: column) ?? 0)
+                       column: tableView.tableColumns.firstIndex(of: column) ?? 0,
+                       paneActive: isActive, zebra: zebraRow(row))
         return cell
+    }
+
+    /// 斑马纹：主题开关 + 奇数显示行（display 顺序，非 selection 索引——视觉连续）。
+    /// 首行不染色（隔行惯例=第一行白底起）。
+    private func zebraRow(_ displayRow: Int) -> Bool {
+        ThemeStore.shared.theme.zebraStriping && !displayRow.isMultiple(of: 2)
     }
 
     // MARK: - Column header sorting（视图层：点击列头换 display 顺序）
@@ -386,7 +436,29 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
             sortKey = newKey
             sortDirection = .ascending
         }
+        updateSortIndicators()
         reload()
+    }
+
+    /// 三列表头箭头同步：当前排序列携方向，其余置 nil。
+    private func updateSortIndicators() {
+        let keyID: String
+        switch sortKey {
+        case .name: keyID = Self.nameColumnID
+        case .size: keyID = Self.sizeColumnID
+        case .date: keyID = Self.dateColumnID
+        }
+        for (id, hc) in headerCells {
+            hc.sortAscending = (id == keyID) ? (sortDirection == .ascending) : nil
+        }
+        // NSCell 无 needsDisplay（缩减 SDK）：箭头重绘标脏表头视图本身。
+        tableView.headerView?.needsDisplay = true
+    }
+
+    /// 列头点击排序：本表 mouseDown 被行转发覆写掐断了原生头点击路（盘点实证：
+    /// 旧版 sortByColumnIdentifier 无生产调用点），此 delegate 补上接线。
+    func tableView(_ tableView: NSTableView, mouseDownInHeaderOf tableColumn: NSTableColumn) {
+        sortByColumnIdentifier(tableColumn.identifier.rawValue)
     }
 
     // MARK: - Mouse（Ctrl/Option 单击 = 切换标记，普通 = 移动焦点，双击 = 进入）
@@ -693,29 +765,16 @@ final class PaneTableView: NSView, NSTableViewDataSource, NSTableViewDelegate, N
 
     private func promptRename() {
         guard let item = pane.focusedItem else { return }
-        let alert = NSAlert()
-        alert.messageText = L10n.t(.renameTitle)
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.stringValue = item.name
-        alert.accessoryView = field
-        alert.addButton(withTitle: L10n.t(.okBtn))
-        alert.addButton(withTitle: L10n.t(.cancelBtn))
-        alert.setDefaultConfirmCancel()
-        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
-            router.rename(to: field.stringValue)
+        if let name = InputAlert.run(message: L10n.t(.renameTitle), initial: item.name,
+                                     confirmTitle: L10n.t(.okBtn)) {
+            router.rename(to: name)
         }
     }
 
     private func promptMakeDirectory() {
-        let alert = NSAlert()
-        alert.messageText = L10n.t(.newDirTitle)
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        alert.accessoryView = field
-        alert.addButton(withTitle: L10n.t(.createBtn))
-        alert.addButton(withTitle: L10n.t(.cancelBtn))
-        alert.setDefaultConfirmCancel()
-        if alert.runConfirmModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty {
-            router.makeDirectory(named: field.stringValue)
+        if let name = InputAlert.run(message: L10n.t(.newDirTitle),
+                                     confirmTitle: L10n.t(.createBtn)) {
+            router.makeDirectory(named: name)
         }
     }
 
@@ -810,6 +869,39 @@ final class ClickForwardingTableView: NSTableView {
         let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return }
         onRowClick?(row, event, event.clickCount >= 2)
+    }
+}
+
+/// 列头单元：在原生绘制右侧叠一枚排序箭头（▲升/▼降，nil=本列未参与排序）。
+/// 盘点实证：本表 ClickForwardingTableView 覆写 mouseDown 掐断了原生「点头列排序」，
+/// 且系统 sortIndicator 在本缩减 SDK 的 view-based 表头不绘制——故自绘 + delegate
+/// `tableView(_:mouseDownInHeaderOf:)` 手动接线（AppKit 该回调仍会正常派发，探针实证）。
+final class SortableHeaderCell: NSTableHeaderCell {
+    /// nil=非当前排序列；true/false=升/降。标脏重绘由宿主 PaneTableView.updateSortIndicators
+    /// 统一做（NSCell 无 needsDisplay——缩减 SDK 实证）。
+    var sortAscending: Bool?
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // 原生绘制标题+分隔线。
+        super.drawInterior(withFrame: cellFrame, in: controlView)
+        guard let ascending = sortAscending else { return }
+        // 标题右侧留 ~10pt 画箭头（居垂直中）。箭头=两小三角（▲/▼），secondaryLabel 色。
+        let size: CGFloat = 7
+        let cx = cellFrame.maxX - 10
+        let cy = cellFrame.midY
+        NSColor.secondaryLabelColor.set()
+        let path = NSBezierPath()
+        if ascending {   // ▲
+            path.move(to: NSPoint(x: cx - size/2, y: cy - size/2 + 1))
+            path.line(to: NSPoint(x: cx + size/2, y: cy - size/2 + 1))
+            path.line(to: NSPoint(x: cx, y: cy + size/2 + 1))
+        } else {         // ▼
+            path.move(to: NSPoint(x: cx - size/2, y: cy + size/2 - 1))
+            path.line(to: NSPoint(x: cx + size/2, y: cy + size/2 - 1))
+            path.line(to: NSPoint(x: cx, y: cy - size/2 - 1))
+        }
+        path.close()
+        path.fill()
     }
 }
 
