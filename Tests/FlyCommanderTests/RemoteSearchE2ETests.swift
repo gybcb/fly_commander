@@ -20,7 +20,9 @@ final class RemoteSearchE2ETests: XCTestCase {
         let config = SFTPConnectionConfig(host: "127.0.0.1", port: UInt16(server.port),
                                           username: server.username,
                                           auth: .keyFile(path: server.keyPath, passphrase: server.keyPassphrase))
-        source = SFTPSource(config: config, homeDirectory: server.remoteBase.path)
+        source = SFTPSource(config: config, homeDirectory: server.remoteBase.path,
+                            hostKeyStore: SFTPHostKeyStore(defaults: UserDefaults(
+                                suiteName: "fly.rsearch.\(UUID().uuidString)")!))
     }
 
     override func tearDown() {
