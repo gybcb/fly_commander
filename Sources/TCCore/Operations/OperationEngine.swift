@@ -24,20 +24,28 @@ public final class OperationEngine {
                             cancel: CancelFlag? = nil) throws {
         var overwriteAll = false, skipAll = false
         let total = items.count
+        let cross = srcSource.sourceID != dstSource.sourceID
         for (i, item) in items.enumerated() {
             if cancel?.isCancelled == true { throw TCError.cancelled }
             let dst = destDir.joining(item.name)
-            if try resolveConflict(item, dst, dstSource: dstSource,
-                                   prompt: prompt,
-                                   overwriteAll: &overwriteAll, skipAll: &skipAll) {
-                progress?(i + 1, total); continue
-            }
-            if srcSource.sourceID == dstSource.sourceID {
-                try dstSource.copyItem(from: item.path, to: dst)
+            if cross, item.isDirectory {
+                // 目录冲突走 copyDirectoryCross 的**合并**语义——绝不进 resolveConflict
+                // （其 overwrite 分支 removeItem 会删掉整棵目标目录树，灾难级）。
+                try copyDirectoryCross(item, to: dst, srcSource: srcSource, dstSource: dstSource,
+                                       prompt: prompt, overwriteAll: &overwriteAll,
+                                       skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel)
             } else {
-                try checkCrossSourceDirectory(item)
-                try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
-                           byteProgress: byteProgress, cancel: cancel)
+                if try resolveConflict(item, dst, dstSource: dstSource,
+                                       prompt: prompt,
+                                       overwriteAll: &overwriteAll, skipAll: &skipAll) {
+                    progress?(i + 1, total); continue
+                }
+                if cross {
+                    try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
+                               byteProgress: byteProgress, cancel: cancel)
+                } else {
+                    try dstSource.copyItem(from: item.path, to: dst)
+                }
             }
             progress?(i + 1, total)
         }
@@ -62,22 +70,34 @@ public final class OperationEngine {
             do {
                 // 取消检查放在 do **内**：抛 .cancelled 走下方 catch，回滚已完成的同源 move。
                 if cancel?.isCancelled == true { throw TCError.cancelled }
-                // 冲突判定放在 do 内：前置覆盖删除失败（如目标带不可变标志）
-                // 同样要触发回滚，与本地旧路径语义一致。
-                if try resolveConflict(item, dst, dstSource: dstSource,
-                                       prompt: prompt,
-                                       overwriteAll: &overwriteAll, skipAll: &skipAll) {
-                    progress?(i + 1, total); continue
-                }
-                if sameSource {
-                    try dstSource.moveItem(from: item.path, to: dst)
-                    rolledBack.append((from: dst, to: item.path))
+                if !sameSource, item.isDirectory {
+                    // 目录：合并语义递归泵（不进 resolveConflict——其 overwrite 删目标树），
+                    // 整体传完后删源根一次（源 removeItem 各实现皆递归）。
+                    // 返回 true=整目录被 skip → 没传任何东西，**不得删源**。
+                    let skipped = try copyDirectoryCross(item, to: dst, srcSource: srcSource, dstSource: dstSource,
+                                                         prompt: prompt, overwriteAll: &overwriteAll,
+                                                         skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel)
+                    if !skipped {
+                        do { try srcSource.removeItem(at: item.path) }
+                        catch { onWarning?(item.name, asTCError(error)) }
+                    }
                 } else {
-                    try checkCrossSourceDirectory(item)
-                    try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
-                               byteProgress: byteProgress, cancel: cancel)
-                    do { try srcSource.removeItem(at: item.path) }
-                    catch { onWarning?(item.name, asTCError(error)) }
+                    // 冲突判定放在 do 内：前置覆盖删除失败（如目标带不可变标志）
+                    // 同样要触发回滚，与本地旧路径语义一致。
+                    if try resolveConflict(item, dst, dstSource: dstSource,
+                                           prompt: prompt,
+                                           overwriteAll: &overwriteAll, skipAll: &skipAll) {
+                        progress?(i + 1, total); continue
+                    }
+                    if sameSource {
+                        try dstSource.moveItem(from: item.path, to: dst)
+                        rolledBack.append((from: dst, to: item.path))
+                    } else {
+                        try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
+                                   byteProgress: byteProgress, cancel: cancel)
+                        do { try srcSource.removeItem(at: item.path) }
+                        catch { onWarning?(item.name, asTCError(error)) }
+                    }
                 }
             } catch {
                 // 含 cancel 抛出的 .cancelled——统一走回滚路径（取消不裸 throw，
@@ -125,11 +145,90 @@ public final class OperationEngine {
 
     // MARK: - 私有
 
-    /// 跨源流式只支持文件：目录（openReader 无法读）此前被静默当空文件传过去。
-    /// 明确报错（递归跨源复制另立项）。
-    private func checkCrossSourceDirectory(_ item: FileItem) throws {
-        if item.isDirectory {
-            throw TCError.crossSourceDir(item.name)
+    /// 跨源目录递归复制（用户 issue：单文件可用、目录不可用——旧硬闸 `checkCrossSourceDirectory`
+    /// 只抛"暂不支持"，本实现取代它；本地⇄SFTP 与 SFTP⇄SFTP 同修）。
+    /// 语义合同（各有锁，见 OperationEngineRoutingTests）：
+    /// - 目标无同名 → 逐级 makeDirectory（含空目录）+ 文件逐个走既有 64KB `stream` 泵；
+    /// - 目标已有同名**目录** → **合并**：询问一次；overwrite=合并不删目标树
+    ///   （目录走 resolveConflict 的 overwrite 会 removeItem 删整棵树——灾难，故不走它）；
+    ///   skip=整目录跳过（返回 true，调用方据此不删源）；cancel=抛；
+    /// - 目标同名但是**文件** → 回退普通冲突语义（删文件建目录）；
+    /// - 目录**内部**文件冲突 = 逐文件 resolveConflict（与顶层同款，含覆盖删除）；
+    /// - 取消在文件/子目录边界生效（抛 .cancelled，与整批合同一致）；
+    /// - 进度不动语义：整个目录对上算 1 个条目（计数在调用方），字节进度逐文件转发。
+    /// - returns: true = 整个目录被跳过（skip/skipAll）——move 调用方据此不删源。
+    @discardableResult
+    private func copyDirectoryCross(_ item: FileItem, to dst: TCPath,
+                                    srcSource: FileSource, dstSource: FileSource,
+                                    prompt: ConflictPrompt?,
+                                    overwriteAll: inout Bool, skipAll: inout Bool,
+                                    byteProgress: ((Int64, Int64) -> Void)?,
+                                    cancel: CancelFlag?) throws -> Bool {
+        if cancel?.isCancelled == true { throw TCError.cancelled }
+        let existing = try? dstSource.stat(dst)
+        if existing != nil {
+            if skipAll { return true }
+            if !overwriteAll {
+                if existing?.isDirectory == true {
+                    // 目录冲突=合并（overwrite 分支**不删**目标树——与文件语义的分岔点）。
+                    // 无提示器（纯内核环境）→ 缺省合并（与文件冲突的"缺省覆盖"同向）。
+                    if let prompt {
+                        switch prompt(item.path, dst) {
+                        case .overwrite: break
+                        case .overwriteAll: overwriteAll = true
+                        case .skip: return true
+                        case .skipAll: skipAll = true; return true
+                        case .cancel: throw TCError.cancelled
+                        }
+                    }
+                } else {
+                    // 同名文件挡路：普通冲突语义（overwrite=删文件后建目录）
+                    if try resolveConflict(item, dst, dstSource: dstSource, prompt: prompt,
+                                           overwriteAll: &overwriteAll, skipAll: &skipAll) {
+                        return true
+                    }
+                }
+            }
+        }
+        // 目标目录就位（幂等：已存在=合并进去不重建；挡路文件已被 resolveConflict 删除→建目录）
+        if existing == nil || existing?.isDirectory == false {
+            try dstSource.makeDirectory(at: dst)
+        }
+        try copyDirectoryContents(from: item.path, to: dst, srcSource: srcSource,
+                                  dstSource: dstSource, prompt: prompt,
+                                  overwriteAll: &overwriteAll, skipAll: &skipAll,
+                                  byteProgress: byteProgress, cancel: cancel)
+        return false
+    }
+
+    /// 目录内容泵（递归体）：列源 → 文件 stream / 子目录递归（合并式，不再询问）。
+    private func copyDirectoryContents(from srcDir: TCPath, to dstDir: TCPath,
+                                       srcSource: FileSource, dstSource: FileSource,
+                                       prompt: ConflictPrompt?,
+                                       overwriteAll: inout Bool, skipAll: inout Bool,
+                                       byteProgress: ((Int64, Int64) -> Void)?,
+                                       cancel: CancelFlag?) throws {
+        let children = try srcSource.listDirectory(srcDir)
+        for child in children {
+            if cancel?.isCancelled == true { throw TCError.cancelled }
+            let childDst = dstDir.joining(child.name)
+            if child.isDirectory {
+                // 嵌套目录不再询问（顶层那一次"合并"授权覆盖整棵树）；skipAll 置位则整支停止。
+                if skipAll { return }
+                let existed = (try? dstSource.stat(childDst))?.isDirectory ?? false
+                if !existed { try dstSource.makeDirectory(at: childDst) }
+                try copyDirectoryContents(from: child.path, to: childDst, srcSource: srcSource,
+                                          dstSource: dstSource, prompt: prompt,
+                                          overwriteAll: &overwriteAll, skipAll: &skipAll,
+                                          byteProgress: byteProgress, cancel: cancel)
+            } else {
+                if try resolveConflict(child, childDst, dstSource: dstSource, prompt: prompt,
+                                       overwriteAll: &overwriteAll, skipAll: &skipAll) {
+                    continue
+                }
+                try stream(from: srcSource, to: dstSource, src: child.path, dst: childDst,
+                           byteProgress: byteProgress, cancel: cancel)
+            }
         }
     }
 

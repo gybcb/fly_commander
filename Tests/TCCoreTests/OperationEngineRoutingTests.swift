@@ -31,11 +31,17 @@ private final class FakeSource: FileSource {
     var removeCalls: [String] = []
     var openReaders: [String] = []
     var streamWrites: [(path: String, total: Int64?, data: Data)] = []
+    /// 目录树夹具（递归跨源测试用）：listDirectory 按 path.pathString 查此表。
+    var listTable: [String: [FileItem]] = [:]
+    /// 按路径分派的读块（递归测试一个源上有多个文件）；缺省回落 readerChunks。
+    var chunksByPath: [String: [Data]] = [:]
+    /// 每条 streamWrite 完整落账后的回调（取消时序测试用）。
+    var onWriteHook: (() -> Void)?
 
     init(id: String, remote: Bool = false) { sourceID = id; isRemote = remote }
 
     func listDirectory(_ path: TCPath) throws -> [FileItem] {
-        listCalls.append(path.pathString); return []
+        listCalls.append(path.pathString); return listTable[path.pathString] ?? []
     }
     func isDirectory(_ path: TCPath) -> Bool { (try? stat(path))?.isDirectory ?? false }
     func stat(_ path: TCPath) throws -> FileItem? {
@@ -66,7 +72,7 @@ private final class FakeSource: FileSource {
     func openReader(_ path: TCPath) throws -> ReadHandle {
         openReaders.append(path.pathString)
         var i = 0
-        let chunks = readerChunks
+        let chunks = chunksByPath[path.pathString] ?? readerChunks
         return { _ in
             guard i < chunks.count else { return nil }
             let c = chunks[i]; i += 1
@@ -81,6 +87,7 @@ private final class FakeSource: FileSource {
             data.append(chunk)
         }
         streamWrites.append((path.pathString, totalBytes, data))
+        onWriteHook?()
     }
 }
 
@@ -163,7 +170,7 @@ final class OperationEngineRoutingTests: XCTestCase {
         XCTAssertEqual(warnings[0].error, .unknown("disk full"))
     }
 
-    // MARK: - 跨源目录明确报错（C1：目录不得静默当空文件流过去）
+    // MARK: - 跨源目录递归复制（用户 issue：单文件可用、目录不可用——旧硬闸已移除）
 
     private func fakeDir(_ name: String, in dir: String) -> FileItem {
         FileItem(id: dir + "/" + name, path: TCPath(dir + "/" + name),
@@ -172,27 +179,107 @@ final class OperationEngineRoutingTests: XCTestCase {
                  isReadOnly: false, isExecutable: true)
     }
 
-    func testCrossSourceDirectoryCopyThrowsExplicitError() throws {
-        XCTAssertThrowsError(
-            try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
-                                   srcSource: a, dstSource: b)
-        ) {
-            // Plan B T3：语义 case + payload（翻转≠弱化——精确 case 取代 m.contains("目录")）。
-            XCTAssertEqual(asTCError($0), .crossSourceDir("dir"))
-        }
-        XCTAssertTrue(a.openReaders.isEmpty, "目录不得进流式读")
-        XCTAssertTrue(b.streamWrites.isEmpty)
+    /// 目录树夹具：/s/dir = { one.txt, sub/{two.txt}, empty/（空目录）}。
+    private func installDirTree() {
+        a.listTable["/s/dir"] = [fakeItem("one.txt", in: "/s/dir"),
+                                 fakeDir("sub", in: "/s/dir"),
+                                 fakeDir("empty", in: "/s/dir")]
+        a.listTable["/s/dir/sub"] = [fakeItem("two.txt", in: "/s/dir/sub")]
+        a.chunksByPath["/s/dir/one.txt"] = [Data("1".utf8)]
+        a.chunksByPath["/s/dir/sub/two.txt"] = [Data("2".utf8)]
     }
 
-    func testCrossSourceDirectoryMoveThrowsBeforeStreamingDir() throws {
-        a.readerChunks = [Data("x".utf8)]
-        let items = [fakeItem("1.txt", in: "/s"), fakeDir("dir", in: "/s")]
+    func testCrossSourceCopyDirectoryRecursive() throws {
+        installDirTree()
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b)
+        XCTAssertEqual(b.mkdirCalls.sorted(), ["/d/dir", "/d/dir/empty", "/d/dir/sub"],
+                       "目录结构逐级 mkdir（含空目录）")
+        XCTAssertEqual(b.streamWrites.map { $0.path }.sorted(),
+                       ["/d/dir/one.txt", "/d/dir/sub/two.txt"])
+        XCTAssertEqual(b.streamWrites.first { $0.path == "/d/dir/one.txt" }?.data, Data("1".utf8))
+        XCTAssertEqual(b.streamWrites.first { $0.path == "/d/dir/sub/two.txt" }?.data, Data("2".utf8))
+        XCTAssertTrue(a.removeCalls.isEmpty, "copy 不动源")
+        // 变异锁：目录条目本身绝不进 openReader/streamWrite。
+        XCTAssertFalse(a.openReaders.contains("/s/dir"))
+        XCTAssertFalse(b.streamWrites.contains { $0.path == "/d/dir" })
+    }
+
+    func testCrossSourceMoveDirectoryDeletesSourceRootOnce() throws {
+        installDirTree()
+        _ = try engine.performMove([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b)
+        XCTAssertEqual(b.mkdirCalls.count, 3)
+        XCTAssertEqual(b.streamWrites.count, 2)
+        // 递归删除是源 removeItem 的合同（SFTP/FTP/本地源皆递归实现）——引擎只删根一次。
+        XCTAssertEqual(a.removeCalls, ["/s/dir"])
+    }
+
+    /// 目录冲突=合并：目标已有同名目录 → 询问一次，overwrite 不得删目标目录树
+    /// （删=灾难），内部文件照常写入。
+    func testDirectoryConflictOverwriteMergesWithoutDeletingTarget() throws {
+        installDirTree()
+        b.statTable["/d/dir"] = fakeDir("dir", in: "/d")
+        var promptCount = 0
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   prompt: { _, _ in promptCount += 1; return .overwrite })
+        XCTAssertEqual(promptCount, 1, "目录级只问一次")
+        XCTAssertFalse(b.removeCalls.contains("/d/dir"), "overwrite=合并，绝不删目标目录树")
+        XCTAssertEqual(b.streamWrites.count, 2, "内容照常泵入")
+    }
+
+    func testDirectoryConflictSkipSkipsWholeTree() throws {
+        installDirTree()
+        b.statTable["/d/dir"] = fakeDir("dir", in: "/d")
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   prompt: { _, _ in .skip })
+        XCTAssertTrue(b.mkdirCalls.isEmpty, "skip=整目录跳过，不建不写")
+        XCTAssertTrue(b.streamWrites.isEmpty)
+        XCTAssertTrue(a.openReaders.isEmpty)
+    }
+
+    func testDirectoryConflictCancelThrows() throws {
+        installDirTree()
+        b.statTable["/d/dir"] = fakeDir("dir", in: "/d")
         XCTAssertThrowsError(
-            try engine.performMove(items, to: TCPath("/d"), srcSource: a, dstSource: b)
-        )
-        XCTAssertEqual(b.streamWrites.count, 1, "仅文件被流式传输")
-        XCTAssertEqual(a.removeCalls, ["/s/1.txt"])
-        XCTAssertFalse(a.removeCalls.contains("/s/dir"), "目录不得被流式/删除")
+            try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   prompt: { _, _ in .cancel })
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+    }
+
+    /// 目录**内部**的文件冲突沿用逐文件 resolveConflict（目标同名文件被覆盖删除）。
+    func testInnerFileConflictStillRemoved() throws {
+        installDirTree()
+        b.statTable["/d/dir/one.txt"] = fakeItem("one.txt", in: "/d/dir")
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b)   // prompt=nil → 缺省覆盖
+        XCTAssertTrue(b.removeCalls.contains("/d/dir/one.txt"))
+    }
+
+    /// 进度语义不动：目录整体算 1 个条目（状态栏按顶层条目计数）。
+    func testDirectoryCountsAsOneProgressUnit() throws {
+        installDirTree()
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   progress: { seen.append("\($0)/\($1)") })
+        XCTAssertEqual(seen, ["1/1"])
+    }
+
+    /// 递归中取消：子目录列举后、文件泵前生效（抛 .cancelled，残余不继续）。
+    func testCancelInsideDirectoryStopsAtFileBoundary() throws {
+        installDirTree()
+        let flag = CancelFlag()
+        var writes = 0
+        b.onWriteHook = { writes += 1; flag.cancel() }
+        XCTAssertThrowsError(
+            try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b, cancel: flag)
+        ) { XCTAssertEqual($0 as? TCError, .cancelled) }
+        XCTAssertEqual(writes, 1, "第一个文件泵送前未取消；取消后第二个不得开工")
     }
 
     // MARK: - 冲突调用序（同源）
