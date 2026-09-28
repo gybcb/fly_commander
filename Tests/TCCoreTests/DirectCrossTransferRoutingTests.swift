@@ -225,7 +225,10 @@ final class DirectCrossTransferRoutingTests: XCTestCase {
                                                     srcSource: src, dstSource: dst, cancel: flag))
     }
 
-    /// 多条目：handled 帧的 bytesDone = 已完成条目累计 + 本条目已传。
+    /// 多条目：handled 帧**逐条目原样透传**（spec §1 合同 = (本条目已传, 本条目总量)）。
+    /// 终审 B2 裁定改锁：旧锁断言跨条目累计（base=10 → 15/20、30/20），但分母是接缝
+    /// 自报的**当前条目** total → done>total 稳态、面板恒 100%（实测）。跨条目累计帧
+    /// 与 pump 单文件语义冲突，spec 赢；引擎若加 base，第二条目 15/20 断言红。
     func testBytesDoneAccumulatesAcrossItems() throws {
         src.add(file: "a.txt", size: 10); src.add(file: "b.txt", size: 20)
         engine.directCrossTransfer = { item, _, bp in
@@ -236,8 +239,8 @@ final class DirectCrossTransferRoutingTests: XCTestCase {
         try engine.performCopy(src.items("a.txt", "b.txt"), to: TCPath("/"),
                                srcSource: src, dstSource: dst,
                                byteProgress: { bytes.append(($0, $1)) })
-        XCTAssertEqual(bytes.map { "\($0.0)/\($0.1)" }, ["5/10", "10/10", "15/20", "30/20"],
-                       "第二条目帧须累计第一条目字节（base=10：5→15、20→30）")
+        XCTAssertEqual(bytes.map { "\($0.0)/\($0.1)" }, ["5/10", "10/10", "5/20", "20/20"],
+                       "帧 = 接缝原样：第二条目分母 20，done 不得掺第一条目字节")
     }
 
     /// 接缝报了半截帧 (5,10) 后返回 .handled(10)（rsync 停在末文件中间态极易发生）→

@@ -56,9 +56,10 @@ final class TransferPanelDirectRouteTests: XCTestCase {
 
     // MARK: - 面板钳制（Task 1 评审遗留 carry）
 
-    /// 直传跨条目累计基线可让 done 瞬时 > total（askDirect 基线 + 接缝当前文件
-    /// 自报 total 的错位窗口）。面板：百分比钳 100、剩余时间钳 ≥0（负剩余会把
-    /// durationString 的负值守卫洗成空串——钳 0 后显示 0:00，可断言）。
+    /// 面板钳制（belt-and-braces，终审 B2 后仍在）：帧改为逐条目合同后 done>total 的
+    /// **稳态**已不可能（分母与 done 同源），剩余风险 = 解析器对 openrsync 反推总量
+    /// 的整型误差可让 done 瞬时超 total 几个字节。面板：百分比钳 100、剩余时间钳 ≥0
+    /// （负剩余会把 durationString 的负值守卫洗成空串——钳 0 后显示 0:00，可断言）。
     /// 变异证伪：删 remaining 的 max(0,…) → 负值进 durationString 返回 "" →
     /// 明细不含 "0:00" 断言挂。（百分比钳由 AppKit 也钳，单独断言无鉴别力，
     /// 剩余时间断言是本锁的鉴别项。）
@@ -173,6 +174,82 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         XCTAssertEqual(hits.count, 0, "不过 gate 的 run 绝不得触达遗留接缝")
         XCTAssertNil(op.directCrossTransfer, "run 后共享引擎接缝必须已清")
         XCTAssertEqual(dst.data["/dst/a.txt"], Data("hello".utf8), "回退 pump 照常完成")
+    }
+
+    // MARK: - B4 per-run 令牌（两 run 都过 gate 的重叠）
+
+    /// 事故形态（终审 B4）：run1/run2 都过 gate，run2 重赋接缝后 run1 引擎调到
+    /// run2 的闭包 → run1 条目推往 run2 的两台服务器。**接缝工厂令牌锁**：
+    /// 用假 rsync 造两个接缝闭包（token 1/2），run2 取号后调 run1 的闭包 →
+    /// `.unavailable("stale-seam")` 且假 rsync **零触达**（stale 分支在触连接前返回
+    /// = 「错服务器零写入」的直接证据）；自己的 token 则正常放行。
+    /// 变异证伪：makeDirectSeam 删 token 守卫行 → stale 断言挂（跑进 rsync 计数 1）。
+    func testStaleSeamClosureReturnsUnavailableWithoutTouchingRsync() throws {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 22)
+        let box = DirectSeamTokenBox()
+        let hits = DirectSentinelBox()
+        let fakeRsync: (DirectRsync.ItemTarget, DirectRsync.Peer, Int64?,
+                        ((Int64, Int64) -> Void)?, (String) -> Void, CancelFlag) throws -> DirectOutcome =
+        { _, _, _, _, _, _ in hits.bump(); return .handled(bytesTransferred: 1) }
+
+        let t1 = box.next()
+        let seam1 = TransferEngine.makeDirectSeam(ssrc: a, sdst: b, cancel: CancelFlag(),
+                                                  nameBox: DirectNameBox(), tokenBox: box,
+                                                  myToken: t1, rsync: fakeRsync)
+        XCTAssertEqual(try seam1(fileItem(name: "f", dir: false, size: 1),
+                                 TCPath("/dst/f"), nil), .handled(bytesTransferred: 1),
+                       "本 run 的接缝在 token 未过时须正常放行")
+        _ = box.next()   // run2 取号 = 顶掉 run1
+        XCTAssertEqual(try seam1(fileItem(name: "f", dir: false, size: 1),
+                                 TCPath("/dst/f"), nil), .unavailable("stale-seam"),
+                       "被顶掉的旧闭包必须立即 unavailable")
+        XCTAssertEqual(hits.count, 1, "stale 分支不得触达 rsync（错服务器零写入）")
+    }
+
+    /// run() 头部确实取号（锁「run() 与工厂共用同一 token」这条接线；工厂逻辑锁归上一条）。
+    /// 变异证伪：run() 删 `seamToken.next()` → 计数不动 → 红。
+    func testRunAdvancesSeamToken() throws {
+        let te = TransferEngine()
+        te.runInBackground = { $0() }
+        te.onMain = { $0() }
+        let src = DirectMemSource(id: "mem-src"); let dst = DirectMemSource(id: "mem-dst")
+        src.addFile("/src/a.txt", Data("x".utf8))
+        let srcPane = FilePane(id: .left, source: src, startPath: TCPath("/src")); srcPane.load()
+        _ = srcPane.revealItem(id: srcPane.itemByID.first { $0.value.name == "a.txt" }?.key ?? "")
+        let dstPane = FilePane(id: .right, source: dst, startPath: TCPath("/dst")); dstPane.load()
+        let tBefore = te.seamToken.current()
+        te.run(true, srcPane, dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(te.seamToken.current(), tBefore + 1, "每次 run 令牌 +1")
+    }
+
+    // MARK: - B3 通道级异常分类（可测面）+ 接缝镜像 nil 兜底
+
+    /// 两条通道异常路（openExec 抛 / nextEvent 抛）共享的分类函数（B3 可测面）。
+    /// 只锁**可达且可构造**的分支：非 SSHClientError（POSIX/TCError 等）→ channelGone
+    /// （保守：绝不当直传成功）。requestFailed→execRejected 的映射与 execute-cp 路共用
+    /// 同一 relayReason(for:)（该分支构造需 Traversio 内部诊断，见
+    /// ServerSideCopyCommandTests 同段说明），直传路可达性 = 同一函数 + 本 catch 调用点。
+    /// 变异证伪：channelIssue 的 default 档改成 .execRejected → 本条红。
+    func testChannelIssueClassification() throws {
+        let o = SFTPConnection.channelIssue(POSIXError(.EIO))
+        XCTAssertEqual(o.route, .relayed(.channelGone))
+        XCTAssertEqual(o.outcome, .unavailable("channelGone"))
+    }
+
+    /// B5 装配锁：接缝把 rsync 回调的文件名写进名字盒（帧名链的接缝段）。
+    /// 变异证伪：工厂里 onFile 回调改空闭包 → name 断言挂。
+    func testSeamForwardsFileNameToNameBox() throws {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 22)
+        let box = DirectSeamTokenBox()
+        let nameBox = DirectNameBox()
+        let seam = TransferEngine.makeDirectSeam(
+            ssrc: a, sdst: b, cancel: CancelFlag(), nameBox: nameBox,
+            tokenBox: box, myToken: box.next())
+        { _, _, _, _, onFile, _ in onFile("report.pdf"); return .handled(bytesTransferred: 1) }
+        _ = try seam(fileItem(name: "report.pdf", dir: false, size: 1), TCPath("/dst/f"), nil)
+        XCTAssertEqual(nameBox.name, "report.pdf")
     }
 }
 

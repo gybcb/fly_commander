@@ -39,8 +39,6 @@ public final class OperationEngine {
         var lastTotals: (done: Int64, total: Int64)?
         // 直传粘连：整批只问一次，`.unavailable` 后同批不再问（失败原因在批量级别不会自愈）。
         var directFailed = false
-        // 已完成条目的实传字节累计：接缝帧的 done 以此为基（面板百分比跨条目连续）。
-        var directBase: Int64 = 0
         let total = items.count
         let cross = srcSource.sourceID != dstSource.sourceID
         for (i, item) in items.enumerated() {
@@ -53,9 +51,8 @@ public final class OperationEngine {
                 let destExists = directCrossTransfer != nil && !directFailed
                     && (try? dstSource.stat(dst)) != nil
                 if !destExists, directCrossTransfer != nil, !directFailed {
-                    switch try askDirect(item, dst, byteProgress: byteProgress, directBase: &directBase) {
-                    case .handled(let bytes):
-                        directBase += max(0, bytes)
+                    switch try askDirect(item, dst, byteProgress: byteProgress) {
+                    case .handled:
                         progress?(i + 1, total)
                         continue                                   // 整树已完成，引擎不递归
                     case .unavailable: directFailed = true          // sticky
@@ -78,9 +75,7 @@ public final class OperationEngine {
                 if cross {
                     // 文件：resolveConflict 已保证目标干净（不存在或覆盖已删）→ 可问接缝。
                     if directCrossTransfer != nil, !directFailed,
-                       case .handled(let bytes) = try askDirect(item, dst, byteProgress: byteProgress,
-                                                                directBase: &directBase) {
-                        directBase += max(0, bytes)
+                       case .handled = try askDirect(item, dst, byteProgress: byteProgress) {
                         progress?(i + 1, total)
                         continue
                     } else if directCrossTransfer != nil { directFailed = true }
@@ -107,9 +102,8 @@ public final class OperationEngine {
         // 同源 move 失败需回滚已完成项；跨源 move 传输成功后不回滚（删源失败只记警告）。
         var rolledBack: [(from: TCPath, to: TCPath)] = []
         var lastTotals: (done: Int64, total: Int64)?
-        // 直传粘连 + 字节基线（语义同 performCopy）。
+        // 直传粘连（语义同 performCopy）。
         var directFailed = false
-        var directBase: Int64 = 0
         let sameSource = srcSource.sourceID == dstSource.sourceID
         let total = items.count
         for (i, item) in items.enumerated() {
@@ -124,10 +118,9 @@ public final class OperationEngine {
                     let destExists = directCrossTransfer != nil && !directFailed
                         && (try? dstSource.stat(dst)) != nil
                     if !destExists, directCrossTransfer != nil, !directFailed {
-                        switch try askDirect(item, dst, byteProgress: byteProgress, directBase: &directBase) {
-                        case .handled(let bytes):
+                        switch try askDirect(item, dst, byteProgress: byteProgress) {
+                        case .handled:
                             // 整树已由接缝完成 → 删源根一次（递归删是各源 removeItem 的合同）。
-                            directBase += max(0, bytes)
                             do { try srcSource.removeItem(at: item.path) }
                             catch { onWarning?(item.name, asTCError(error)) }
                             progress?(i + 1, total)
@@ -166,9 +159,7 @@ public final class OperationEngine {
                         // 接缝抛错进本 do 的 catch：rolledBack 在跨源路从不 append（回滚为空），
                         // throw asTCError 原样上抛——与 pump 抛错同路。
                         if directCrossTransfer != nil, !directFailed,
-                           case .handled(let bytes) = try askDirect(item, dst, byteProgress: byteProgress,
-                                                                    directBase: &directBase) {
-                            directBase += max(0, bytes)
+                           case .handled = try askDirect(item, dst, byteProgress: byteProgress) {
                             do { try srcSource.removeItem(at: item.path) }
                             catch { onWarning?(item.name, asTCError(error)) }
                             progress?(i + 1, total)
@@ -333,28 +324,29 @@ public final class OperationEngine {
         }
     }
 
-    /// 问接缝，并把字节进度包成累计帧（done = 已完成条目字节基线 + 本条目已传）。
-    /// directBase 传值快照：Swift 闭包捕获 var 是引用语义，不快照则后续条目的
-    /// 迟到回调会读到已推进的基线。total=0（总量未知）不累加——不定量帧原样透传。
+    /// 问接缝，字节帧**逐条目原样透传**（spec §1：(本条目已传, 本条目总量)，
+    /// 0=未知——与 pump 的单文件语义逐字一致，终审 B2 裁定）。
+    /// 旧实现把已完成条目字节做基线加进帧里（跨条目累计），与接缝实现自报的
+    /// **当前文件** total 分母错配 → done>total 稳态、面板恒 100%。跨条目总量
+    /// 若将来要做，必须连全部 pump 路一起重设（carry），不在帧里偷加。
     /// `.handled` 且最后一帧未满（含一帧未报）→ 引擎补一帧拉满，否则面板百分比残留
-    /// 在中间态（与 mergeDirectoryProgress 同合同、同触发形：done != total 才补）。
+    /// 在中间态（与 mergeDirectoryProgress 同合同、同触发形：done != total 才补；
+    /// total=0 的不定量帧恒不补）。
     private func askDirect(_ item: FileItem, _ dst: TCPath,
-                           byteProgress: ((Int64, Int64) -> Void)?,
-                           directBase: inout Int64) throws -> DirectOutcome {
+                           byteProgress: ((Int64, Int64) -> Void)?) throws -> DirectOutcome {
         guard let seam = directCrossTransfer else { return .unavailable("no seam") }
-        let base = directBase                      // 值快照
         let last = LastFrame()                     // 逃逸闭包不能捕获局部 var → 装箱
         let wrapped: ((Int64, Int64) -> Void)? = byteProgress.map { bp in
             { done, total in
-                last.raw = (done, total)           // 记接缝**原值**（累计前）判满
-                bp(total > 0 ? done + base : done, total)            // total=0 → 不定量
+                last.raw = (done, total)
+                bp(done, total)                    // 逐条目合同：不加工，原样透传
             }
         }
         let outcome = try seam(item, dst, wrapped)
-        // 一帧未报（raw==nil）或有帧但未满 → 补拉满帧（`(nil)?.done != (nil)?.total`
-        // 为 false，nil 须显式短路）。
+        // 一帧未报（raw==nil）或有帧但未满（且定量）→ 补拉满帧（`(nil)?.done !=
+        // (nil)?.total` 为 false，nil 须显式短路）。
         if case .handled(let bytes) = outcome, bytes > 0,
-           last.raw == nil || last.raw!.done != last.raw!.total {
+           last.raw == nil || (last.raw!.0 != last.raw!.1 && last.raw!.1 > 0) {
             wrapped?(bytes, bytes)
         }
         return outcome

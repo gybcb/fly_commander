@@ -44,6 +44,23 @@ enum DirectRsync {
         if authMarks.contains(where: msg.contains) { return .relay(.needsAuth) }
         return .fail(msg)   // 真失败：带 stderr 上抛不回退（cp 同政策）
     }
+
+    /// 字节帧的**范围**判定（纯函数，终审 B2 裁定：接缝 byteProgress 合同 = spec §1
+    /// 「(本条目已传, 本条目总量)，0=未知」，逐条目严格）：
+    /// - 单文件条目：总量 = totalHint（= item.size）→ 定量帧；
+    /// - 目录条目：无预扫描、总量先天未知 → total 恒 0（不定量，面板扫动态）。
+    /// 旧实现拿 parser.fileBytesTotal（**当前文件**的总量）当条目分母 + 引擎再叠
+    /// 跨条目基线 → done>total 稳态、面板恒 100%（终审实测）。
+    /// 字节帧 = (done, total)，Equatable 便于锁。
+    struct Frame: Equatable { let done: Int64; let total: Int64 }
+
+    static func progressFrame(isDirectory: Bool, entryDone: Int64,
+                              totalHint: Int64?) -> Frame {
+        if isDirectory { return Frame(done: entryDone, total: 0) }
+        let hint = totalHint ?? 0
+        guard hint > 0 else { return Frame(done: entryDone, total: 0) }     // size 拿不到 → 不定量
+        return Frame(done: min(entryDone, hint), total: hint)
+    }
 }
 
 /// `rsync -a --progress` stderr 解析器（openrsync/GNU 双方言）。
@@ -54,25 +71,34 @@ enum DirectRsync {
 /// - 首字段纯数字 = 数值行；否则当文件名挂起。
 /// - total：GNU 五字段式 = 第二字段；openrsync 式（done 后直接 pct）= done*100/pct 反推。
 ///   done/total/pct 三者不一致时信 total（UI 只用百分比，整型够用）。
-/// - 尾巴 `(xfer#N, to-check=i/T)`：i==T 时 fileDone=T；否则 fileDone=N（xfer 计数）；
+/// - 尾巴 `(xfer#N, to-check=i/T)`（GNU ≥3.1 印 `xfr#`/`to-chk=`——两种拼写都认，
+///   实测差异见 DirectRsyncTests 的 GNU3 样例）：**i = 剩余待检数**（真机收尾行
+///   `to-check=0/T`），i==0 → fileDone=T，否则 fileDone=N（xfer 计数）；
 ///   尾巴缺失 → fileDone/fileTotal 保持前值，不报错。
-/// - 累计推进：完成行（pct==100 或 done>=total）之后把 done 并入 cumulative。
+/// - 累计推进（**幂等**）：完成行（pct==100 或 done>=total）把 done 并进 cumulative，
+///   基线是**当前文件已折叠字节**（换文件归零）——真机 openrsync 对 >1s 传输每文件发
+///   两条 100% 行（周期刷新行 + 完成行，done 相同），全量累加会把字节翻倍；
+///   同名重列（done 更大的完成行）只并差量（1000→1500 并 500，单调不减）。
+///   无名字行的换文件边界 = done 回退（rsync 换文件必回退）。
 /// - 铁律：**任何解析失败 = 忽略该段文本**，绝不抛错、绝不判传输失败（spec §2）。
 final class RsyncProgressParser {
     struct Event { let fileName: String?; let fileBytesDone: Int64
                    let fileBytesTotal: Int64; let fileDone: Int; let fileTotal: Int }
     var onEvent: ((Event) -> Void)?
     private(set) var fileBytesDone: Int64 = 0   // 已完成文件累计 + 当前行 done
-    /// 最新数值行的 total（跨文件语义下 = **当前文件**的总量，非整棵目录的和——
-    /// --progress 无预扫描，目录总量先天未知）。消费方：SFTPConnection.runDirectRsync
-    /// 的进度桥（Task 4 brief 引用此属性，Task 3 落地时漏了，在此补）。
+    /// 当前文件最新已知字节总量（= Event.fileBytesTotal）。
     private(set) var fileBytesTotal: Int64 = 0
     private(set) var totalKnown = false
     private(set) var fileDone = 0
     private(set) var fileTotal = 0
+    /// 进度桥消费本字段拉取「刚被数值行消费掉的文件名」（spec 决策 #2 上抛面板）。
+    /// 每次数值行发出且该行带挂起文件名时置值；调用方读取后须置 nil（拉取式）。
+    var consumedFileName: String?
     private var tail = ""            // 跨 chunk 半行缓冲
     private var pendingName: String? // 文件名行挂起
-    private var cumulative: Int64 = 0   // 已完成文件字节和
+    private var cumulative: Int64 = 0      // 已折叠（替换语义）完成字节和
+    private var currentCompleted: Int64 = 0   // **当前文件**已折叠字节（换文件归零；替换基线）
+    private var currentName: String?          // 最后一条数值行的归属名（换文件边界判定）
 
     func feed(_ text: String) {
         tail += text
@@ -104,31 +130,53 @@ final class RsyncProgressParser {
             total = p > 0 ? done * 100 / p : done          // openrsync 反推（整型够用）
             percent = p
         } else { return }                                   // 认不全 = 忽略，绝不抛
-        // (xfer#N, to-check=i/T) 尾巴：i==T 时 fileDone=T；否则 fileDone=N（xfer 计数）；
+        // 尾巴（两种方言拼写都认：openrsync `xfer#`/`to-check=`，GNU ≥3.1
+        // `xfr#`/`to-chk=`）。**i 是剩余待检数**（真机收尾行 `to-check=0/T`）：
+        // i==0 = 全部检完 → fileDone=T；否则取 xfer 计数（已完成传输数）。
         // 尾巴缺失容忍（fileDone/fileTotal 保持前值）。
         var xfer: Int?
-        if let xr = t.range(of: "xfer#") {
-            xfer = Int(t[xr.upperBound...].prefix(while: { $0.isNumber }))
+        for marker in ["xfer#", "xfr#"] {
+            if let xr = t.range(of: marker) {
+                xfer = Int(t[xr.upperBound...].prefix(while: { $0.isNumber }))
+                break
+            }
         }
-        if let tc = t.range(of: "to-check="),
-           let slash = t[tc.upperBound...].firstIndex(of: "/") {
+        for marker in ["to-check=", "to-chk="] {
+            guard let tc = t.range(of: marker),
+                  let slash = t[tc.upperBound...].firstIndex(of: "/") else { continue }
             let iStr = String(t[tc.upperBound..<slash]).trimmingCharacters(in: .whitespaces)
             let rest = t[t.index(after: slash)...]
             let tStr = String(rest.prefix(while: { $0.isNumber }))
             if let i = Int(iStr), let tot = Int(tStr), tot > 0 {
                 fileTotal = tot
-                fileDone = i == tot ? tot : (xfer ?? fileDone)
+                fileDone = i == 0 ? tot : (xfer ?? fileDone)
             }
+            break
+        }
+        // 新文件边界：文件名行且**名字变了** = 新文件（同名重列 = 同文件更大 done，
+        // 折叠基线须保留）；无名字行时 done 回退 = 换文件兜底。
+        if let pn = pendingName {
+            if pn != currentName { currentCompleted = 0 }
+            currentName = pn
+        } else if done < currentCompleted {
+            currentCompleted = 0
         }
         let evTotal = max(total ?? done, done)     // 不一致时信 total；无 total 信 done
         if total != nil { totalKnown = true }
-        fileBytesTotal = evTotal                   // 持久态：当前文件总量（消费方 = runDirectRsync 进度桥）
+        fileBytesTotal = evTotal                   // 持久态：当前文件总量（消费方 = 进度桥）
         let completing = (percent == 100) || (total.map { done >= $0 } ?? false)
-        let event = Event(fileName: pendingName, fileBytesDone: cumulative + done,
-                          fileBytesTotal: evTotal, fileDone: fileDone, fileTotal: fileTotal)
-        if completing { cumulative += done }       // 累计推进发生在发事件**之后**
-        pendingName = nil
+        // 幂等折叠（见头注，替换语义，基线 = 当前文件）：同 done 重复 100% 行增量 0；
+        // 同名更大 done 只并差量（1000→1500 并 500）；换文件后基线归零全量并入。
+        if completing {
+            let delta = max(0, done - currentCompleted)
+            cumulative += delta
+            currentCompleted = done
+        }
         fileBytesDone = cumulative + (completing ? 0 : done)
+        let event = Event(fileName: pendingName, fileBytesDone: fileBytesDone,
+                          fileBytesTotal: evTotal, fileDone: fileDone, fileTotal: fileTotal)
+        consumedFileName = pendingName   // 拉取式上抛面板（见属性注）
+        pendingName = nil
         onEvent?(event)
     }
 }

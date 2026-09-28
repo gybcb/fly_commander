@@ -22,6 +22,24 @@ enum TransferSpeed {
     }
 }
 
+/// 直传接缝 per-run 令牌（终审 B4）：run() 主线程段 next() 取号，接缝闭包（makeDirectSeam
+/// 工厂造）捕获当值；闭包首行比对 current()，不等 = 更新的 run 已重赋接缝、本闭包是
+/// 旧 run 残骸 → `.unavailable("stale-seam")`（本条目落 pump，数据恒对）。
+/// 写=主线程，读=后台线程 → NSLock 护栏（同 SFTPConnection.lastCopyRoute 类盒纪律）。
+final class DirectSeamTokenBox {
+    private let lock = NSLock()
+    private var value = 0
+    func next() -> Int { lock.lock(); value += 1; let v = value; lock.unlock(); return v }
+    func current() -> Int { lock.lock(); defer { lock.unlock() }; return value }
+}
+
+/// 直传当前文件名盒（B5）：接缝闭包写（rsync --progress 文件名行经 onFile 抵达）、
+/// byteProgress 闭包读后经 directName 转进帧的 name 字段。与 ThrottleState 同纪律：
+/// 两个闭包都在同一后台传输块内顺序访问，无并发。
+final class DirectNameBox {
+    var name: String?
+}
+
 /// 跨源（含远端）传输执行器（app 层，T6）。
 ///
 /// 主线程调用 run() 后，真正的传输（engine.performCopy/performMove）在后台执行，
@@ -68,6 +86,8 @@ final class TransferEngine {
     }
 
     let engine: OperationEngine
+    /// 直传接缝 per-run 令牌（B4，语义见 DirectSeamTokenBox 注）。internal：锁直读计数。
+    let seamToken = DirectSeamTokenBox()
 
     init(engine: OperationEngine = OperationEngine()) {
         self.engine = engine
@@ -121,15 +141,22 @@ final class TransferEngine {
         }
     }
 
-    /// 字节帧构造（文件级/路由字段由调用方语义决定：字节帧无名字、无 route）。
+    /// 字节帧构造（文件级/路由字段由调用方语义决定：字节帧默认无名、无 route）。
+    /// name 默认 ""（pump 路字节帧无名——面板沿用上一帧）；直传路 B5 传入
+    /// `directName` 的产物（rsync --progress 文件名行，spec 决策 #2）。
     /// **total==0 → bytesTotal=nil**：直传路目录条目无预扫描、总量未知（接缝合同
     /// 「第二参 0=总量未知」），面板 `total > 0` 判定消费的是 nil——0 会穿进
     /// 「有总量」分支渲染 0/0。变异证伪见 TransferPanelDirectRouteTests。
-    static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int)
+    static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int, name: String = "")
         -> TransferProgressInfo {
-        TransferProgressInfo(name: "", fileDone: fileDone, fileTotal: fileTotal,
+        TransferProgressInfo(name: name, fileDone: fileDone, fileTotal: fileTotal,
                              bytesDone: done, bytesTotal: total > 0 ? total : nil, route: nil)
     }
+
+    /// 直传名字框 → 帧名（纯函数，spec 决策 #2「当前文件名取 --progress 文件名行」）。
+    /// nil（本周期无新文件名行）→ ""（面板沿用上一帧）。变异证伪见
+    /// DirectRsyncTests.testParserFileNameReachesFrameName。
+    static func directName(from box: DirectNameBox) -> String { box.name ?? "" }
 
     /// 直传接缝的启用判定（纯函数，可单测）：两端皆 SFTP + 不同服务器 + 源端 keyFile
     /// 认证（密码认证先天无 A→B 信任，A 上 ssh 必然要口令）才可能；否则不挂接缝
@@ -156,6 +183,26 @@ final class TransferEngine {
          item.isDirectory ? 0 : item.size)
     }
 
+    /// 接缝闭包装配（B4/B5 可单测）：run() 传入真实 rsync 执行器；单测注入假执行器
+    /// 直测令牌路（stale 分支在触连接**之前**返回，假执行器可证「被顶掉的闭包零触达」）。
+    /// rsync 参数序 = (条目, peer, totalHint, 字节帧, 文件名, 取消旗)。
+    static func makeDirectSeam(
+        ssrc: SFTPSource, sdst: SFTPSource, cancel: CancelFlag, nameBox: DirectNameBox,
+        tokenBox: DirectSeamTokenBox, myToken: Int,
+        rsync: @escaping (DirectRsync.ItemTarget, DirectRsync.Peer, Int64?,
+                          ((Int64, Int64) -> Void)?, @escaping (String) -> Void, CancelFlag) throws -> DirectOutcome
+    ) -> (FileItem, TCPath, ((Int64, Int64) -> Void)?) throws -> DirectOutcome {
+        { item, destDir, bp in
+            guard tokenBox.current() == myToken else { return .unavailable("stale-seam") }
+            let a = Self.directSeamArgs(ssrc: ssrc, sdst: sdst, item: item, destDir: destDir)
+            let out = try rsync(a.item, a.peer, a.totalHint, bp, { n in nameBox.name = n }, cancel)
+            // 路由镜像（两条都抄）：rsync 写在 src 连接，面板读 dst——黄点场景
+            // （needsAuth/rsyncMissing 回退）全靠这一行。抛错路不经过这里（面板走错误态）。
+            sdst.mirrorRoute(ssrc.lastCopyRoute ?? .relayed(.channelGone))
+            return out
+        }
+    }
+
     /// 兼容入口：无取消/无逐文件进度（既有工具栏语义原样保留）。
     func run(_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) {
         run(isCopy, srcPane, dstPane, cancel: CancelFlag(), onProgress: nil)
@@ -178,6 +225,9 @@ final class TransferEngine {
              onProgress: ((TransferProgressInfo) -> Void)?) {
         let targets = srcPane.operationTargets
         guard !targets.isEmpty else { return }
+        // per-run 令牌取号（B4）：本 run 之后任何更晚 run 都会把全局值顶上去，
+        // 旧 run 的接缝闭包一查即弃。
+        let myToken = seamToken.next()
         let label: L10nKey = isCopy ? .opCopying : .opMoving
         let args = ["\(targets.count)"]
         let dstDir = dstPane.path
@@ -186,6 +236,7 @@ final class TransferEngine {
         let state = self.state
         let onMain = self.onMain
         let throttle = ThrottleState()
+        let nameBox = DirectNameBox()   // 直传当前文件名（B5），同 ThrottleState 盒纪律
         if let clock = progressClock { throttle.now = clock }
         let transferSourceProvider = self.transferSourceProvider
 
@@ -227,27 +278,27 @@ final class TransferEngine {
                 guard onProgress != nil, throttle.shouldReportByte() else { return }
                 let info = TransferEngine.byteFrame(done: done, total: total,
                                                     fileDone: throttle.fileDone,
-                                                    fileTotal: targets.count)
+                                                    fileTotal: targets.count,
+                                                    name: TransferEngine.directName(from: nameBox))
                 onMain { onProgress?(info) }
             }
 
             // 跨服务器直传接缝（Task 4）：启用判定与参数装配在纯静态里
             // （directSeamSources/directSeamArgs，peer 方向性由单测直锁）。
             // **每次 run 无条件重赋**（gate 不过显式置 nil）：engine 是共享实例，
-            // 传输非模态（F5 中途再按 = 两 run 叠飞）——run2 不过 gate 时若不清，
-            // 引擎仍持 run1 的闭包 → 拿 run2 的条目往 run1 的两台服务器间推
-            // （同名路径 = 错服务器静默成功）。反向代价（有意的取舍）：run1 飞着
-            // 时 run2 挂上 gate → run1 丢接缝落 pump——数据恒对，只是少一次加速。
+            // 传输非模态（F5 中途再按 = 两 run 叠飞）。真正的事故形态（终审 B4）是
+            // **两个 run 都过 gate**：run2 重赋接缝后，run1 后台块里引擎调的是
+            // **当前值** = run2 的闭包 → run1 的条目被推往 run2 的两台服务器
+            // （同名路径 = 错服务器静默成功；move 路还会删错源）。per-run 令牌封死：
+            // 闭包首行比对全局 token，被顶掉即 `.unavailable("stale-seam")` →
+            // 本条目落 pump（数据恒对，仅该条目失加速）。
             if let (ssrc, sdst) = Self.directSeamSources(src: srcSource, dst: dstSource) {
-                engine.directCrossTransfer = { item, destDir, bp in
-                    let a = Self.directSeamArgs(ssrc: ssrc, sdst: sdst, item: item, destDir: destDir)
-                    let out = try ssrc.runDirectRsync(item: a.item, peer: a.peer,
-                                                      totalHint: a.totalHint,
-                                                      byteProgress: bp, cancel: cancel)
-                    // 路由镜像（两条都抄）：rsync 写在 src 连接，面板读 dst——黄点场景
-                    // （needsAuth/rsyncMissing 回退）全靠这一行。抛错路不经过这里（面板走错误态）。
-                    sdst.mirrorRoute(ssrc.lastCopyRoute ?? .relayed(.channelGone))
-                    return out
+                engine.directCrossTransfer = Self.makeDirectSeam(
+                    ssrc: ssrc, sdst: sdst, cancel: cancel, nameBox: nameBox,
+                    tokenBox: seamToken, myToken: myToken)
+                { it, p, h, b, f, c in
+                    try ssrc.runDirectRsync(item: it, peer: p, totalHint: h,
+                                            byteProgress: b, onFile: f, cancel: c)
                 }
             } else {
                 engine.directCrossTransfer = nil

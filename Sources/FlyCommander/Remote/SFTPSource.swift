@@ -45,9 +45,10 @@ public final class SFTPSource: FileSource {
     func runDirectRsync(item: DirectRsync.ItemTarget, peer: DirectRsync.Peer,
                         totalHint: Int64?,
                         byteProgress: ((Int64, Int64) -> Void)?,
+                        onFile: ((String) -> Void)? = nil,
                         cancel: CancelFlag?) throws -> DirectOutcome {
         try conn().runDirectRsync(item: item, peer: peer, totalHint: totalHint,
-                                  byteProgress: byteProgress, cancel: cancel)
+                                  byteProgress: byteProgress, onFile: onFile, cancel: cancel)
     }
 
     /// 接缝回传路由：直传跑在**源**连接上、route 写进源的 lastCopyRoute，
