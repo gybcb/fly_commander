@@ -16,7 +16,8 @@ SMB/FTP 参与的混合直传、直传字节级速度。
 ## 决策记录（用户拍板）
 
 1. 通道形态 = **源机 exec rsync**（不是填目标密码、不是本机跳板）。
-2. 进度 = **rsync `--info=progress2` 流式截获** → 真实字节进度 + 速度（与 pump 同规格）。
+2. 进度 = **rsync `--progress` 流式截获 + 懒总量**（三轮修订，见下）→ 当前文件名 +
+   逐文件字节/速率；单文件条目有完整百分比，目录条目累计字节不定量。
 3. 目录 = **一条 `rsync -a` 扫整棵子树**（不逐文件往返）。
 4. 色点位置 = **传输面板**（沿用现有 routeLabel 行），不做主窗工具栏预判。
 5. 范围 = **复制 + 移动**，两者对称（move = rsync 成功后源端删除）。
@@ -24,7 +25,11 @@ SMB/FTP 参与的混合直传、直传字节级速度。
    scp 通道；保持最小实现面）。
 
 （第 2、3 条 2026-09-28 二轮修订：初版为"逐文件 scp + 不定量进度条"，用户改为
-"目录 scp -r + 截输出看文件与速度"，落地形态即本条 rsync 方案。）
+"目录 scp -r + 截输出看文件与速度"，落地形态即本条 rsync 方案。
+三轮修订同日：实测 macOS 自带 rsync = **openrsync**（协议 29），`--info=progress2`
+与 `--info=name` 均 unrecognized option，GNU rsync ≥3.1 才认——原命令在 macOS 源机
+确定性 usage 报错。`-a --progress` 实测 openrsync 与 GNU 通吃、无 tty 照常输出
+per-file 名+字节+%+速率行 → 命令改 `--progress`，整体百分比靠解析器懒总量。）
 
 ## 核心约束（为什么"直传"必须建立在服务器间信任上）
 
@@ -39,7 +44,8 @@ SSH/SFTP 协议没有"让第三方把 A 的文件转给 B"的中立通道。要�
 - `SSHConnection.execute` **只能开纯 exec session，没有 pty**
   （pty 只在 `openShellSession(pseudoTerminalRequest:)` 上）。`scp` 只在 stderr
   接 tty 时才打印进度行，无 tty 时完全静默 → "exec scp + 截输出"截不到任何东西。
-  `rsync --info=progress2` 把进度写 stderr 且**不依赖 tty** → exec 通道可直接流式截。
+  `rsync --progress` 把进度写 stderr 且**不依赖 tty**（openrsync 实测）→ exec 通道
+  可直接流式截。
 - `scp -r src dst/` 在 dst 已存在同名目录时**嵌一层**（`dst/src/…`），与既有多轮
   拍板的**合并语义**（目标目录存在则内容合并、绝不嵌套）冲突。`rsync -a` 天然是
   合并语义，冲突消失。
@@ -60,7 +66,9 @@ public enum DirectOutcome: Equatable {
 public var directCrossTransfer: (
     _ item: FileItem,
     _ destDir: TCPath,
-    _ byteProgress: ((Int64, Int64) -> Void)?   // (本条目已传, 本条目总量)
+    // (本条目已传, 本条目总量)；总量 0 = 未知 → 不定量条。
+    // 与引擎既有 stream 的 `totalBytes > 0 才报字节` 惯例同形。
+    _ byteProgress: ((Int64, Int64) -> Void)?
 ) throws -> DirectOutcome
 ```
 
@@ -86,24 +94,34 @@ A→B 密钥信任；B 需要口令 = 直传不可用（`-oBatchMode=yes` 保证
 在 A 上 exec（目录条目，源尾斜杠=拷内容不嵌套）：
 
 ```
-rsync -a --info=name,progress2 -e "ssh -oBatchMode=yes -p <port>" <src[/]> user@B:<dst/>
+rsync -a --progress -e "ssh -oBatchMode=yes -p <port>" <src[/]> user@B:<dst/>
 ```
 
 - 普通文件不带尾斜杠；目录条目 src/dst 都带尾斜杠。
 - `-a` = 递归+保留权限/时间戳/符号链接，与同源 `cp -a` 保真基准一致。
+- `--progress`（不用 `--info`）：openrsync 与 GNU rsync 通吃，无 tty 也输出。
 - 路径引用复用 `ServerSideCopy.shellQuote`；`-e` 串内 ssh 参数不含用户输入路径，
   仅 host/port（来自连接记录），注入面同 shellQuote 一并覆盖。
-- `--info=name,progress2` = 当前文件名行 + 整体进度行；解析器容忍 `\r` 与字段
-  宽度变化，**解析失败降级为"无字节进度"**（仍算直传成功，绝不因解析失败判传输失败）。
+- 进度行形态（openrsync 实测；GNU rsync 3.x 为 `name\n size total pct rate ETA` 两块，
+  解析器容忍两种）：
+
+  ```
+  a.txt
+        6 100%  390.10KB/s   00:00:00 (xfer#1, to-check=1/2)
+  ```
+
+- **懒总量**：单文件条目总量 = `item.size`（列表已有，零额外往返）→ 完整百分比；
+  目录条目**不预扫源树**，总量未知 → 已传字节随逐文件完成行累加上报
+  （`bytesTotal` 传 nil/0 = 不定量条），条目内文件计数从 `(xfer#N, to-check=T/T)`
+  尾巴取。解析失败降级为"无字节进度"（仍算直传成功，绝不因解析失败判传输失败）。
 
 失败分类（复用 `RelayReason` 形状，新增 case）：
 - `needsAuth` — 非零 + stderr 命中 `Permission denied` / `Host key verification
   failed` / `Connection refused` / `Could not resolve hostname` 等 → `.unavailable`。
 - `rsyncMissing` — exit 127（源机无 rsync）→ `.unavailable`。
 - `execRejected` / `channelGone` — 沿用现有 exec 通道级判定。
-- 其余非零（含 `--info=progress2` 不被 rsync 2.x 识别的 usage 报错）= **命令级失败**
-  → 带 stderr **抛错不回退**，与同源 `cp` 现行政策逐字一致。（注：老 rsync 缺
-  progress2 属"服务器太旧"，给用户清晰诊断优于静默降级到无进度直传。）
+- 其余非零 = **命令级失败** → 带 stderr **抛错不回退**，与同源 `cp` 现行政策逐字
+  一致。（`--progress` openrsync/GNU 通吃，不存在 flag 兼容性误报。）
 - 首次成功顺带确认 exec 通道与信任可用，无需预探测。
 
 `sourceID` → 连接参数（host/port/user）需要查询面；取现有 `SFTPSource` 已有信息，
@@ -116,12 +134,14 @@ rsync -a --info=name,progress2 -e "ssh -oBatchMode=yes -p <port>" <src[/]> user@
 - 绿点（8pt 圆点，`routeLabel` 前）= `.serverSide` 或 `.directCrossHost`。
 - 黄点 = `.relayed(reason)`；`needsAuth` 措辞 = "双机免密信任未建立，已改本机中转"，
   `rsyncMissing` = "源服务器无 rsync，已改本机中转"。
-- 直传路 **有真字节进度**：接缝的 `byteProgress` 桥到引擎既有 byteProgress 通道
-  （`bytesDone = 已完成条目累计 + rsync 已传`，`bytesTotal = 条目总量`）→ 面板
-  走既有 determinate 分支 + `TransferSpeed.estimate`。多条目批次 = 逐条目推进，
-  与跨源 pump 现有观感一致。
+- 直传路 **有真字节进度（懒总量）**：接缝 `byteProgress` 桥到引擎既有 byteProgress
+  通道，`bytesDone = 已完成条目累计 + rsync 已传`；`bytesTotal`：单文件条目 =
+  `item.size` → determinate 分支；目录条目 = 0（未预扫）→ TransferEngine 桥帧
+  `bytesTotal: total > 0 ? total : nil` → indeterminate。**两路都有速度**
+  （`TransferSpeed.estimate` 对字节增量求导 = A↔B 直传速率，不是本机链路，面板
+  不区分标注）。多条目批次 = 逐条目推进，与跨源 pump 现有观感一致。
 - **速度语义如实**：rsync 报的是 A↔B 直传速率（不是本机链路），面板不区分标注；
-  当前文件名取 `--info=name` 行（比 pump 只知道"正在写哪个目标"更准）。
+  当前文件名取 `--progress` 的文件名行（比 pump 只知道"正在写哪个目标"更准）。
 - 取消：关闭 exec session → A 上 rsync 收 SIGHUP 退，其 ssh 子进程随之退；rsync
   默认非 `--partial`，中断的传输文件自弃不留半截。不加 `pkill`。
 
@@ -133,7 +153,8 @@ rsync -a --info=name,progress2 -e "ssh -oBatchMode=yes -p <port>" <src[/]> user@
   上抛不回退；`byteProgress` 桥接累计值单调不减。
 - **App 纯函数锁**：rsync 命令行构造（BatchMode 必在、`-p` 端口、目录尾斜杠规则、
   shellQuote、user@host 拼装）；stderr → RelayReason 分类表（含 needsAuth 各串）；
-  **progress2 解析器**（真实样例串 / `\r` 抖动 / 字段缺失 → nil / 乱码 → nil 不抛）。
+  **`--progress` 解析器**（openrsync 两行式真样例 / GNU rsync 块式真样例 /
+  多文件连续行累计 / `(xfer#…)` 尾巴缺失容忍 / 乱码 → 忽略不抛）。
 - **e2e**：双 `SFTPServerFixture`（上轮双 sshd 夹具先例）。主锁 = 跨服务器目录复制
   全路走 `.handled` 且目标树逐文件字节+权限一致；副锁 = 无信任时精确回退黄路
   （`lastCopyRoute == .relayed(.needsAuth)`）。**注**：sshd 夹具环境里 A 能否 exec
