@@ -12,6 +12,10 @@ public final class OperationEngine {
     // 进度/取消：
     // - progress = 文件级 (done, total)；byteProgress = **单文件内** (done, total) 字节数，
     //   仅跨源流式路径触发（同源 copyItem / exec cp 是服务器/文件系统黑盒，给不了字节）。
+    // - 目录合并语义（copyDirectoryCross）条内逐文件的字节帧对调用方（TransferEngine
+    //   面板显示最后帧）不可见 → 目录整体完成后补一帧 (lastTotal, lastTotal) 把面板
+    //   百分比拉回真实值；不补则残留目录前最后一文件的 ~2% 直到操作结束。
+    //   合并帧的 done 用**该文件自身** total 而非累加——累加值对 per-file total 无意义。
     // - cancel 的生效边界（有意分层，勿"优化"成即时中断）：
     //   本地/同源 = 文件边界；跨源 pump = 64KB 块边界；exec cp = 等当前文件 cp 自然完成
     //   （Traversio execute 无 abort API）。取消时已写出的残缺目标文件**不删**（维持现状）。
@@ -23,6 +27,7 @@ public final class OperationEngine {
                             byteProgress: ((Int64, Int64) -> Void)? = nil,
                             cancel: CancelFlag? = nil) throws {
         var overwriteAll = false, skipAll = false
+        var lastTotals: (done: Int64, total: Int64)?
         let total = items.count
         let cross = srcSource.sourceID != dstSource.sourceID
         for (i, item) in items.enumerated() {
@@ -31,9 +36,12 @@ public final class OperationEngine {
             if cross, item.isDirectory {
                 // 目录冲突走 copyDirectoryCross 的**合并**语义——绝不进 resolveConflict
                 // （其 overwrite 分支 removeItem 会删掉整棵目标目录树，灾难级）。
+                let bytesBefore = lastTotals?.total
                 try copyDirectoryCross(item, to: dst, srcSource: srcSource, dstSource: dstSource,
                                        prompt: prompt, overwriteAll: &overwriteAll,
-                                       skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel)
+                                       skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel,
+                                       lastTotals: &lastTotals)
+                mergeDirectoryProgress(byteProgress, lastTotals: &lastTotals, bytesBefore: bytesBefore)
             } else {
                 if try resolveConflict(item, dst, dstSource: dstSource,
                                        prompt: prompt,
@@ -42,7 +50,7 @@ public final class OperationEngine {
                 }
                 if cross {
                     try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
-                               byteProgress: byteProgress, cancel: cancel)
+                               byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
                 } else {
                     try dstSource.copyItem(from: item.path, to: dst)
                 }
@@ -63,6 +71,7 @@ public final class OperationEngine {
         var overwriteAll = false, skipAll = false
         // 同源 move 失败需回滚已完成项；跨源 move 传输成功后不回滚（删源失败只记警告）。
         var rolledBack: [(from: TCPath, to: TCPath)] = []
+        var lastTotals: (done: Int64, total: Int64)?
         let sameSource = srcSource.sourceID == dstSource.sourceID
         let total = items.count
         for (i, item) in items.enumerated() {
@@ -74,9 +83,14 @@ public final class OperationEngine {
                     // 目录：合并语义递归泵（不进 resolveConflict——其 overwrite 删目标树），
                     // 整体传完后删源根一次（源 removeItem 各实现皆递归）。
                     // 返回 true=整目录被 skip → 没传任何东西，**不得删源**。
+                    let bytesBefore = lastTotals?.total
                     let skipped = try copyDirectoryCross(item, to: dst, srcSource: srcSource, dstSource: dstSource,
                                                          prompt: prompt, overwriteAll: &overwriteAll,
-                                                         skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel)
+                                                         skipAll: &skipAll, byteProgress: byteProgress, cancel: cancel,
+                                                         lastTotals: &lastTotals)
+                    // 目录整体=1 条目（计数在调用方），条内逐文件字节帧对面板不可见 →
+                    // 合并帧拉回真实百分比（合同见 performCopy 头部注释）。零写入不合并。
+                    if !skipped { mergeDirectoryProgress(byteProgress, lastTotals: &lastTotals, bytesBefore: bytesBefore) }
                     if !skipped {
                         do { try srcSource.removeItem(at: item.path) }
                         catch { onWarning?(item.name, asTCError(error)) }
@@ -94,7 +108,7 @@ public final class OperationEngine {
                         rolledBack.append((from: dst, to: item.path))
                     } else {
                         try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
-                                   byteProgress: byteProgress, cancel: cancel)
+                                   byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
                         do { try srcSource.removeItem(at: item.path) }
                         catch { onWarning?(item.name, asTCError(error)) }
                     }
@@ -163,7 +177,8 @@ public final class OperationEngine {
                                     prompt: ConflictPrompt?,
                                     overwriteAll: inout Bool, skipAll: inout Bool,
                                     byteProgress: ((Int64, Int64) -> Void)?,
-                                    cancel: CancelFlag?) throws -> Bool {
+                                    cancel: CancelFlag?,
+                                    lastTotals: inout (done: Int64, total: Int64)?) throws -> Bool {
         if cancel?.isCancelled == true { throw TCError.cancelled }
         let existing = try? dstSource.stat(dst)
         if existing != nil {
@@ -197,7 +212,7 @@ public final class OperationEngine {
         try copyDirectoryContents(from: item.path, to: dst, srcSource: srcSource,
                                   dstSource: dstSource, prompt: prompt,
                                   overwriteAll: &overwriteAll, skipAll: &skipAll,
-                                  byteProgress: byteProgress, cancel: cancel)
+                                  byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
         return false
     }
 
@@ -207,7 +222,8 @@ public final class OperationEngine {
                                        prompt: ConflictPrompt?,
                                        overwriteAll: inout Bool, skipAll: inout Bool,
                                        byteProgress: ((Int64, Int64) -> Void)?,
-                                       cancel: CancelFlag?) throws {
+                                       cancel: CancelFlag?,
+                                       lastTotals: inout (done: Int64, total: Int64)?) throws {
         let children = try srcSource.listDirectory(srcDir)
         for child in children {
             if cancel?.isCancelled == true { throw TCError.cancelled }
@@ -220,14 +236,14 @@ public final class OperationEngine {
                 try copyDirectoryContents(from: child.path, to: childDst, srcSource: srcSource,
                                           dstSource: dstSource, prompt: prompt,
                                           overwriteAll: &overwriteAll, skipAll: &skipAll,
-                                          byteProgress: byteProgress, cancel: cancel)
+                                          byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
             } else {
                 if try resolveConflict(child, childDst, dstSource: dstSource, prompt: prompt,
                                        overwriteAll: &overwriteAll, skipAll: &skipAll) {
                     continue
                 }
                 try stream(from: srcSource, to: dstSource, src: child.path, dst: childDst,
-                           byteProgress: byteProgress, cancel: cancel)
+                           byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
             }
         }
     }
@@ -252,11 +268,14 @@ public final class OperationEngine {
 
     /// 跨源流式复制（64KB 块）。字节进度在 reader 闭包内累加（协议零改动）；
     /// totalBytes==0（stat 拿不到大小）**不报字节**——宁缺毋假（否则恒 100% 或除零）。
+    /// lastTotals（可选）记录本文件最后一帧 (transferred, totalBytes)——目录合并路
+    /// 靠它在整目录完成后补合并帧（见 performCopy 头部注释）。
     /// 取消在块边界生效：抛 .cancelled 使 streamWrite 中止（其错误原样上抛，不静默截断）。
     private func stream(from srcSource: FileSource, to dstSource: FileSource,
                         src: TCPath, dst: TCPath,
                         byteProgress: ((Int64, Int64) -> Void)? = nil,
-                        cancel: CancelFlag? = nil) throws {
+                        cancel: CancelFlag? = nil,
+                        lastTotals: inout (done: Int64, total: Int64)?) throws {
         let totalBytes = Int64((try? srcSource.stat(src))?.size ?? 0)
         let reader = try srcSource.openReader(src)
         var transferred: Int64 = 0
@@ -267,6 +286,20 @@ public final class OperationEngine {
             if totalBytes > 0 { byteProgress?(transferred, totalBytes) }
             return chunk
         }
+        // 末帧记账放在流外：Swift 不许逃逸闭包捕获 inout；抛出路径不记=未完成文件不产生末帧。
+        if totalBytes > 0 { lastTotals = (transferred, totalBytes) }
+    }
+
+    /// 目录完成后的合并字节帧：把面板百分比从"目录内最后一文件的残余值"拉回 100%。
+    /// 触发条件：目录期间有过字节帧（lastTotals 非空）且停在非 100%（t.done < t.total），
+    /// 且与目录开始前记录的 bytesBefore 不同（防连续两个同 total 目录重复合并）。
+    /// 发出后置 lastTotals=(total,total)——第二个合并帧被 t.done < t.total 自然挡住。
+    private func mergeDirectoryProgress(_ byteProgress: ((Int64, Int64) -> Void)?,
+                                        lastTotals: inout (done: Int64, total: Int64)?,
+                                        bytesBefore: Int64?) {
+        guard let t = lastTotals, t.total > 0, t.done < t.total, bytesBefore != t.total else { return }
+        lastTotals = (t.total, t.total)
+        byteProgress?(t.total, t.total)
     }
 
     // MARK: - 无源参数旧签名（保留给既有测试/兼容调用；内部走本地源）

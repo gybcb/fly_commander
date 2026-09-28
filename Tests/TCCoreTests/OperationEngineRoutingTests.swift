@@ -282,6 +282,63 @@ final class OperationEngineRoutingTests: XCTestCase {
         XCTAssertEqual(writes, 1, "第一个文件泵送前未取消；取消后第二个不得开工")
     }
 
+    // MARK: - 目录合并字节帧（用户报：传输面板卡在 2%）
+
+    /// 目录条内逐文件字节帧对面板（只显示最后一帧）不可见 → 整目录完成后必须补
+    /// 一帧 (total,total) 把百分比拉回 100%。夹具：one.txt 1/5、two.txt 1/3 →
+    /// 帧序列尾 = 合并帧 "3/3"（done 用该文件自身 total，非跨文件累加）。
+    /// 变异：删 mergeDirectoryProgress 调用 → 尾帧停在 "1/3" 红。
+    func testDirectoryCompletionMergesByteProgressToFull() throws {
+        installDirTree()
+        a.statTable["/s/dir/one.txt"] = sizedItem("one.txt", in: "/s/dir", size: 5)
+        a.statTable["/s/dir/sub/two.txt"] = sizedItem("two.txt", in: "/s/dir/sub", size: 3)
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertEqual(seen, ["1/5", "1/3", "3/3"], "目录完成后必有拉满合并帧")
+    }
+
+    /// skip=零写入 → 绝不合并（没传东西却报 100% 是撒谎）。
+    /// 变异：合并帧不等 skipped → 本条红（出现 "3/3"）。
+    func testSkippedDirectoryEmitsNoMergeFrame() throws {
+        installDirTree()
+        a.statTable["/s/dir/one.txt"] = sizedItem("one.txt", in: "/s/dir", size: 5)
+        b.statTable["/d/dir"] = fakeDir("dir", in: "/d")
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   prompt: { _, _ in .skip },
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertTrue(seen.isEmpty, "skip 不得产任何字节帧：\(seen)")
+    }
+
+    /// 目录内全部 size==0（宁缺毋假零帧）→ 不无中生有合并帧。
+    /// 变异：去掉 lastTotals 非空守卫 → 出现假 "0/0" 或除零路径红。
+    func testSizeUnknownDirectoryEmitsNoFrames() throws {
+        installDirTree()   // 不设 statTable size → totalBytes==0
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeDir("dir", in: "/s")], to: TCPath("/d"),
+                                   srcSource: a, dstSource: b,
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertTrue(seen.isEmpty, "size 未知宁缺毋假：\(seen)")
+    }
+
+    /// 目录前遗留的顶层文件残帧（1/5）不得被"无字节"目录冒领成合并帧——
+    /// bytesBefore 守卫：目录期间没产生新末帧就不补。
+    /// 变异：删 bytesBefore != t.total 判定 → 目录后凭空多出 "5/5" 红。
+    func testEmptyDirectoryDoesNotMergeStalePreDirectoryFrame() throws {
+        a.statTable["/s/top.txt"] = sizedItem("top.txt", in: "/s", size: 5)
+        a.readerChunks = [Data("x".utf8)]           // 传 1 字节 → 残帧 (1,5)
+        a.listTable["/s/dir"] = [fakeDir("nothing", in: "/s/dir")]   // 目录内只有空子目录
+        a.listTable["/s/dir/nothing"] = []
+        var seen: [String] = []
+        _ = try engine.performCopy([fakeItem("top.txt", in: "/s"), fakeDir("dir", in: "/s")],
+                                   to: TCPath("/d"), srcSource: a, dstSource: b,
+                                   byteProgress: { seen.append("\($0)/\($1)") })
+        XCTAssertEqual(seen, ["1/5"], "无字节目录不得替上一文件的残帧补拉满帧")
+    }
+
     // MARK: - 冲突调用序（同源）
 
     func testConflictOverwriteAllSequence() throws {
