@@ -75,7 +75,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case helpTheme, helpHelp, helpLang
     // —— 错误模板（TCError.l10nKey 映射；en 为内部稳定串镜像，zh 逐字搬原中文）——
     case errNotFound, errPermissionDenied, errBusy, errInvalidPath, errCancelled
-    case errAlreadyExists, errAlreadyExistsBare, errDirExists, errCrossSourceDir
+    case errAlreadyExists, errAlreadyExistsBare, errDirExists
     case errNoSpace, errSFTPNotExecuted, errSMBMountFailed, errPutBackFailed, errUnknown
     case errPathOutsideShare, errPathEscaped, errMountPointHint
     case errAuthRejected, errSFTPConnectFailed

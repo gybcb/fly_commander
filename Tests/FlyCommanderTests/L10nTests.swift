@@ -244,8 +244,6 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.errAlreadyExists, args: ["a.txt"]), "Already exists: a.txt")
         XCTAssertEqual(L10n.t(.errAlreadyExistsBare, args: []), "Target already exists")
         XCTAssertEqual(L10n.t(.errDirExists, args: ["nd"]), "Directory already exists: nd")
-        XCTAssertEqual(L10n.t(.errCrossSourceDir, args: ["sub"]),
-                       "Cross-source directory transfer unsupported: sub")
         XCTAssertEqual(L10n.t(.errNoSpace, args: []), "No space left on device")
         XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP operation did not execute")
         XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB mount failed (exit 7): boom")
@@ -271,7 +269,6 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.errAlreadyExists, args: ["a.txt"]), "已存在同名：a.txt")
         XCTAssertEqual(L10n.t(.errAlreadyExistsBare, args: []), "目标已存在同名文件")
         XCTAssertEqual(L10n.t(.errDirExists, args: ["nd"]), "目录已存在：nd")
-        XCTAssertEqual(L10n.t(.errCrossSourceDir, args: ["sub"]), "跨源传输暂不支持目录：sub")
         XCTAssertEqual(L10n.t(.errNoSpace, args: []), "磁盘空间不足")
         XCTAssertEqual(L10n.t(.errSFTPNotExecuted, args: []), "SFTP 操作未执行")
         XCTAssertEqual(L10n.t(.errSMBMountFailed, args: ["7", "boom"]), "SMB 挂载失败（exit 7）：boom")

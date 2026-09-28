@@ -8,7 +8,6 @@ public enum TCError: Error, Equatable {
     case cancelled
     case alreadyExists(String?)       // "已存在同名：X" / 系统 FileExists 无主体
     case dirExists(String)            // "目录已存在：X"（mkdir 专用）
-    case crossSourceDir(String)       // "跨源传输暂不支持目录：X"
     case noSpace                      // "磁盘空间不足"
     case sftpNotExecuted              // "SFTP 操作未执行"
     case smbMountFailed(code: Int32, diag: String)   // "SMB 挂载失败（exit N）：diag"
@@ -39,7 +38,6 @@ public enum TCError: Error, Equatable {
         case .alreadyExists(let x?):    return "Already exists: \(x)"
         case .alreadyExists(nil):       return "Already exists"
         case .dirExists(let x):         return "Directory already exists: \(x)"
-        case .crossSourceDir(let x):    return "Cross-source directory transfer unsupported: \(x)"
         case .noSpace:                  return "No space left on device"
         case .sftpNotExecuted:          return "SFTP operation did not execute"
         case .smbMountFailed(let c, let d): return "SMB mount failed (exit \(c)): \(d.prefix(200))"
@@ -71,7 +69,6 @@ public enum TCError: Error, Equatable {
         case .alreadyExists(let x?): return .errAlreadyExists
         case .alreadyExists(nil):    return .errAlreadyExistsBare
         case .dirExists:         return .errDirExists
-        case .crossSourceDir:    return .errCrossSourceDir
         case .noSpace:           return .errNoSpace
         case .sftpNotExecuted:   return .errSFTPNotExecuted
         case .smbMountFailed:    return .errSMBMountFailed
@@ -102,7 +99,7 @@ public enum TCError: Error, Equatable {
             return [x]
         case .alreadyExists(nil):
             return []
-        case .dirExists(let x), .crossSourceDir(let x):
+        case .dirExists(let x):
             return [x]
         case .smbMountFailed(let c, let d), .putBackFailed(let c, let d):
             return ["\(c)", String(d.prefix(200))]

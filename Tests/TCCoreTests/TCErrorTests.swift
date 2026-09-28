@@ -29,10 +29,6 @@ final class TCErrorTests: XCTestCase {
     func testMessageForDirExists() {
         XCTAssertEqual(TCError.dirExists("nd").message, "Directory already exists: nd")
     }
-    func testMessageForCrossSourceDir() {
-        XCTAssertEqual(TCError.crossSourceDir("sub").message,
-                       "Cross-source directory transfer unsupported: sub")
-    }
     func testMessageForNoSpace() {
         XCTAssertEqual(TCError.noSpace.message, "No space left on device")
     }
@@ -106,7 +102,6 @@ final class TCErrorTests: XCTestCase {
         XCTAssertEqual(TCError.alreadyExists("a.txt").l10nKey, .errAlreadyExists)
         XCTAssertEqual(TCError.alreadyExists(nil).l10nKey, .errAlreadyExistsBare)
         XCTAssertEqual(TCError.dirExists("nd").l10nKey, .errDirExists)
-        XCTAssertEqual(TCError.crossSourceDir("sub").l10nKey, .errCrossSourceDir)
         XCTAssertEqual(TCError.noSpace.l10nKey, .errNoSpace)
         XCTAssertEqual(TCError.sftpNotExecuted.l10nKey, .errSFTPNotExecuted)
         XCTAssertEqual(TCError.smbMountFailed(code: 7, diag: "boom").l10nKey, .errSMBMountFailed)
@@ -126,7 +121,6 @@ final class TCErrorTests: XCTestCase {
         XCTAssertEqual(TCError.alreadyExists("a.txt").l10nArgs, ["a.txt"])
         XCTAssertEqual(TCError.alreadyExists(nil).l10nArgs, [])
         XCTAssertEqual(TCError.dirExists("nd").l10nArgs, ["nd"])
-        XCTAssertEqual(TCError.crossSourceDir("sub").l10nArgs, ["sub"])
         XCTAssertEqual(TCError.noSpace.l10nArgs, [])
         XCTAssertEqual(TCError.sftpNotExecuted.l10nArgs, [])
         XCTAssertEqual(TCError.smbMountFailed(code: 7, diag: "boom").l10nArgs, ["7", "boom"])
