@@ -181,6 +181,18 @@ final class DirectCrossTransferRoutingTests: XCTestCase {
         XCTAssertFalse(asked, "目标同名目录在位 → 合并语义归 pump，不问接缝")
     }
 
+    /// 目录条目 + 目标同名**文件**挡路 → 同样不问接缝（任何同名在位皆冲突，覆盖/跳过
+    /// 判定归 copyDirectoryCross→resolveConflict 既有提示语义）；prompt=skip → 不删目标文件。
+    func testExistingDestFileSkipsSeam() throws {
+        src.addDir("sub"); dst.add(file: "sub", size: 5)
+        var asked = false
+        engine.directCrossTransfer = { _, _, _ in asked = true; return .handled(bytesTransferred: 1) }
+        try engine.performCopy(src.items("sub"), to: TCPath("/"), srcSource: src, dstSource: dst,
+                               prompt: { _, _ in .skip })
+        XCTAssertFalse(asked, "目标同名文件在位 → 冲突语义归 pump，不问接缝")
+        XCTAssertEqual(dst.removed.count, 0, "skip 决策 → 挡路文件不得被删")
+    }
+
     /// 冲突 skip → 接缝不被调用、pump 也不跑、条目计入完成。
     func testConflictSkipSkipsSeam() throws {
         src.add(file: "a.txt", size: 10); dst.add(file: "a.txt", size: 1)
@@ -228,6 +240,34 @@ final class DirectCrossTransferRoutingTests: XCTestCase {
                        "第二条目帧须累计第一条目字节（base=10：5→15、20→30）")
     }
 
+    /// 接缝报了半截帧 (5,10) 后返回 .handled(10)（rsync 停在末文件中间态极易发生）→
+    /// 引擎补一帧拉满（与 mergeDirectoryProgress 同形：最后一帧 done != total 才补）。
+    func testHandledPartialLastFrameGetsTopUp() throws {
+        src.add(file: "a.txt", size: 10)
+        engine.directCrossTransfer = { _, _, bp in
+            bp?(5, 10)
+            return .handled(bytesTransferred: 10)
+        }
+        var bytes: [(Int64, Int64)] = []
+        try engine.performCopy(src.items("a.txt"), to: TCPath("/"), srcSource: src, dstSource: dst,
+                               byteProgress: { bytes.append(($0, $1)) })
+        XCTAssertEqual(bytes.map { "\($0.0)/\($0.1)" }, ["5/10", "10/10"],
+                       "半截末帧必须补拉满，否则面板残留 50%")
+    }
+
+    /// 接缝最后一帧已满 → 不重复补（防重帧）。
+    func testHandledFullLastFrameNoExtraTopUp() throws {
+        src.add(file: "a.txt", size: 10)
+        engine.directCrossTransfer = { _, _, bp in
+            bp?(5, 10); bp?(10, 10)
+            return .handled(bytesTransferred: 10)
+        }
+        var bytes: [(Int64, Int64)] = []
+        try engine.performCopy(src.items("a.txt"), to: TCPath("/"), srcSource: src, dstSource: dst,
+                               byteProgress: { bytes.append(($0, $1)) })
+        XCTAssertEqual(bytes.map { "\($0.0)/\($0.1)" }, ["5/10", "10/10"], "已满不得再补帧")
+    }
+
     // MARK: performMove
 
     /// 移动 + handled → 传完后删源根一次，不 pump。
@@ -265,6 +305,17 @@ final class DirectCrossTransferRoutingTests: XCTestCase {
         engine.directCrossTransfer = { _, _, _ in XCTFail("合并路不问接缝"); return .unavailable("x") }
         try engine.performMove(src.items("sub"), to: TCPath("/"), srcSource: src, dstSource: dst,
                                prompt: { _, _ in .skip })
+        XCTAssertEqual(src.removed.count, 0, "skip 决策 → 不得删源")
+    }
+
+    /// 移动 + 目标同名**文件**挡路 → 不问接缝（与 copy 侧对称：任何同名在位皆冲突，
+    /// 判定归 copyDirectoryCross→resolveConflict）；prompt=skip → 不删目标文件、不删源。
+    func testMoveExistingDestFileNoSeamKeepsBoth() throws {
+        src.addDir("sub"); dst.add(file: "sub", size: 5)
+        engine.directCrossTransfer = { _, _, _ in XCTFail("冲突路不问接缝"); return .unavailable("x") }
+        try engine.performMove(src.items("sub"), to: TCPath("/"), srcSource: src, dstSource: dst,
+                               prompt: { _, _ in .skip })
+        XCTAssertEqual(dst.removed.count, 0, "skip 决策 → 挡路文件不得被删")
         XCTAssertEqual(src.removed.count, 0, "skip 决策 → 不得删源")
     }
 }

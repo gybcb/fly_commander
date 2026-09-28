@@ -47,11 +47,12 @@ public final class OperationEngine {
             if cancel?.isCancelled == true { throw TCError.cancelled }
             let dst = destDir.joining(item.name)
             if cross, item.isDirectory {
-                // 守卫：目标同名目录在位 → 合并语义归 pump，接缝零调用（rsync 表达不了合并）。
+                // 守卫：目标**任何同名在位**（目录=合并语义、文件=覆盖冲突）→ 接缝零调用，
+                // 全部交 copyDirectoryCross 既有语义判定（rsync 表达不了合并/冲突提示）。
                 // 只 stat 不弹提示：守卫若弹提示，copyDirectoryCross 会弹第二次（双弹窗回归）。
-                let destIsDir = directCrossTransfer != nil && !directFailed
-                    && (try? dstSource.stat(dst))?.isDirectory == true
-                if !destIsDir, directCrossTransfer != nil, !directFailed {
+                let destExists = directCrossTransfer != nil && !directFailed
+                    && (try? dstSource.stat(dst)) != nil
+                if !destExists, directCrossTransfer != nil, !directFailed {
                     switch try askDirect(item, dst, byteProgress: byteProgress, directBase: &directBase) {
                     case .handled(let bytes):
                         directBase += max(0, bytes)
@@ -117,11 +118,12 @@ public final class OperationEngine {
                 // 取消检查放在 do **内**：抛 .cancelled 走下方 catch，回滚已完成的同源 move。
                 if cancel?.isCancelled == true { throw TCError.cancelled }
                 if !sameSource, item.isDirectory {
-                    // 守卫：目标同名目录在位 → 合并语义归 pump，接缝零调用（只 stat 不弹，
-                    // 弹提示会与 copyDirectoryCross 的提示叠成双弹窗）。
-                    let destIsDir = directCrossTransfer != nil && !directFailed
-                        && (try? dstSource.stat(dst))?.isDirectory == true
-                    if !destIsDir, directCrossTransfer != nil, !directFailed {
+                    // 守卫：目标**任何同名在位**（目录=合并语义、文件=覆盖冲突）→ 接缝零调用，
+                    // 全部交 copyDirectoryCross 既有语义判定（只 stat 不弹，弹提示会与
+                    // copyDirectoryCross 的提示叠成双弹窗）。
+                    let destExists = directCrossTransfer != nil && !directFailed
+                        && (try? dstSource.stat(dst)) != nil
+                    if !destExists, directCrossTransfer != nil, !directFailed {
                         switch try askDirect(item, dst, byteProgress: byteProgress, directBase: &directBase) {
                         case .handled(let bytes):
                             // 整树已由接缝完成 → 删源根一次（递归删是各源 removeItem 的合同）。
@@ -334,29 +336,32 @@ public final class OperationEngine {
     /// 问接缝，并把字节进度包成累计帧（done = 已完成条目字节基线 + 本条目已传）。
     /// directBase 传值快照：Swift 闭包捕获 var 是引用语义，不快照则后续条目的
     /// 迟到回调会读到已推进的基线。total=0（总量未知）不累加——不定量帧原样透传。
-    /// `.handled` 且接缝一帧未报（如整目录 rsync 只给结果）→ 引擎补一帧拉满，
-    /// 否则面板百分比残留在上一文件的值（与目录合并帧同一合同，见文件头注释）。
+    /// `.handled` 且最后一帧未满（含一帧未报）→ 引擎补一帧拉满，否则面板百分比残留
+    /// 在中间态（与 mergeDirectoryProgress 同合同、同触发形：done != total 才补）。
     private func askDirect(_ item: FileItem, _ dst: TCPath,
                            byteProgress: ((Int64, Int64) -> Void)?,
                            directBase: inout Int64) throws -> DirectOutcome {
         guard let seam = directCrossTransfer else { return .unavailable("no seam") }
         let base = directBase                      // 值快照
-        let sawFrame = FrameFlag()                 // 逃逸闭包不能捕获局部 var → 装箱
+        let last = LastFrame()                     // 逃逸闭包不能捕获局部 var → 装箱
         let wrapped: ((Int64, Int64) -> Void)? = byteProgress.map { bp in
             { done, total in
-                sawFrame.hit = true
+                last.raw = (done, total)           // 记接缝**原值**（累计前）判满
                 bp(total > 0 ? done + base : done, total)            // total=0 → 不定量
             }
         }
         let outcome = try seam(item, dst, wrapped)
-        if case .handled(let bytes) = outcome, bytes > 0, !sawFrame.hit {
+        // 一帧未报（raw==nil）或有帧但未满 → 补拉满帧（`(nil)?.done != (nil)?.total`
+        // 为 false，nil 须显式短路）。
+        if case .handled(let bytes) = outcome, bytes > 0,
+           last.raw == nil || last.raw!.done != last.raw!.total {
             wrapped?(bytes, bytes)
         }
         return outcome
     }
 
-    /// 字节帧是否报过的装箱（供 askDirect 的逃逸闭包使用）。
-    private final class FrameFlag { var hit = false }
+    /// 接缝最后一帧（原始未累计值）的装箱（供 askDirect 的逃逸闭包使用）。
+    private final class LastFrame { var raw: (done: Int64, total: Int64)? }
 
     /// 跨源流式复制（64KB 块）。字节进度在 reader 闭包内累加（协议零改动）；
     /// totalBytes==0（stat 拿不到大小）**不报字节**——宁缺毋假（否则恒 100% 或除零）。
