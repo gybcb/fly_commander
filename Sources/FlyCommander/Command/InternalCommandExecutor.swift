@@ -218,9 +218,8 @@ final class InternalCommandExecutor {
     private func doView() -> String? {
         guard let item = workspace.activePane.focusedItem else { return L10n.t(.noFocusedItem) }
         if item.isDirectory { return L10n.t(.dirNotPreviewable) }
-        if workspace.activePane.source.isRemote {
-            return L10n.t(.remoteNoPreview)
-        }
+        // 远端不再硬拦（预览窗内部自判）：text 分类经源流读渲染，其余分类落降级页
+        // （含「用默认应用打开」出口）。
         workspace.onCommandView?(item)
         return nil
     }

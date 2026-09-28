@@ -725,7 +725,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     ]
 
     private func showPreview(_ item: FileItem) {
-        PreviewWindowController.show(item: item)
+        // source=活动窗格源：四个入口（F3/右键/菜单/命令 view）的 item 恒出自活动窗格
+        // （焦点注入前置），远端文本预览经它流读头部字节。
+        PreviewWindowController.show(item: item, source: workspace.activePane.source)
     }
 
     /// 回车/双击/右键"打开"：本地直接交默认程序；远端先下载到本地缓存（后台，

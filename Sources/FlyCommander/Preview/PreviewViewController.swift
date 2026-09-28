@@ -88,7 +88,7 @@ final class PreviewViewController: NSViewController {
     var currentPlayerForTest: AVPlayer? { currentPlayer }
     #endif
 
-    func show(item: FileItem) {
+    func show(item: FileItem, source: FileSource? = nil) {
         localizedBindings.removeAll()   // 旧内容即将丢弃，绑定随之作废
         registerClosePauseIfNeeded()
         showToken += 1
@@ -99,12 +99,32 @@ final class PreviewViewController: NSViewController {
         // 后播放头仍推进，直到曲目播完）。pause 收口在 show 开头 + willClose 通知，
         // 覆盖「预览下一个文件」与「关窗」两条路。
         currentPlayer?.pause()
-        // 远端文件（sftp://… / smb://…）不进任何渲染路：AVPlayer/PDFKit/ASText 都不吃
-        // scheme URL（评审实证 remote mp4 只剩播放器空壳，丢了旧版降级页的提示+出口）。
-        // 与命令行 view 命令的 remoteNoPreview 合同同向；降级页给出路径 + 复制路径出口。
-        // token 已自增 → 在途的本地异步加载照样作废。
+        // 远端文件（sftp://… / ftp://…）：只有 text 通道能渲染——它不吃 URL，只要头部
+        // 字节，经 source.openReader 流读复用本地同一套护栏（嗅探/截断横幅/长行）。
+        // pdf/image/media/richText 渲染器只吃 file:// URL（评审实证 remote mp4 只剩
+        // 播放器空壳）→ 维持降级页（路径+「用默认应用打开」出口，后者已实现下载到缓存再开）。
+        // token 已自增 → 在途的本地/远端异步加载照样作废。
         if item.path.isRemote {
-            swapContent(makeFallbackView(item: item))
+            let ext = url.pathExtension
+            if PreviewKindClassifier.classify(filenameExtension: ext) == .text, let source {
+                let path = item.path
+                let size = item.size
+                let forceText = Self.forceTextExtensions.contains(ext.lowercased())
+                // 读走**浏览源**，不开独立传输连接：≤512KB 短读在 SFTP 锁内毫秒~百毫秒、
+                // 后台执行不冻结主线程；独立连接每次重付 SSH 握手（openWithDefault 用
+                // 独立连接是另一量级——整文件下载可达分钟级）。
+                showAsync(token: token,
+                          load: { Self.readRemoteHead(source: source, path: path) },
+                          fallback: { self.makeFallbackView(item: item) },
+                          on: { (head: Data?) in
+                    guard let head else { return nil }
+                    guard let pt = Self.previewText(head: head, totalBytes: size,
+                                                    forceText: forceText) else { return nil }
+                    return self.makeTextView(url: url, item: item, text: pt)
+                })
+            } else {
+                swapContent(makeFallbackView(item: item))
+            }
             return
         }
         // 异步路（pdf/富文本）自带占位换视图，不进同步 switch。
@@ -216,14 +236,40 @@ final class PreviewViewController: NSViewController {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
             let head = handle.readData(ofLength: limit)
-            let forceText = Self.forceTextExtensions.contains(url.pathExtension.lowercased())
-            if !forceText, !Self.isProbablyText(head) { return nil }
-            let raw = String(decoding: head, as: UTF8.self)
-            let (text, longLineTruncated) = truncateLongLines(raw)
-            return PreviewText(text: text,
-                               totalBytes: total,
-                               truncated: total > Int64(head.count),
-                               longLineTruncated: longLineTruncated)
+            let forceText = forceTextExtensions.contains(url.pathExtension.lowercased())
+            return previewText(head: head, totalBytes: total, forceText: forceText)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 头部字节 → 预览文本（本地/远端共用的纯判定层，无 I/O）。
+    /// - 非 forceText 且控制字符密度超阈值 → nil（二进制）
+    /// - 空文件（head 空 + total 0）→ 空文本（正常显示空白页，非降级）
+    static func previewText(head: Data, totalBytes: Int64, forceText: Bool) -> PreviewText? {
+        if !forceText, !isProbablyText(head) { return nil }
+        let raw = String(decoding: head, as: UTF8.self)
+        let (text, longLineTruncated) = truncateLongLines(raw)
+        return PreviewText(text: text,
+                           totalBytes: totalBytes,
+                           truncated: totalBytes > Int64(head.count),
+                           longLineTruncated: longLineTruncated)
+    }
+
+    /// 远端文本预览的头部字节读取（后台线程调用）：openReader 泵到 textPreviewLimit
+    /// 即停（nil=EOF；空 Data ≠ EOF，须继续）。失败上抛 → showAsync load 返回 nil → 降级页。
+    /// ReadHandle 非 Sendable（协议限制）——SFTPConnection.performSync 全程持锁串行、
+    /// FTPSource 连接层同理，后台线程独占使用安全；Sendable 违例仅警告非错误。
+    private static func readRemoteHead(source: FileSource, path: TCPath) -> Data? {
+        do {
+            let reader = try source.openReader(path)
+            var data = Data()
+            while data.count < textPreviewLimit {
+                guard let chunk = try reader(64 * 1024) else { break }
+                if chunk.isEmpty { continue }
+                data.append(chunk)
+            }
+            return data
         } catch {
             return nil
         }

@@ -62,7 +62,7 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case remoteSftpOnly, localCannotCdSftp, readFailed, lsSummary
     case mkdirUsage, mkdirDone, mkdirFailed
     case nothingToTransfer, notFoundItems, nothingToDelete, deleteInitiated
-    case noFocusedItem, dirNotPreviewable, remoteNoPreview, dirNotEditable, remoteNoEdit
+    case noFocusedItem, dirNotPreviewable, dirNotEditable, remoteNoEdit
     case sftpUsage, sftpOpenedHost, sftpOpened
     case smbUsage, smbOpenedServer, smbOpened
     case ftpUsage, ftpOpenedHost, ftpOpened

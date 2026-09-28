@@ -383,16 +383,18 @@ final class InternalCommandExecutorTests: XCTestCase {
         XCTAssertEqual(out, "Delete started for 1 item(s) (awaiting confirm)")
     }
 
-    // MARK: - view / edit 远程降级
+    // MARK: - view / edit 远程分流
 
-    func testViewRemoteDowngrades() {
+    func testViewRemoteDelegates() {
+        // 远端 view 不再硬拦（remoteNoPreview 闸已废）：一律交预览窗，
+        // 窗内部自判（text 流读渲染 / 其余降级页）。
         let local = StubSource(id: "local", remote: false)
         let remote = StubSource(id: "sftp://h:2222", remote: true)
         let h = Harness(local: local, remote: remote, activeRemote: true)
         h.seedRemote(["a.txt"])
         let out = h.executor.execute(line: "view")
-        XCTAssertEqual(out, "Remote preview unsupported, download first")
-        XCTAssertNil(h.viewItem)
+        XCTAssertNil(out)
+        XCTAssertNotNil(h.viewItem, "远端 view 必须委派预览窗（渲染/降级由窗侧判定）")
     }
 
     func testViewLocalDelegates() {

@@ -53,8 +53,8 @@ final class PreviewWindowController: NSWindowController {
     }
     #endif
 
-    static func show(item: FileItem) {
-        shared.present(item: item)
+    static func show(item: FileItem, source: FileSource? = nil) {
+        shared.present(item: item, source: source)
     }
 
     /// 主窗 Esc 连带关预览（用户拍板：预览开着 → Esc 先关预览；没开 → 维持原 clearMarks 语义）。
@@ -101,10 +101,10 @@ final class PreviewWindowController: NSWindowController {
         if let vc = window?.contentViewController as? PreviewViewController { vc.refreshLocalizedText() }
     }
 
-    private func present(item: FileItem) {
+    private func present(item: FileItem, source: FileSource?) {
         lastFileName = item.name
         window?.title = L10n.t(.previewWindowTitle, item.name)
-        (window?.contentViewController as? PreviewViewController)?.show(item: item)
+        (window?.contentViewController as? PreviewViewController)?.show(item: item, source: source)
         if !hasBeenShown {
             hasBeenShown = true
             window?.center()

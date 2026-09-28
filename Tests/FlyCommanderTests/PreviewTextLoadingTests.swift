@@ -129,8 +129,7 @@ final class PreviewTextLoadingTests: XCTestCase {
     }
 
     /// 非白名单扩展名的同形状数据仍判二进制（白名单只放行 .torrent）。
-    func testNonTorrentDenseFileStillBinary() throws {
-        let url = file("dense.bin")
+    func testNonTorrentDenseFileStillBinary() throws {        let url = file("dense.bin")
         var data = Data("d8:announce40:https://tracker.example/ann".utf8)
         data.append(Data(repeating: 7, count: 4096))   // 大段控制字符 → 密度 >> 2%
         try data.write(to: url)
@@ -185,5 +184,45 @@ final class PreviewTextLoadingTests: XCTestCase {
         let (text, truncated) = PreviewViewController.truncateLongLines("")
         XCTAssertEqual(text, "")
         XCTAssertEqual(truncated, false)
+    }
+
+    // MARK: - previewText 纯函数（本地/远端共用判定层）
+
+    func testPreviewTextPlainText() {
+        let head = Data("hello 世界\n".utf8)
+        let pt = PreviewViewController.previewText(head: head, totalBytes: Int64(head.count),
+                                                  forceText: false)
+        XCTAssertEqual(pt?.text, "hello 世界\n")
+        XCTAssertEqual(pt?.truncated, false)
+        XCTAssertEqual(pt?.longLineTruncated, false)
+    }
+
+    func testPreviewTextBinaryIsNilUnlessForced() {
+        let dense = Data(repeating: 0x01, count: 1024)
+        XCTAssertNil(PreviewViewController.previewText(head: dense, totalBytes: 1024, forceText: false))
+        let forced = PreviewViewController.previewText(head: dense, totalBytes: 1024, forceText: true)
+        XCTAssertNotNil(forced, "forceText 跳过嗅探（.torrent 语义）")
+    }
+
+    func testPreviewTextTruncatedFlag() {
+        // head 只有 10 字节、声称总数 100 → truncated=true（远端头部读语义）
+        let pt = PreviewViewController.previewText(head: Data("0123456789".utf8),
+                                                  totalBytes: 100, forceText: false)
+        XCTAssertEqual(pt?.truncated, true)
+        XCTAssertEqual(pt?.totalBytes, 100)
+    }
+
+    func testPreviewTextEmptyFileIsText() {
+        let pt = PreviewViewController.previewText(head: Data(), totalBytes: 0, forceText: false)
+        XCTAssertEqual(pt?.text, "")
+        XCTAssertEqual(pt?.truncated, false)
+    }
+
+    func testPreviewTextLongLineTruncated() {
+        let line = String(repeating: "c", count: PreviewViewController.textLineLimit + 10)
+        let pt = PreviewViewController.previewText(head: Data(line.utf8),
+                                                  totalBytes: Int64(line.utf8.count),
+                                                  forceText: false)
+        XCTAssertEqual(pt?.longLineTruncated, true)
     }
 }
