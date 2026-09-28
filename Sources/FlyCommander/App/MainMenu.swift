@@ -53,6 +53,12 @@ enum MainMenu {
         // ⌃R 手动刷新：键位避开 ⌘R（重命名，文件菜单）；走菜单 keyEquivalent 路
         // （焦点在窗内任何控件、含 field editor 都生效，比 KeyDispatcher 裸键路稳）。
         add(viewMenu, L10n.t(.refresh), #selector(MainViewController.menuRefresh(_:)), "r", target, .control)
+        // 拷贝三件套 ⌃1/⌃2/⌃3：走菜单 keyEquivalent 路（⌃R 先例——焦点在窗内任何
+        // 控件含 field editor 都生效，比 KeyDispatcher 裸键路稳）。曾绑 ⌃F1：物理 F1
+        // 默认是媒体键（亮度），事件不进 App，真机不可用；数字键无此问题。
+        add(viewMenu, L10n.t(.copyPath), #selector(MainViewController.menuCopyPath(_:)), "1", target, .control)
+        add(viewMenu, L10n.t(.copyDirPath), #selector(MainViewController.menuCopyDirPath(_:)), "2", target, .control)
+        add(viewMenu, L10n.t(.copyFileName), #selector(MainViewController.menuCopyFileName(_:)), "3", target, .control)
         add(viewMenu, L10n.t(.preview), #selector(MainViewController.menuPreview(_:)), "", target)
         add(viewMenu, L10n.t(.editItem), #selector(MainViewController.menuEdit(_:)), "", target)
         add(viewMenu, L10n.t(.switchPane), #selector(MainViewController.menuSwitchPane(_:)), "", target)

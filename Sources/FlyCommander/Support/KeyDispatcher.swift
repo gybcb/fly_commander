@@ -54,6 +54,10 @@ enum KeyDispatcher {
         case 99: return DispatchResult(command: .viewFile, moveMode: .simple)    // F3 (kVK_F3=0x63)
         case 100: return DispatchResult(command: .delete, moveMode: .simple)     // F8 (kVK_F8=0x64)
         case 118: return DispatchResult(command: .editFile, moveMode: .simple)   // F4 (kVK_F4=0x76)
+        // 拷贝三件套（⌃1/⌃2/⌃3）走菜单 keyEquivalent 路（⌃R 先例）：数字键在
+        // KeyInput 表里没有其它语义，且菜单路焦点无关、比裸键路稳。
+        // F1 不认领：物理 F1 默认是媒体键（亮度/帮助），事件根本不进 App，
+        // 曾绑 ⌃F1 真机不可用——已改 ⌃1（见 MainMenu 视图菜单）。
         case 120: return DispatchResult(command: .openFavoritesMenu, moveMode: .simple) // F2 (kVK_F2=0x78)
         case 12: // Q
             return has(.option) ? DispatchResult(command: .toggleMark, moveMode: .simple) : nil

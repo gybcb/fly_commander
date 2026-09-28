@@ -108,6 +108,8 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case toggleHiddenFiles, hiddenFilesShown, hiddenFilesHidden
     // —— 手动刷新（View 菜单 ⌃R + 命令栏 refresh；自动刷新的手动兜底）——
     case refresh, refreshed, helpRefresh
+    // —— ⌃1/⌃2/⌃3 拷贝三件套（View 菜单项）——
+    case copyPath, copyDirPath, copyFileName
     // —— 版本检测与一键升级（UpdateChecker/Installer/Window）——
     case updateWindowTitle, checkForUpdates, updateAvailable, upgradeBtn, laterBtn, skipVersionBtn
     case upToDate, checkingUpdate, updateFailed

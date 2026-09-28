@@ -21,6 +21,9 @@ public final class CommandRouter {
     /// `(残留文件名, TCError)` 结构化原料，本地化在持 L10n 的装配处做。
     /// nil（纯内核测试环境）→ 兜底内部英文串 `"\(name) (\(err.message))"`。
     public var warnFormatter: ((String, TCError) -> String)?
+    /// 拷贝三件套（⌃1/⌃2/⌃3，app 层注入）：内核按粒度只产字符串数组（多行；路径用
+    /// displayString，远端携 scheme://host:port），NSPasteboard 在 app 层。目标为空不调用（防误清空剪贴板）。
+    public var onCopyPaths: (([String]) -> Void)?
 
     public init(workspace: Workspace, engine: OperationEngine = OperationEngine()) {
         self.workspace = workspace
@@ -71,6 +74,20 @@ public final class CommandRouter {
             // 源分派同步/异步（远端同步 load 会把网络 RTT 卡进主线程），
             // load/loadAsync 缺省 preserveFocus:true → 焦点/标记/筛选全保留。
             reloadPane(a)
+        case .copyPath, .copyDirPath, .copyFileName:
+            // 范围=operationTargets（与 F5/F8 同款：标记多项→多行；无标记→焦点单项）。
+            // 三粒度：全路径 / 所在目录（条目本身是目录时=其自身）/ 仅名称。
+            let strings = a.operationTargets.map { item -> String in
+                switch id {
+                case .copyFileName: return item.name
+                case .copyDirPath:
+                    if item.isDirectory { return item.path.displayString() }
+                    return item.path.parent?.displayString() ?? item.path.displayString()
+                default: return item.path.displayString()
+                }
+            }
+            guard !strings.isEmpty else { return }
+            onCopyPaths?(strings)
         }
     }
 

@@ -16,4 +16,9 @@ public enum CommandID: Hashable {
     case activateCommandLine
     /// 重载活动窗格当前目录（手动刷新 ⌃R / 命令栏 `refresh`；自动刷新的手动兜底）。
     case refresh
+    /// ⌃1/⌃2/⌃3（View 菜单 keyEquivalent）：活动窗格操作目标（标记多项→多行 / 无标记
+    /// →焦点单项）拷贝到剪贴板的三种粒度（内核零 AppKit，经 onCopyPaths 钩子交 app 层落
+    /// NSPasteboard；路径串=displayString，远端携 scheme://host:port）：
+    /// copyPath=条目全路径；copyDirPath=所在目录路径；copyFileName=仅名称。
+    case copyPath, copyDirPath, copyFileName
 }

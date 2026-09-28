@@ -153,6 +153,12 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         // 回车/双击落在文件上：默认程序打开（远端先下载到本地缓存，后台）。
         router.onOpen = { [weak self] item in self?.openWithDefault(item) }
         router.onSearch = { [weak self] root, source in self?.beginSearch(in: root, source: source) }
+        // 拷贝三件套（⌃1/⌃2/⌃3）：内核只给字符串数组（多行），剪贴板（NSPasteboard）在 app 层落。
+        router.onCopyPaths = { paths in
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(paths.joined(separator: "\n"), forType: .string)
+        }
         wireFavorites()   // F2（openFavoritesMenu）→ 弹活动侧收藏下拉，切换收藏经菜单内建项
         // 警告成品串（"源端残留：X（…）"）在本地化边界组装——内核只给 (文件名, TCError)。
         router.warnFormatter = { name, err in L10n.t(.warnSourceLeftover, name, tcErrorDisplay(err)) }
@@ -623,6 +629,12 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     /// ⌃R：手动重载活动窗格当前目录（外部改文件的兜底入口）。路由到 TCCore 的
     /// `.refresh` → reloadPane（本地同步 load / 远端 loadAsync），焦点/标记/筛选保留。
     @objc func menuRefresh(_ sender: Any?) { router.execute(.refresh) }
+
+    /// 拷贝三件套（⌃1/⌃2/⌃3，均为菜单 keyEquivalent 直连）。目标→字符串数组由内核
+    /// 产出（全路径/所在目录/仅名称），onCopyPaths 落剪贴板（见 loadView 接线）。
+    @objc func menuCopyPath(_ sender: Any?) { router.execute(.copyPath) }
+    @objc func menuCopyDirPath(_ sender: Any?) { router.execute(.copyDirPath) }
+    @objc func menuCopyFileName(_ sender: Any?) { router.execute(.copyFileName) }
 
     /// ⌘⇧F：展开/收起活动窗格的筛选行（与标签条右端常驻按钮同一入口）。
     @objc func menuFilter(_ sender: Any?) {
