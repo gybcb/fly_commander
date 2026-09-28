@@ -338,8 +338,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         l10nToken = L10n.observe { [weak self] in self?.rebuildForLanguage() }
 
         #if DEBUG
-        // UI 测试钩子（FLY_UI_DEMO=crossCopy 才动）：见 UICrossCopyDemo.swift。
-        DispatchQueue.main.async { [weak self] in self?.maybeStartUICrossCopyDemo() }
+        // UI 测试钩子（FLY_UI_DEMO=crossCopy/direct 才动）：见 UICrossCopyDemo.swift。
+        DispatchQueue.main.async { [weak self] in
+            self?.maybeStartUICrossCopyDemo()
+            self?.maybeStartUIDirectRouteDemo()
+        }
         #endif
     }
 

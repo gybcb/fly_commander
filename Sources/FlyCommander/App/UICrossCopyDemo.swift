@@ -82,5 +82,49 @@ extension MainViewController {
         workspace.leftTabs.activePane.selectAll()
         router.execute(.copy)
     }
+
+    /// loadView 末尾调用：命中 FLY_UI_DEMO=direct 时**直接**驱动进度面板灌假路由帧，
+    /// 不经 router/引擎——只证 Task 2 的 route 文案 + 色点 + 字节/速度文本真上屏。
+    ///
+    /// 路由由 FLY_UI_DEMO_ROUTE 选（默认 direct）：
+    /// - direct   → .directCrossHost（绿点 + "Direct server-to-server"）
+    /// - needsAuth→ .relayed(.needsAuth)（黄点 + "…no key trust…"）
+    ///
+    /// 有限帧（bytesDone 从 32MB 步进到 100MB 后停表，**绝不调 finish**）→ 面板停驻在
+    /// 终帧静态显示 route + 真字节 + 速度串（"/s"），XCUITest 从容轮询必中，无相位竞态。
+    @objc func maybeStartUIDirectRouteDemo() {
+        guard ProcessInfo.processInfo.environment["FLY_UI_DEMO"] == "direct" else { return }
+        let routeKind = ProcessInfo.processInfo.environment["FLY_UI_DEMO_ROUTE"] ?? "direct"
+        let route: CopyRoute = routeKind == "needsAuth" ? .relayed(.needsAuth) : .directCrossHost
+        let panel = TransferProgressWindowController.shared
+        panel.presentTransfer(isCopy: true, fileTotal: 10, cancel: CancelFlag())
+        // 有限步进泵（100ms/帧，4MB/步 → ~1.7s 跑满后停表；面板静态驻留）。
+        let total = Int64(100_000_000)
+        var done = Int64(32_000_000)
+        panel.apply(TransferEngine.TransferProgressInfo(
+            name: "big.bin", fileDone: 3, fileTotal: 10,
+            bytesDone: done, bytesTotal: total, route: route))
+        UIDirectRoutePump.start(route: route, panel: panel) { stepBytes in
+            // 每帧递增 done（闭包外持有），到顶返回 false 停表。
+            done += stepBytes
+            panel.apply(TransferEngine.TransferProgressInfo(
+                name: "big.bin", fileDone: 3, fileTotal: 10,
+                bytesDone: min(done, total), bytesTotal: total, route: route))
+            return done < total
+        }
+    }
+}
+
+private final class UIDirectRoutePump {
+    // Timer 由 runloop 持有；存 static 仅为显式生命周期（无动态建队列——缩减 SDK 禁）。
+    private static var timer: Timer?
+    /// 主线程调度：每 100ms 调 tick(stepBytes)，tick 返回 false 即停表。
+    static func start(route: CopyRoute, panel: TransferProgressWindowController,
+                      tick: @escaping (Int64) -> Bool) {
+        let step: Int64 = 4_000_000
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { t in
+            if !tick(step) { t.invalidate(); timer = nil }
+        }
+    }
 }
 #endif
