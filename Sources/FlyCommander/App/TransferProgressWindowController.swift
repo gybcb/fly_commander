@@ -201,8 +201,8 @@ final class TransferProgressWindowController: NSWindowController {
         if let done = info.bytesDone, let total = info.bytesTotal, total > 0 {
             progressBar.stopAnimation(nil)
             progressBar.isIndeterminate = false
-            // 直传跨条目累计基线可让 done 瞬时 > total（askDirect 基线 + 接缝当前
-            // 文件自报 total 的错位窗口）→ 钳 100，防回绕显示。
+            // done>total 只可能是解析器对 openrsync 反推总量的整型瞬时误差（帧是逐条目
+            // 同源合同，终审 B2 后无稳态越界）→ 钳 100 防回绕显示。
             progressBar.doubleValue = min(100, Double(done) / Double(total) * 100)
             samples.append((CFAbsoluteTimeGetCurrent(), done))
             if samples.count > 64 { samples.removeFirst(samples.count - 64) }
@@ -218,10 +218,21 @@ final class TransferProgressWindowController: NSWindowController {
             }
             detailLabel.stringValue = detail
         } else {
-            // 文件级帧（或大小未知）：字节黑盒 → 扫动态。
+            // 无字节总量 = 不定量：条扫动（不假装 determinate），但字节数与速度**照给**
+            // ——spec §3「两路都有速度」：直传目录条目 total 恒 0（无预扫描）走过这里，
+            // 旧实现只扫条 → 面板无字节无速度（B2 后放大成必现）。无分母式 = 字节 · 速度。
             if !progressBar.isIndeterminate {
                 progressBar.isIndeterminate = true
                 progressBar.startAnimation(nil)
+            }
+            if let done = info.bytesDone {
+                samples.append((CFAbsoluteTimeGetCurrent(), done))
+                if samples.count > 64 { samples.removeFirst(samples.count - 64) }
+                var detail = Self.byteString(done)
+                if let speed = TransferSpeed.estimate(samples: samples) {
+                    detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
+                }
+                detailLabel.stringValue = detail
             }
         }
     }

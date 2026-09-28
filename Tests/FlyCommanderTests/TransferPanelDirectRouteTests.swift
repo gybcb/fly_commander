@@ -77,6 +77,124 @@ final class TransferPanelDirectRouteTests: XCTestCase {
                       "剩余钳 ≥0 → 显示 0:00；实得: \(wc.probe.detailLabel.stringValue)")
     }
 
+    // MARK: - B4 串行门（真安全机制：并发 run 不存在）
+
+    /// 装配一对内存窗格（跨 id → 引擎走 pump 路）。reveal=false → 无标记 =
+    /// operationTargets 空（空选早退路）。
+    private func memPanes(payload: Data = Data("hello".utf8), reveal: Bool = true)
+        -> (te: TransferEngine, src: DirectMemSource, dst: DirectMemSource,
+            srcPane: FilePane, dstPane: FilePane) {
+        let te = TransferEngine()
+        te.runInBackground = { $0() }
+        te.onMain = { $0() }
+        let src = DirectMemSource(id: "mem-src"), dst = DirectMemSource(id: "mem-dst")
+        src.addFile("/src/a.txt", payload)
+        let srcPane = FilePane(id: .left, source: src, startPath: TCPath("/src")); srcPane.load()
+        if reveal {
+            _ = srcPane.revealItem(id: srcPane.itemByID.first { $0.value.name == "a.txt" }?.key ?? "")
+        }
+        let dstPane = FilePane(id: .right, source: dst, startPath: TCPath("/dst")); dstPane.load()
+        return (te, src, dst, srcPane, dstPane)
+    }
+
+    /// 串行门主锁：**后台块延迟**（注入的 runInBackground 扣住不执行 = 在飞态）。
+    /// 此刻第二个 run 必须被整个拒收 —— 断言 run2 的 state 回调零次触发
+    /// （run 不碰引擎 = 接缝装配/performCopy 都没发生 = 错服务器写入不可能），
+    /// 然后放行 run1：门释放 + 数据正确落目标。
+    /// 变异证伪：run() 头部 `guard claimRunning()` 删除 → run2 也装配并跑完 →
+    /// 「run2 不提交块 / 拒收 run 零回调 / 门仍占用」三断言全红。
+    func testConcurrentRunIsRefusedWhileInFlight() throws {
+        let a = memPanes()
+        var deferred: [() -> Void] = []
+        a.te.runInBackground = { deferred.append($0) }
+        var stateCalls = 0
+        a.te.state = { _ in stateCalls += 1 }
+        var finished = 0
+        a.te.onFinished = { _, _ in finished += 1 }
+
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(deferred.count, 1, "run1 应把传输块交延迟器")
+        XCTAssertTrue(a.te.isTransferRunning, "run1 交块后仍在飞")
+
+        let before = stateCalls
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(deferred.count, 1, "run2 不得提交第二个传输块")
+        XCTAssertEqual(stateCalls, before, "被拒 run 零回调 = 根本没碰引擎")
+        XCTAssertEqual(finished, 0, "被拒 run 不触发收尾（面板生命周期归 run1）")
+        XCTAssertTrue(a.te.isTransferRunning, "run2 拒收不得把门放下")
+
+        deferred[0]()                     // 放行 run1
+        XCTAssertFalse(a.te.isTransferRunning, "完成 → 门必须释放")
+        XCTAssertEqual(a.dst.data["/dst/a.txt"], Data("hello".utf8), "run1 数据照常正确")
+        XCTAssertEqual(finished, 1)
+    }
+
+    /// 门不得卡死：抛错传输（注入 streamWrite 失败）也要放门。
+    /// 变异证伪：releaseRunning 挪进 do 的成功路 → 抛错后 isTransferRunning 恒真 → 红。
+    func testThrowingTransferReleasesRunningGate() throws {
+        let a = memPanes()
+        a.dst.failOnWrite = true   // 写侧 = 目标源（streamWrite 落在 dst）
+        var failed = false
+        a.te.state = { s in if case .failed = s { failed = true } }
+        XCTAssertFalse(a.te.isTransferRunning)
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertTrue(failed, "注入失败须上抛为 .failed（门不是吞错的借口）")
+        XCTAssertFalse(a.te.isTransferRunning, "抛错路门必须释放（否则永久拒收后续传输）")
+    }
+
+    /// 空选择早退不得泄漏门（claim 之后的所有路成对；空选早退在 claim **之前**）。
+    /// 形状：reveal=false 窗格（operationTargets 空）先跑一次 → 必须早退且不占门；
+    /// 再 reveal 出条目跑真传输 → 必须照常落数据（证明上一步没把门卡住）。
+    /// 变异证伪：claimRunning 挪到 targets.isEmpty 守卫之前 → 空选占门且无后台块放它 →
+    /// 后续真传输被串行门拒收 → 数据断言红。
+    func testEmptySelectionDoesNotWedgeGate() throws {
+        let a = memPanes(reveal: false)   // 无标记 = 空选
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertFalse(a.te.isTransferRunning, "空选早退不得占门")
+        // 门没被空选占住 → reveal 后真传输照常跑通。
+        _ = a.srcPane.revealItem(id: a.srcPane.itemByID.first { $0.value.name == "a.txt" }?.key ?? "")
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag(), onProgress: nil)
+        XCTAssertEqual(a.dst.data["/dst/a.txt"], Data("hello".utf8), "空选后真传输须照常完成")
+    }
+
+    // MARK: - N-a 条目边界清名字盒（混合批次 pump 帧不得携带上一条 rsync 名）
+
+    /// 事故形态：条目 1 直传成功 → 名字盒=「big.bin」；条目 2 落 pump → pump 字节帧
+    /// 读盒携带「big.bin」= 面板错名直到条目 2 完成帧。修法 = fileLevelFrame 进条目
+    /// 边界第一件事清盒（生产 fileProgress 与锁**同一实现**，非抄写形状）。
+    /// 变异证伪：fileLevelFrame 删 `nameBox.name = nil` → 第二条红（帧名非空）。
+    func testFileLevelFrameClearsDirectNameBox() throws {
+        let box = DirectNameBox()
+        let targets = [fileItem(name: "big.bin", dir: true, size: 0),
+                       fileItem(name: "small.txt", dir: false, size: 10)]
+        box.name = "inner-inside-big.bin"          // 条目 1 直传期间 rsync 写进的名字
+        let f1 = TransferEngine.fileLevelFrame(nameBox: box, targets: targets,
+                                               done: 1, total: 2, route: .directCrossHost)
+        XCTAssertEqual(f1.name, "big.bin", "完成帧名=条目名（rsync 内名不外泄）")
+        XCTAssertNil(box.name, "进条目边界即清盒")
+        // 条目 2 落 pump：字节帧名取自盒（directName）→ 清过 = 空串（面板沿用规则不受影响）。
+        XCTAssertEqual(TransferEngine.directName(from: box), "")
+    }
+
+    // MARK: - N-b：不定量帧的无分母字节 + 速度（spec §3「已传字节…两路都有速度」）
+
+    /// 直传目录条目（total=0→nil）旧 else 分支只扫条：无字节数、无速度、不喂样本
+    /// = spec §3 承诺丢失。修法 = bytesDone 非 nil 时渲染「已传 · 速度」无分母式。
+    /// 变异证伪（两处独立）：else 分支删 detailLabel 渲染 → 字节文本断言红；
+    /// 删样本喂入 → "/s" 断言红。
+    func testIndeterminateByteFrameShowsBytesAndSpeed() throws {
+        let wc = TransferProgressWindowController.createWithoutPresentingForTest()
+        wc.resetForTransferForTest(isCopy: true, fileTotal: 1, cancel: CancelFlag())
+        wc.apply(TransferEngine.byteFrame(done: 300_000, total: 0, fileDone: 0, fileTotal: 1))
+        Thread.sleep(forTimeInterval: 0.6)
+        wc.apply(TransferEngine.byteFrame(done: 900_000, total: 0, fileDone: 0, fileTotal: 1))
+        XCTAssertTrue(wc.probe.bar.isIndeterminate, "无总量 → 条仍扫动（不假装 determinate）")
+        let detail = wc.probe.detailLabel.stringValue
+        XCTAssertTrue(detail.contains(TransferProgressWindowController.byteString(900_000)),
+                      "无分母字节文本；实得: \(detail)")
+        XCTAssertTrue(detail.contains("/s"), "速度须出现（喂样本 + L10n transSpeed）；实得: \(detail)")
+    }
+
     // MARK: - 接缝启用判定 + 参数装配（peer 方向直锁）
 
     private func sftpSource(host: String, port: UInt16, key: Bool = true) -> SFTPSource {
@@ -268,6 +386,8 @@ private final class DirectMemSource: FileSource {
     var dirItems: [FileItem] = []
 
     init(id: String) { sourceID = id }
+    /// 注入写失败（串行门「抛错路门必须释放」锁用）。
+    var failOnWrite = false
 
     func addFile(_ path: String, _ payload: Data) {
         let item = FileItem(id: path, path: TCPath(path),
@@ -299,6 +419,7 @@ private final class DirectMemSource: FileSource {
         }
     }
     func streamWrite(_ path: TCPath, totalBytes: Int64?, write: () throws -> Data) throws {
+        if failOnWrite { throw TCError.unknown("injected write failure") }
         var buf = Data()
         while true {
             let chunk = try write()

@@ -191,6 +191,11 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
         }
         router.onRemoteTransfer = { [weak self] isCopy, src, dst in
             guard let self else { return }
+            // 串行门（终审波 2）：在飞传输存在 = 不再起第二个（错服务器写入风险 +
+            // 面板/transferPanelActive 互踩）。run() 内部有同款 claim（双保险），
+            // 这里先判是必须的——拒收路 run() 静默返回，本处若已 presentTransfer
+            // 则面板无人收口（onFinished 不会为拒收路触发）。
+            guard !self.transferEngine.isTransferRunning else { return }
             // promptOnMain：runModal 只允许主线程（引擎在后台线程逐文件询问）。
             self.transferEngine.prompt = TransferEngine.promptOnMain { s, d in
                 self.promptConflict(s, d) ?? .overwrite

@@ -22,9 +22,13 @@ enum TransferSpeed {
     }
 }
 
-/// 直传接缝 per-run 令牌（终审 B4）：run() 主线程段 next() 取号，接缝闭包（makeDirectSeam
-/// 工厂造）捕获当值；闭包首行比对 current()，不等 = 更新的 run 已重赋接缝、本闭包是
-/// 旧 run 残骸 → `.unavailable("stale-seam")`（本条目落 pump，数据恒对）。
+/// 直传接缝 per-run 令牌（belt-and-braces）：run() 主线程段 next() 取号，接缝闭包
+/// （makeDirectSeam 工厂造）捕获当值；闭包首行比对 current()，不等 → `.unavailable("stale-seam")`。
+/// **它不是安全机制**（终审波 2 裁定）：引擎逐条目读的是 directCrossTransfer **当前值**
+/// （OperationEngine.askDirect），被安装的闭包永远是最新装配者 → 自比恒真；重叠时
+/// 引擎调 run2 闭包跑 run1 条目这条路它挡不住。真正的安全 = run() 的 running-flag
+/// 串行门（在飞 = 第二 run 整个拒收，并发 run 不存在）。令牌只挡「更晚 run 已取号
+/// 但还没装接缝」的无害窗口（纯失加速）+ 未来 gate 回归的兜底。
 /// 写=主线程，读=后台线程 → NSLock 护栏（同 SFTPConnection.lastCopyRoute 类盒纪律）。
 final class DirectSeamTokenBox {
     private let lock = NSLock()
@@ -86,8 +90,32 @@ final class TransferEngine {
     }
 
     let engine: OperationEngine
+    /// **串行门（终审波 2 裁定 = B4 的真安全机制）**：在飞传输存在时，run() 直接拒收。
+    /// 事故根因 = 两个 run 同时在飞：engine.directCrossTransfer 是**共享实例上的单个 var**，
+    /// run2 装配后引擎（OperationEngine.askDirect 逐条目读当前值）就会拿 run2 的
+    /// ssrc/peer 去推 run1 的条目 → 错服务器静默写入 + move 删错源。接缝令牌挡不住
+    /// （被装者自比恒真，见 DirectSeamTokenBox 注）→ 唯一根治 = 并发 run 不存在。
+    /// 顺带治掉既有怪态：重叠 run 互相覆盖面板与 transferPanelActive（主 VC 无闸门）。
+    /// **用户可见行为变化（有意，非回归）**：传输进行中再按 F5/F6 不再起第二个传输。
+    /// 写=主线程（run 头部）/ 后台块尾，读=主线程 → NSLock（本类既有盒纪律）。
+    private let runningLock = NSLock()
+    private var runningFlag = false
     /// 直传接缝 per-run 令牌（B4，语义见 DirectSeamTokenBox 注）。internal：锁直读计数。
     let seamToken = DirectSeamTokenBox()
+
+    /// 串行门状态（主 VC 上屏前判 + 单测断言取/放成对不卡死）。
+    var isTransferRunning: Bool {
+        runningLock.lock(); defer { runningLock.unlock() }; return runningFlag
+    }
+    private func claimRunning() -> Bool {
+        runningLock.lock(); defer { runningLock.unlock() }
+        if runningFlag { return false }
+        runningFlag = true
+        return true
+    }
+    private func releaseRunning() {
+        runningLock.lock(); runningFlag = false; runningLock.unlock()
+    }
 
     init(engine: OperationEngine = OperationEngine()) {
         self.engine = engine
@@ -203,6 +231,18 @@ final class TransferEngine {
         }
     }
 
+    /// 条目边界帧（N-a 锁可见面）：**进条目边界第一件事清直传名字盒**（盒是「当前条目
+    /// 的 rsync 内文件名」——条目 1 直传成功写名后条目 2 落 pump 时，不清 = 条目 2 的
+    /// pump 字节帧携带条目 1 的文件名，面板错名直到条目 2 完成帧），再构造文件完成帧。
+    /// 生产 fileProgress 与本函数调用方共享这唯一实现（镜像锁=真代码，非抄写形状）。
+    static func fileLevelFrame(nameBox: DirectNameBox, targets: [FileItem],
+                               done: Int, total: Int, route: CopyRoute?) -> TransferProgressInfo {
+        nameBox.name = nil
+        let name = (1...targets.count).contains(done) ? targets[done - 1].name : ""
+        return TransferProgressInfo(name: name, fileDone: done, fileTotal: total,
+                                    bytesDone: nil, bytesTotal: nil, route: route)
+    }
+
     /// 兼容入口：无取消/无逐文件进度（既有工具栏语义原样保留）。
     func run(_ isCopy: Bool, _ srcPane: FilePane, _ dstPane: FilePane) {
         run(isCopy, srcPane, dstPane, cancel: CancelFlag(), onProgress: nil)
@@ -225,8 +265,11 @@ final class TransferEngine {
              onProgress: ((TransferProgressInfo) -> Void)?) {
         let targets = srcPane.operationTargets
         guard !targets.isEmpty else { return }
-        // per-run 令牌取号（B4）：本 run 之后任何更晚 run 都会把全局值顶上去，
-        // 旧 run 的接缝闭包一查即弃。
+        // 串行门（safety，见 runningFlag 注）：在飞 = 直接拒收本 run，绝不起第二个传输。
+        // 拒收路不得碰 state/onFinished（它们驱动面板生命周期，由装配者按
+        // isTransferRunning 先行判定；本处静默返回 = 主 VC 已 guard 过，双保险）。
+        guard claimRunning() else { return }
+        // per-run 令牌取号（belt-and-braces，非安全机制，见 DirectSeamTokenBox 注）。
         let myToken = seamToken.next()
         let label: L10nKey = isCopy ? .opCopying : .opMoving
         let args = ["\(targets.count)"]
@@ -241,6 +284,7 @@ final class TransferEngine {
         let transferSourceProvider = self.transferSourceProvider
 
         runInBackground { [weak self] in
+            // self 提前释放 = 引擎整个消失，门随宿主无关（不存在「还有后续 run」的持有者）。
             guard let self else { return }
             // 传输源替换在后台线程建连（含 SSH 握手），不冻主线程。
             // 同源判定 = sourceID 字符串相等；同源的两端共用**同一条**替身连接
@@ -264,14 +308,14 @@ final class TransferEngine {
                 onMain { state?(.running(label: label, args: args,
                                          progress: total == 0 ? 0 : Double(done) / Double(total))) }
                 throttle.fileDone = done
-                guard let onProgress, (1...targets.count).contains(done) else { return }
+                // N-a 清盒在 fileLevelFrame 内（与单测锁同一实现）。
                 let route: CopyRoute? = (dstSource as? SFTPSource)?.lastCopyRoute
-                let info = TransferProgressInfo(name: targets[done - 1].name,
-                                                fileDone: done, fileTotal: total,
-                                                bytesDone: nil, bytesTotal: nil, route: route)
+                let info = TransferEngine.fileLevelFrame(nameBox: nameBox, targets: targets,
+                                                         done: done, total: total, route: route)
+                guard onProgress != nil else { return }
                 // 文件完成 → 重置节流，保证下一文件的首个字节帧立即可报。
                 throttle.lastByteReportTime = -ThrottleState.sentinel
-                onMain { onProgress(info) }
+                onMain { onProgress?(info) }
             }
             // 字节级：节流上报。
             let byteProgress: (Int64, Int64) -> Void = { done, total in
@@ -286,12 +330,10 @@ final class TransferEngine {
             // 跨服务器直传接缝（Task 4）：启用判定与参数装配在纯静态里
             // （directSeamSources/directSeamArgs，peer 方向性由单测直锁）。
             // **每次 run 无条件重赋**（gate 不过显式置 nil）：engine 是共享实例，
-            // 传输非模态（F5 中途再按 = 两 run 叠飞）。真正的事故形态（终审 B4）是
-            // **两个 run 都过 gate**：run2 重赋接缝后，run1 后台块里引擎调的是
-            // **当前值** = run2 的闭包 → run1 的条目被推往 run2 的两台服务器
-            // （同名路径 = 错服务器静默成功；move 路还会删错源）。per-run 令牌封死：
-            // 闭包首行比对全局 token，被顶掉即 `.unavailable("stale-seam")` →
-            // 本条目落 pump（数据恒对，仅该条目失加速）。
+            // 接缝是它身上的单个 var —— 装配者必须负责它的全部生命周期。
+            // 重叠 run 的错服务器写入事故由 run() 头部的**串行门**根治（并发 run
+            // 不存在 = 共享接缝永远只有一个主人；见 runningFlag 注）；令牌是 belt-and-braces
+            // （见 DirectSeamTokenBox 注，非安全机制）。
             if let (ssrc, sdst) = Self.directSeamSources(src: srcSource, dst: dstSource) {
                 engine.directCrossTransfer = Self.makeDirectSeam(
                     ssrc: ssrc, sdst: sdst, cancel: cancel, nameBox: nameBox,
@@ -334,6 +376,9 @@ final class TransferEngine {
             // （连接已关 → 未定义行为）。
             engine.directCrossTransfer = nil
             for close in cleanups { close() }
+            // 串行门收口：与 run() 头部的 claimRunning 成对（成功/失败/取消三路都到齐，
+            // 无提前 return 路 → 门不会卡死）。
+            releaseRunning()
             onMain { self.onFinished?(srcPane, dstPane) }
         }
     }
