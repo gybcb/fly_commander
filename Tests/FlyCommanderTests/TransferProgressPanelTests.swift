@@ -83,16 +83,17 @@ final class TransferProgressPanelTests: XCTestCase {
         XCTAssertEqual(f(.infinity), "")
     }
 
-    /// 全路由中文案非空且区分（服务器端 vs 四种回退原因各不同）。
+    /// 全路由中文案非空且两两不同（服务器端 / 直传 / 六种回退原因各自的串）。
     /// 变异证伪：任一 case 落到相同 L10nKey 或漏 case（编译挂）→ 相等断言挂。
     func testRouteTextDistinctPerCase() {
-        let texts = [CopyRoute.serverSide,
+        let texts = [CopyRoute.serverSide, .directCrossHost,
                      .relayed(.execRejected), .relayed(.cpMissing),
-                     .relayed(.unsupportedFlags), .relayed(.channelGone)].map {
+                     .relayed(.unsupportedFlags), .relayed(.channelGone),
+                     .relayed(.needsAuth), .relayed(.rsyncMissing)].map {
             TransferProgressWindowController.routeText($0)
         }
         for t in texts { XCTAssertFalse(t.isEmpty) }
-        XCTAssertEqual(Set(texts).count, 5, "五种路由文案应两两不同")
+        XCTAssertEqual(Set(texts).count, 8, "八种路由文案应两两不同")
     }
 
     // MARK: - headless 状态迁移
@@ -211,5 +212,30 @@ final class TransferProgressPanelTests: XCTestCase {
         TransferProgressWindowController.refreshLocalizedTextIfCreated()
         XCTAssertEqual(wc.window?.title, L10n.t(.transferring))
         XCTAssertNotEqual(wc.probe.cancel.title, "取消", "旧中文串不应残留")
+    }
+
+    // MARK: - 直传色点 + 文案（spec §3）
+
+    func testRouteTextDirectAndNewReasons() {
+        XCTAssertEqual(TransferProgressWindowController.routeText(.directCrossHost),
+                       L10n.t(.transDirectCrossHost))
+        XCTAssertEqual(TransferProgressWindowController.routeText(.relayed(.needsAuth)),
+                       L10n.t(.transRelayedNeedsAuth))
+        XCTAssertEqual(TransferProgressWindowController.routeText(.relayed(.rsyncMissing)),
+                       L10n.t(.transRelayedRsyncMissing))
+    }
+
+    /// 色点：绿 = serverSide|directCrossHost；黄 = relayed(任意原因)。
+    /// apply(route:) 把点色写进可探属性（真窗色彩断言在缩减 SDK 下不稳，探针先例）。
+    func testDotColorThreeStates() {
+        let wc = TransferProgressWindowController.createWithoutPresentingForTest()
+        wc.applyProbeRoute(.serverSide)
+        XCTAssertEqual(wc.probe.routeDotGreen, true)
+        wc.applyProbeRoute(.directCrossHost)
+        XCTAssertEqual(wc.probe.routeDotGreen, true)
+        wc.applyProbeRoute(.relayed(.needsAuth))
+        XCTAssertEqual(wc.probe.routeDotGreen, false)
+        wc.applyProbeRoute(nil)
+        XCTAssertNil(wc.probe.routeDotGreen, "无 route = 点隐藏（属性为 nil）")
     }
 }

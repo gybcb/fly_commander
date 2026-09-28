@@ -23,11 +23,14 @@ final class TransferProgressWindowController: NSWindowController {
     /// 测试用：模拟点取消按钮（同 #selector 目标，SPM 无 sendAction 便利）。
     func clickCancelButtonForTest() { cancelPressed() }
     /// 测试用：内部状态只读（构造断言 + 收口语义断言）。
+    /// routeDotGreen：nil = 点隐藏（无 route），true = 绿（字节不出服务器/服务器对），false = 黄（本机中转）。
     var probe: (ended: Bool, bar: NSProgressIndicator, title: NSTextField,
                 fileName: NSTextField, detailLabel: NSTextField, routeLabel: NSTextField,
-                cancel: NSButton) {
-        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, routeLabel, cancelButton)
+                cancel: NSButton, routeDotGreen: Bool?) {
+        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, routeLabel, cancelButton, routeDotGreen)
     }
+    /// 测试用：不经进度帧直接驱动色点/文案分支。
+    func applyProbeRoute(_ route: CopyRoute?) { apply(route: route) }
     #endif
 
     /// 语言变更后经主 VC 调用：仅当已创建才重刷静态文案，绝不建窗。
@@ -37,8 +40,15 @@ final class TransferProgressWindowController: NSWindowController {
     private let fileNameLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let routeLabel = NSTextField(labelWithString: "")
+    /// 路径色点：绿 = 字节不过本机（serverSide / directCrossHost），黄 = 本机中转。
+    private let routeDot = NSView()
     private let progressBar = NSProgressIndicator()
     private let cancelButton = NSButton()
+
+    #if DEBUG
+    /// 色点当前语义色（内部状态，仅供 probe 读出；见 probe.routeDotGreen）。
+    private(set) var routeDotGreen: Bool?
+    #endif
 
     /// 本次传输的取消旗（present 时注入；按钮/Esc 置位）。
     private var cancel: CancelFlag?
@@ -81,6 +91,11 @@ final class TransferProgressWindowController: NSWindowController {
         routeLabel.lineBreakMode = .byTruncatingTail
         routeLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        routeDot.wantsLayer = true
+        routeDot.layer?.cornerRadius = 4
+        routeDot.isHidden = true
+        routeDot.translatesAutoresizingMaskIntoConstraints = false
+
         cancelButton.title = L10n.t(.transCancel)
         cancelButton.bezelStyle = .rounded
         // Esc = 取消：直挂 keyEquivalent（本仓库 NSAlert 取消键同款先例）。
@@ -96,6 +111,7 @@ final class TransferProgressWindowController: NSWindowController {
         content.addSubview(progressBar)
         content.addSubview(detailLabel)
         content.addSubview(routeLabel)
+        content.addSubview(routeDot)
         content.addSubview(cancelButton)
         window.contentView = content
 
@@ -119,6 +135,12 @@ final class TransferProgressWindowController: NSWindowController {
             routeLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
             routeLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             routeLabel.widthAnchor.constraint(lessThanOrEqualTo: detailLabel.widthAnchor),
+
+            // 色点摆在 routeLabel 左侧（routeLabel 是 trailing 钉住的，leading 由内容宽导出）。
+            routeDot.widthAnchor.constraint(equalToConstant: 8),
+            routeDot.heightAnchor.constraint(equalToConstant: 8),
+            routeDot.centerYAnchor.constraint(equalTo: routeLabel.centerYAnchor),
+            routeDot.trailingAnchor.constraint(equalTo: routeLabel.leadingAnchor, constant: -4),
 
             cancelButton.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 12),
             cancelButton.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
@@ -150,7 +172,7 @@ final class TransferProgressWindowController: NSWindowController {
         titleLabel.stringValue = L10n.t(isCopy ? .opCopying : .opMoving, "\(fileTotal)")
         fileNameLabel.stringValue = ""
         detailLabel.stringValue = ""
-        routeLabel.stringValue = ""
+        apply(route: nil)
         progressBar.isIndeterminate = true
         progressBar.startAnimation(nil)
         cancelButton.isEnabled = true
@@ -174,7 +196,7 @@ final class TransferProgressWindowController: NSWindowController {
             fileNameLabel.stringValue = info.name
         }
         if let route = info.route {
-            routeLabel.stringValue = Self.routeText(route)
+            apply(route: route)
         }
         if let done = info.bytesDone, let total = info.bytesTotal, total > 0 {
             progressBar.stopAnimation(nil)
@@ -199,6 +221,22 @@ final class TransferProgressWindowController: NSWindowController {
                 progressBar.startAnimation(nil)
             }
         }
+    }
+
+    /// 路径副标题 + 色点。`route == nil`（引擎还没报路径）→ 整行隐藏。
+    /// 色点语义：**绿 = 字节从未过本机**（服务器端 cp / 跨服务器直传），黄 = 本机中转 pump。
+    private func apply(route: CopyRoute?) {
+        if let route { routeLabel.stringValue = Self.routeText(route) }
+        let green = route.map { $0 == .serverSide || $0 == .directCrossHost }
+        #if DEBUG
+        routeDotGreen = green
+        #endif
+        if let green {
+            routeDot.layer?.backgroundColor =
+                (green ? NSColor.systemGreen : NSColor.systemYellow).cgColor
+        }
+        routeLabel.isHidden = route == nil
+        routeDot.isHidden = route == nil
     }
 
     /// 终态。OperationState 只用于 done/failed；**取消不走这里**——冲突对话框取消同样
@@ -278,12 +316,15 @@ final class TransferProgressWindowController: NSWindowController {
     static func routeText(_ route: CopyRoute) -> String {
         switch route {
         case .serverSide: return L10n.t(.transServerSide)
+        case .directCrossHost: return L10n.t(.transDirectCrossHost)
         case .relayed(let reason):
             switch reason {
             case .execRejected: return L10n.t(.transRelayedExecRejected)
             case .cpMissing: return L10n.t(.transRelayedCpMissing)
             case .unsupportedFlags: return L10n.t(.transRelayedUnsupportedFlags)
             case .channelGone: return L10n.t(.transRelayedChannelGone)
+            case .needsAuth: return L10n.t(.transRelayedNeedsAuth)
+            case .rsyncMissing: return L10n.t(.transRelayedRsyncMissing)
             }
         }
     }

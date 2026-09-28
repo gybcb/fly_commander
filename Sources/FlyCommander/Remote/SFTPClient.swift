@@ -274,6 +274,7 @@ final class SFTPConnection {
 /// public：经 SFTPSource.lastCopyRoute → TransferProgressInfo.route 抵达 UI 层。
 public enum CopyRoute: Equatable {
     case serverSide               // exec cp 成功（字节不出服务器）
+    case directCrossHost          // 跨服务器 rsync 直传（字节不出服务器对）
     case relayed(RelayReason)     // 本机中转（回退 pump），带原因
 }
 
@@ -283,6 +284,8 @@ public enum RelayReason: Equatable {
     case cpMissing           // 服务器无 cp（exit 127）
     case unsupportedFlags    // -a/-Rp 都不认（罕见 cp 方言），重试后仍不行
     case channelGone         // 通道级异常：无 exit 状态 / 空 stderr / execute 其它抛错
+    case needsAuth           // 双机免密信任未建立（或 B 端密码认证）
+    case rsyncMissing        // 源服务器无 rsync（exit 127）
 }
 
 enum ServerSideCopy {

@@ -100,8 +100,10 @@ public enum L10nKey: String, Hashable, CaseIterable {
     case transferring, transSpeed, transRemaining, transCancel, transDone
     /// transServerSide/transRelayed = 副标题（实际传输路径）；
     /// transRelayedReason 携回退原因成品串（execRejected/cpMissing/…各自的串）。
-    case transServerSide, transRelayed, transRelayedExecRejected, transRelayedCpMissing,
-         transRelayedUnsupportedFlags, transRelayedChannelGone
+    /// transDirectCrossHost = 跨服务器 rsync 直传；needsAuth/rsyncMissing = 直传不可行的两个原因。
+    case transServerSide, transDirectCrossHost, transRelayed, transRelayedExecRejected,
+         transRelayedCpMissing, transRelayedUnsupportedFlags, transRelayedChannelGone,
+         transRelayedNeedsAuth, transRelayedRsyncMissing
     // —— 目录收藏夹（DirectoryFavoritesStore + TabBar 箭头下拉）——
     case favoritesButtonTip, addFavorite, removeFavorite, favoriteAdded, favoriteRemoved,
          favoritesNeedReconnect
