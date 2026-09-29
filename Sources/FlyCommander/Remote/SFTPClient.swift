@@ -82,8 +82,11 @@ final class SFTPConnection {
     private let lock = NSLock()
     private var closed = false
     /// 服务器 cp 是否支持 -a（连接级缓存：nil=未知，false=BSD 方言用 -Rp）。
-    /// 类盒先例 = ReadCursor：@Sendable 闭包捕获类常量、锁内改属性。
+    /// 类盒先例 = CPSupport/PrefetchReader：@Sendable 闭包捕获类常量、锁内改属性。
     private let cpFlags = CPSupport()
+    /// 传输在途峰值观测盒（DEBUG 鉴别力锁用，见 PipelinedTransferTests）。
+    /// 读路预取窗 / 写路并发窗各自记录历史最大在途请求数；旧串行实现恒 1。
+    let transferPeaks = PumpPeaks()
     /// 上一次复制实际走过的路径。写纪律：**后台传输线程**（copyFile 在 lock 内写；
     /// runDirectRsync/setRoute 在接缝闭包里写——接缝本就只被 performCopy/performMove
     /// 的后台块调用，与 lock 无涉）。读取（lastCopyRoute）无锁——UI 只经
@@ -133,42 +136,53 @@ final class SFTPConnection {
 
     /// 打开读句柄并桥接；返回同步闭包，每次调用独立持锁，
     /// 句柄随最后一次调用（读到 EOF 或出错）关闭。
+    ///
+    /// 读路 = **预取窗口流水线**（提速核心）。旧实现每调一次闭包 = 一个完整
+    /// READ 往返，拿到才轮到写 → 每块 2 个 RTT 串行。现改为：首次一次性在 src
+    /// 连接的 actor 上挂 `SFTPTransfer.window` 个 offset 递增的在途 READ Task，
+    /// 之后每次调用 await 队首、pop、续发一个补满窗口。被 await 的 Task 在
+    /// **闭包返回后的写往返期间继续在后台跑** → 读与写跨窗重叠。
+    ///
+    /// 正确性锚点：Traversio `SSHSFTPClient` 是 actor，同句柄多在途 READ 是其自带
+    /// `readFileWithConsumedRequests` 的同款用法（sendReadRequest×K 后按序 receive）；
+    /// `read(at:)` 显式 offset → 乱序完成不影响按序吐数据（队首恒 = 最小未回收 offset）。
     func openReader(_ path: String) throws -> (Int) throws -> Data? {
         let handle: SFTPFileHandle = try performSync { try await $0.openFile(path, flags: [.read]) }
-        let cursor = ReadCursor()
+        // 全部窗口状态在类盒内，闭包只捕获不可变引用；变更全在 src NSLock 临界区内。
+        let box = PrefetchReader(handle: handle, peaks: transferPeaks)
         return { want in
-            try self.performSync { _ in
-                guard !cursor.done else { return nil }
-                let len = UInt32(max(1, min(Int(UInt32.max), want > 0 ? want : 64 * 1024)))
-                let bytes: [UInt8]? = try await handle.read(at: cursor.offset, length: len)
-                guard let bytes else {
-                    cursor.done = true
-                    try? await handle.close()
-                    return nil
-                }
-                cursor.offset += UInt64(bytes.count)
-                return Data(bytes)
-            }
+            try self.performSync { _ in try await box.next(want: want) }
         }
     }
 
     /// 流式写：write 闭包拉数据，空 Data 结束。整个泵送期间持锁。
+    ///
+    /// 写路 = **并发窗口流水线**（提速核心）。旧实现 `await handle.write` 逐块串行
+    /// 阻塞 → 每块等一个完整 WRITE 往返。现改为：窗口有空位且未 EOF 时同步拉一块、
+    /// 发一个 offset 定向 `write(_:at:)` Task 入窗（不 await）；窗口满才 await 队首。
+    /// 在途写 Task 在 actor 上并发 → 多个 WRITE 同时在飞。
+    ///
+    /// 正确性锚点：`write(_:at:)` 显式 offset（非游标版）→ 各块写区间互不重叠，
+    /// 完成顺序无关；FIFO 入队仅约束「等谁腾窗口」，不约束落盘序（offset 已定）。
+    /// 拉数据闭包（进 src 锁）在窗口空位时同步发出 → 读写天然跨窗重叠。
     func streamWrite(_ path: String, totalBytes: Int64?,
                      write: @escaping () throws -> Data) throws {
         lock.lock()
         defer { lock.unlock() }
         try awaitBlocking {
             let handle = try await self.sftp.openFile(path, flags: [.write, .create, .truncate])
+            let window = WriteWindow(handle: handle, peaks: self.transferPeaks)
             do {
-                while true {
-                    let chunk = try write()
-                    if chunk.isEmpty { break }
-                    try await handle.write([UInt8](chunk))
-                }
+                // 同步拉数据闭包桥进 async 合同（唯一非真 async 的调用点）。
+                try await window.pump { try write() }
             } catch {
+                // cancelRemaining=true 路吞次生错误（抛的是原始错误）→ try?。
+                try? await window.drain(cancelRemaining: true)
                 try? await handle.close()
                 throw error   // 原样上抛，由 SFTPSource.map 统一映射为 TCError
             }
+            // 正常收尾：EOF 已在 pump 内触发（write() 返回空 Data），此处只需排干在途写。
+            try await window.drain(cancelRemaining: false)
             try? await handle.close()
         }
     }
@@ -217,25 +231,29 @@ final class SFTPConnection {
                 relayReason = reason
             }
 
-            // 阶段 2：回退 pump（原实现逐字保留）。
+            // 阶段 2：回退 pump（同源双句柄，读窗+写窗流水线）。单连接单锁，
+            // reader/writer 两 Task 都挂在同一 actor 上并发（同 transferSource 独享）。
             self.lastCopyRoute = .relayed(relayReason)
-            let reader = try await self.sftp.openFile(src, flags: [.read])
-            let writer = try await self.sftp.openFile(dst, flags: [.write, .create, .truncate])
+            let readerHandle = try await self.sftp.openFile(src, flags: [.read])
+            let writerHandle = try await self.sftp.openFile(dst, flags: [.write, .create, .truncate])
+            let reader = PrefetchReader(handle: readerHandle, peaks: self.transferPeaks)
+            let writer = WriteWindow(handle: writerHandle, peaks: self.transferPeaks)
             do {
-                var offset: UInt64 = 0
-                while true {
-                    let chunk = try await reader.read(at: offset, length: 64 * 1024)
-                    if chunk == nil { break }
-                    try await writer.write(chunk!)
-                    offset += UInt64(chunk!.count)
+                // pull 同步语义：每次从读窗要一块，nil(EOF) → 空 Data 结束写窗。
+                try await writer.pump {
+                    guard let chunk = try await reader.next(want: SFTPTransfer.chunkSize),
+                          !chunk.isEmpty else { return Data() }
+                    return chunk
                 }
             } catch {
-                try? await reader.close()
-                try? await writer.close()
+                try? await writer.drain(cancelRemaining: true)
+                try? await readerHandle.close()
+                try? await writerHandle.close()
                 throw error
             }
-            try? await reader.close()
-            try? await writer.close()
+            try await writer.drain(cancelRemaining: false)
+            try? await readerHandle.close()
+            try? await writerHandle.close()
         }
     }
 
@@ -479,15 +497,213 @@ enum ServerSideCopy {
     }
 }
 
-// MARK: - 读游标
+// MARK: - 泵送流水线（读预取窗 + 写并发窗）
 
-/// openReader 的句柄状态。所有读写都在同一把 NSLock 保护下，无并发。
-final class ReadCursor {
-    var offset: UInt64 = 0
-    var done = false
+/// 跨源/回退 pump 的块大小与并发窗口（读、写各一套，共用常量）。
+/// chunkSize=256KB = Traversio 包上限（SSHSFTPMessageCodec.defaultMaximumPacketLength），
+/// READ 侧被 effectiveReadLength 自动钳制，WRITE 侧超长由 writeFile 内部顺序分片。
+/// window=4 → 读写各最多 4 个在途请求（≈1MB 在途 ×2）。
+enum SFTPTransfer {
+    static let chunkSize = 256 * 1024
+    static let window = 4
 }
 
-/// cp -a 支持缓存。类盒（同 ReadCursor 模式）：@Sendable 闭包只捕获不可变引用，
+/// 在途峰值观测盒（PipelinedTransferTests 鉴别力锁；更新点只在两窗入队处，
+/// 成本 = 每块一次 NSLock，可忽略）。所有窗状态变更本就串行于各自锁内，
+/// 但观测盒跨连接/测试线程读写 → 自带锁。
+final class PumpPeaks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var read = 0
+    private var write = 0
+
+    func noteRead(_ inflight: Int) {
+        lock.lock(); if inflight > read { read = inflight }; lock.unlock()
+    }
+    func noteWrite(_ inflight: Int) {
+        lock.lock(); if inflight > write { write = inflight }; lock.unlock()
+    }
+    var maxReadInflight: Int { lock.lock(); defer { lock.unlock() }; return read }
+    var maxWriteInflight: Int { lock.lock(); defer { lock.unlock() }; return write }
+    func reset() { lock.lock(); read = 0; write = 0; lock.unlock() }
+}
+
+/// openReader 的预取读窗。**全部状态变更只发生在 src 连接 NSLock 临界区内**
+/// （openReader 闭包的 performSync 里，或 copyFile 阶段 2 的单次持锁块里）——
+/// 类盒 + @unchecked Sendable 的先例 = CPSupport。
+///
+/// **为什么需要「发现式块长」**（实测，非臆测）：OpenSSH sftp-server 把 READ 请求钳到
+/// 自己的上限 —— 探针实测请求 262144 返回 **261120**，即**每一块都是短读**。若按
+/// 「返回长度 < 请求长度 = 短读」判退化，流水线在首块即被打回串行 = 提速全废。
+/// 故首块单发**探明有效块长**（stride），之后按 stride 定长预取 → 满块恒等长、
+/// 偏移天然对齐；真短读（count < stride，只出现在接近 EOF）才弃在途退化串行。
+final class PrefetchReader: @unchecked Sendable {
+    private struct Entry { let offset: UInt64; let task: Task<[UInt8]?, Error> }
+    private enum Phase { case discovering, pipelined, serial }
+
+    private let handle: SFTPFileHandle
+    private let peaks: PumpPeaks?
+    private var queue: [Entry] = []
+    /// 唯一真相 = 消费者下一次拿到的字节起点（随**实际**返回长度推进）。
+    /// 预取偏移全部从它派生 —— 按请求长度推进游标会跳字节（对齐 Traversio
+    /// readFileWithConcurrentRequests 的 nextOffsetToAppend 语义）。
+    private var byteCursor: UInt64 = 0
+    private var scheduledFrontier: UInt64 = 0   // 已投机发到的偏移（= 下一预取起点）
+    private var phase: Phase = .discovering
+    private var stride: UInt32 = 0               // 探明的有效块长（满块等长判据）
+    private var finished = false
+
+    init(handle: SFTPFileHandle, peaks: PumpPeaks?) {
+        self.handle = handle
+        self.peaks = peaks
+    }
+
+    /// 取下一块（合同 = ReadHandle：nil=EOF，之后再调恒 nil；EOF/出错均已关句柄）。
+    /// async：await 队首 Task 期间，其余在途 READ 在 actor 上继续跑。
+    func next(want: Int) async throws -> Data? {
+        if finished { return nil }
+        switch phase {
+        case .discovering: return try await discover(want: want)
+        case .serial:      return try await readOne(offset: byteCursor, length: stride)
+        case .pipelined:   return try await pipelined()
+        }
+    }
+
+    /// 首块：单发探明服务器实际给的块长 → 定为 stride → 转流水线。
+    private func discover(want: Int) async throws -> Data? {
+        let len = UInt32(max(1, min(SFTPTransfer.chunkSize,
+                                    want > 0 ? want : SFTPTransfer.chunkSize)))
+        guard let data = try await readOne(offset: byteCursor, length: len) else { return nil }
+        stride = UInt32(data.count)          // 实际满块长（可能 < 请求，如 261120）
+        phase = .pipelined
+        scheduledFrontier = byteCursor
+        return data
+    }
+
+    private func pipelined() async throws -> Data? {
+        while queue.count < SFTPTransfer.window {
+            schedule(offset: scheduledFrontier, length: stride)
+            scheduledFrontier += UInt64(stride)
+        }
+        peaks?.noteRead(queue.count)
+        guard !queue.isEmpty else {
+            finished = true
+            try? await handle.close()
+            return nil
+        }
+
+        let head = queue.removeFirst()
+        let bytes: [UInt8]?
+        do {
+            bytes = try await head.task.value
+        } catch {
+            await drainInflight()
+            finished = true
+            try? await handle.close()
+            throw error   // 原样上抛（错误映射在 SFTPSource.mapped）
+        }
+        // 不变量：投机窗口连续无洞 → 队首恒 = 最小未回收偏移。错位 = 结构性 bug，
+        // 宁可崩也别静默产出错文件。
+        precondition(head.offset == byteCursor,
+                     "读窗队首偏移 \(head.offset) != 消费游标 \(byteCursor)")
+        guard let bytes, !bytes.isEmpty else {
+            // EOF（显式 nil 或空块）：排干在途（各自也应回 nil/空；出错忽略），关句柄。
+            await drainInflight()
+            finished = true
+            try? await handle.close()
+            return nil
+        }
+        byteCursor = head.offset + UInt64(bytes.count)
+        if bytes.count < Int(stride) {
+            // 真短读（< 探明的有效块长）= 接近 EOF：投机窗口按 stride 排的已错位 →
+            // 弃在途、退化单发，从 byteCursor（真实位置）串行续读到 EOF。
+            await drainInflight()
+            phase = .serial
+            scheduledFrontier = byteCursor
+        }
+        return Data(bytes)
+    }
+
+    /// 单发路径（发现阶段 / 短读退化后）：一次一块、游标按实际推进；nil=EOF 且关句柄。
+    private func readOne(offset: UInt64, length: UInt32) async throws -> Data? {
+        let h = handle
+        let bytes: [UInt8]?
+        do { bytes = try await h.read(at: offset, length: length) }
+        catch { finished = true; try? await h.close(); throw error }
+        guard let bytes, !bytes.isEmpty else {
+            finished = true
+            try? await handle.close()
+            return nil
+        }
+        byteCursor = offset + UInt64(bytes.count)
+        return Data(bytes)
+    }
+
+    private func schedule(offset: UInt64, length: UInt32) {
+        let h = handle
+        queue.append(Entry(offset: offset, task: Task { try await h.read(at: offset, length: length) }))
+    }
+
+    private func drainInflight() async {
+        for e in queue { _ = try? await e.task.value }
+        queue.removeAll()
+    }
+}
+
+/// streamWrite / copyFile 阶段 2 的并发写窗。状态变更只在持有 dst 锁的
+/// 单一 awaitBlocking 任务内进行 → 类盒无内部锁（@unchecked 理由同 PrefetchReader）。
+///
+/// `write(_:at:)` 显式 offset：各块区间互不重叠 → 完成顺序无关，FIFO 只界定
+/// 「等谁腾窗口」。超长块由 Traversio writeFile 内部顺序分片（合同不变）。
+final class WriteWindow: @unchecked Sendable {
+    private struct Entry { let task: Task<Void, Error> }
+
+    private let handle: SFTPFileHandle
+    private let peaks: PumpPeaks?
+    private var queue: [Entry] = []
+    private var offset: UInt64 = 0
+
+    init(handle: SFTPFileHandle, peaks: PumpPeaks?) {
+        self.handle = handle
+        self.peaks = peaks
+    }
+
+    /// 泵送主循环：窗口有空位且未 EOF → 同步拉一块入窗；窗口满 → await 队首。
+    /// pull 抛错（含取消）/ 写 Task 抛错 → 原样上抛给调用方（其负责 drain+close）。
+    func pump(_ pull: @escaping @Sendable () async throws -> Data) async throws {
+        var eof = false
+        while !eof || !queue.isEmpty {
+            while !eof && queue.count < SFTPTransfer.window {
+                let chunk = try await pull()
+                if chunk.isEmpty { eof = true; break }
+                let off = offset
+                offset += UInt64(chunk.count)
+                let bytes = [UInt8](chunk)
+                let h = handle
+                queue.append(Entry(task: Task { try await h.write(bytes, at: off) }))
+                peaks?.noteWrite(queue.count)
+            }
+            if !queue.isEmpty {
+                let head = queue.removeFirst()
+                try await head.task.value
+            }
+        }
+    }
+
+    /// 排干全部在途写。cancelRemaining=false（EOF 正常收尾）时，任一在途写错误
+    /// 上抛（半截文件绝不能静默成功）；true（异常路径收尾）时吞掉次生错误，
+    /// 由调用方抛原始错误。
+    func drain(cancelRemaining: Bool) async throws {
+        var firstError: Error?
+        for e in queue {
+            do { _ = try await e.task.value }
+            catch { if firstError == nil { firstError = error } }
+        }
+        queue.removeAll()
+        if let firstError, !cancelRemaining { throw firstError }
+    }
+}
+
+/// cp -a 支持缓存。类盒（同 PrefetchReader 模式）：@Sendable 闭包只捕获不可变引用，
 /// 属性变更全部发生在 lock 临界区内，无并发。
 final class CPSupport {
     var supportsA: Bool?

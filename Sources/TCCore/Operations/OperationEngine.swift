@@ -355,7 +355,8 @@ public final class OperationEngine {
     /// 接缝最后一帧（原始未累计值）的装箱（供 askDirect 的逃逸闭包使用）。
     private final class LastFrame { var raw: (done: Int64, total: Int64)? }
 
-    /// 跨源流式复制（64KB 块）。字节进度在 reader 闭包内累加（协议零改动）；
+    /// 跨源流式复制（256KB 块，SFTP 侧走读写双向流水线；见 SFTPClient.PrefetchReader/WriteWindow）。
+    /// 字节进度在 reader 闭包内累加（协议零改动）；
     /// totalBytes==0（stat 拿不到大小）**不报字节**——宁缺毋假（否则恒 100% 或除零）。
     /// lastTotals（可选）记录本文件最后一帧 (transferred, totalBytes)——目录合并路
     /// 靠它在整目录完成后补合并帧（见 performCopy 头部注释）。
@@ -370,7 +371,9 @@ public final class OperationEngine {
         var transferred: Int64 = 0
         try dstSource.streamWrite(dst, totalBytes: totalBytes) {
             if cancel?.isCancelled == true { throw TCError.cancelled }
-            guard let chunk = try reader(64 * 1024) else { return Data() }   // 读失败沿闭包 throw 上抛
+            // 块大小 = SFTPTransfer.chunkSize（app 层 256KB，SFTP 包上限）。TCCore 零
+            // import app 层 → 字面量镜像，两处必须同改（PipelinedTransferTests 锁合同）。
+            guard let chunk = try reader(256 * 1024) else { return Data() }   // 读失败沿闭包 throw 上抛
             transferred += Int64(chunk.count)
             if totalBytes > 0 { byteProgress?(transferred, totalBytes) }
             return chunk
