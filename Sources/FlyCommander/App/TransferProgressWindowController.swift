@@ -62,7 +62,9 @@ final class TransferProgressWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 168),
+            // 168→190：路由行独立成行（旧形与 detail 同基线）后固定高容不下，
+            // 路由文案被切进取消按钮区（截图实证）。
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 190),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
@@ -131,18 +133,27 @@ final class TransferProgressWindowController: NSWindowController {
 
             detailLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
             detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
 
-            routeLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
-            routeLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            routeLabel.widthAnchor.constraint(lessThanOrEqualTo: detailLabel.widthAnchor),
+            // 路由行 = detail 之下**独立一行**（旧形与 detail 同基线一头尾对钉，
+            // 路由文案变长就撞进「字节+速度」串里 = 用户报的重叠）。
+            // 色点在文本左侧（行左对齐后 trailing 不再由内容导出，点改钉 leading）。
+            routeLabel.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 4),
+            routeLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            routeLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
 
-            // 色点摆在 routeLabel 左侧（routeLabel 是 trailing 钉住的，leading 由内容宽导出）。
             routeDot.widthAnchor.constraint(equalToConstant: 8),
             routeDot.heightAnchor.constraint(equalToConstant: 8),
             routeDot.centerYAnchor.constraint(equalTo: routeLabel.centerYAnchor),
-            routeDot.trailingAnchor.constraint(equalTo: routeLabel.leadingAnchor, constant: -4),
+            routeDot.leadingAnchor.constraint(equalTo: routeLabel.leadingAnchor, constant: -12),
 
-            cancelButton.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 12),
+            // 按钮在两条信息行之下（隐藏的路由行仍占位=固定高窗口本有空间）。
+            // 双 required ≥：取 max(detail.bottom+12, route.bottom+4)，无歧义不冲突。
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: detailLabel.bottomAnchor,
+                                              constant: 12),
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: routeLabel.bottomAnchor,
+                                              constant: 4),
+
             cancelButton.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             cancelButton.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -14),
         ])

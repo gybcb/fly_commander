@@ -175,10 +175,34 @@ final class TransferEngine {
     /// **total==0 → bytesTotal=nil**：直传路目录条目无预扫描、总量未知（接缝合同
     /// 「第二参 0=总量未知」），面板 `total > 0` 判定消费的是 nil——0 会穿进
     /// 「有总量」分支渲染 0/0。变异证伪见 TransferPanelDirectRouteTests。
-    static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int, name: String = "")
+    static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int,
+                          name: String = "", route: CopyRoute? = nil)
         -> TransferProgressInfo {
         TransferProgressInfo(name: name, fileDone: fileDone, fileTotal: fileTotal,
-                             bytesDone: done, bytesTotal: total > 0 ? total : nil, route: nil)
+                             bytesDone: done, bytesTotal: total > 0 ? total : nil, route: route)
+    }
+
+    /// 帧路由计划：两端皆 SFTP（含同一服务器 = cp 路的 .serverSide 语义既有可见
+    /// 行为，不动）→ 透传目标连接的当前路由值；任一端本地 → nil。
+    /// 本地端守卫必须显式在（不能靠 Optional chaining 兜——目标侧未连接读 nil 会
+    /// 把「守卫生效」与「合法初值」混成同相）：本地↔远程必然中转，色点无判断价值，
+    /// 且 pump 路从不写路由，读到的是 SFTPConnection 的 `.channelGone` 初值 =
+    /// 「命令通道异常」谎话上线（本函数堵死这条路）。
+    static func frameRoute(src: FileSource, dst: FileSource) -> CopyRoute? {
+        guard let sdst = dst as? SFTPSource, src is SFTPSource else { return nil }
+        return sdst.lastCopyRoute
+    }
+
+    /// 无接缝跨服务器的开局路由（诚实黄种子）：双 SFTP 异机但接缝不过 gate
+    /// （= 源端密码认证，先天无 A→B 信任）→ `.relayed(.needsAuth)`「双机免密信任
+    /// 未建立」。run() 在接缝判定 else 路把它种进目标连接，使字节帧从第一帧起
+    /// 就携黄——此前跨服务器 pump 全程读 `.channelGone` 初值（假文案）或 nil（无点）。
+    /// 过 gate 的路由由接缝镜像写真值，不种。
+    static func noSeamSeedRoute(src: FileSource, dst: FileSource) -> CopyRoute? {
+        guard let ssrc = src as? SFTPSource, dst is SFTPSource,
+              src.sourceID != dst.sourceID, !ssrc.supportsDirectCross
+        else { return nil }
+        return .relayed(.needsAuth)
     }
 
     /// 直传名字框 → 帧名（纯函数，spec 决策 #2「当前文件名取 --progress 文件名行」）。
@@ -223,11 +247,36 @@ final class TransferEngine {
         { item, destDir, bp in
             guard tokenBox.current() == myToken else { return .unavailable("stale-seam") }
             let a = Self.directSeamArgs(ssrc: ssrc, sdst: sdst, item: item, destDir: destDir)
-            let out = try rsync(a.item, a.peer, a.totalHint, bp, { n in nameBox.name = n }, cancel)
+            // 提前镜像（首帧即绿）：字节帧能到这里 = 解析出**真实进度行**
+            // （SFTPClient 闸门：`parser.fileBytesDone > 0` 才转帧）→ A 已连上 B 并在
+            // 推字节 = 「字节不过本机」已成立。needsAuth/rsyncMissing 是零字节路
+            // （合同 `.unavailable` 零帧）永不触发，不会谎报。
+            // 代价（可接受）：rsync 传到一半失败 → 面板先绿后转错误态；且收尾镜像
+            // 必写真值（.directCrossHost 或 .relayed(reason)），绿不会残留。
+            let mirrored = DirectOnceBox()
+            let bridged: ((Int64, Int64) -> Void)? = bp.map { inner in
+                { done, total in
+                    if mirrored.claim() { sdst.mirrorRoute(.directCrossHost) }
+                    inner(done, total)
+                }
+            }
+            let out = try rsync(a.item, a.peer, a.totalHint, bridged, { n in nameBox.name = n }, cancel)
             // 路由镜像（两条都抄）：rsync 写在 src 连接，面板读 dst——黄点场景
             // （needsAuth/rsyncMissing 回退）全靠这一行。抛错路不经过这里（面板走错误态）。
             sdst.mirrorRoute(ssrc.lastCopyRoute ?? .relayed(.channelGone))
             return out
+        }
+    }
+
+    /// 「至多一次」旗（接缝首帧提前镜像用）。同 ThrottleState 盒纪律：
+    /// 只在后台传输块内顺序访问，无并发。
+    final class DirectOnceBox {
+        private var used = false
+        /// 首次返回 true（并置位），之后恒 false。
+        func claim() -> Bool {
+            if used { return false }
+            used = true
+            return true
         }
     }
 
@@ -303,27 +352,45 @@ final class TransferEngine {
                 dstSource = ts   // 同源：两端共用 srcSub（清理已在上面登记一次）
             }
 
+            // 帧路由（色点全程可见）：= 目标连接的当前路由值，且仅跨双 SFTP 才给
+            // （本地端/同服务器 → nil，见 frameRoute 注）。
+            // 无接缝跨服务器（源端密码认证）的诚实黄种子在此算好：pump 路从不写路由，
+            // 帧读到的是连接初值 `.channelGone` = 「命令通道异常」谎话。种子在
+            // **帧时刻**补写（mirrorRoute 只写已有连接，而 pump 首帧必然晚于
+            // streamWrite 懒建连 = 必达；本 run 无接缝 = 该值永远不会被真值覆盖，
+            // 逐帧重复写幂等无害）。
+            let seamPair = Self.directSeamSources(src: srcSource, dst: dstSource)
+            let routeSeed: CopyRoute? = seamPair == nil
+                ? Self.noSeamSeedRoute(src: srcSource, dst: dstSource) : nil
+            let frameRoute: () -> CopyRoute? = {
+                if let seed = routeSeed, let sdst = dstSource as? SFTPSource {
+                    sdst.mirrorRoute(seed)
+                }
+                return TransferEngine.frameRoute(src: srcSource, dst: dstSource)
+            }
+
             // 文件级：工具栏百分比（既有语义）+ onProgress（必报，不节流）。
             let fileProgress: (Int, Int) -> Void = { done, total in
                 onMain { state?(.running(label: label, args: args,
                                          progress: total == 0 ? 0 : Double(done) / Double(total))) }
                 throttle.fileDone = done
                 // N-a 清盒在 fileLevelFrame 内（与单测锁同一实现）。
-                let route: CopyRoute? = (dstSource as? SFTPSource)?.lastCopyRoute
                 let info = TransferEngine.fileLevelFrame(nameBox: nameBox, targets: targets,
-                                                         done: done, total: total, route: route)
+                                                         done: done, total: total, route: frameRoute())
                 guard onProgress != nil else { return }
                 // 文件完成 → 重置节流，保证下一文件的首个字节帧立即可报。
                 throttle.lastByteReportTime = -ThrottleState.sentinel
                 onMain { onProgress?(info) }
             }
-            // 字节级：节流上报。
+            // 字节级：节流上报。**也携路由**（色点全程可见——旧形只有文件级帧带
+            // route = 单条目传输全程无点、多条目只有完成瞬间一闪）。
             let byteProgress: (Int64, Int64) -> Void = { done, total in
                 guard onProgress != nil, throttle.shouldReportByte() else { return }
                 let info = TransferEngine.byteFrame(done: done, total: total,
                                                     fileDone: throttle.fileDone,
                                                     fileTotal: targets.count,
-                                                    name: TransferEngine.directName(from: nameBox))
+                                                    name: TransferEngine.directName(from: nameBox),
+                                                    route: frameRoute())
                 onMain { onProgress?(info) }
             }
 
@@ -334,7 +401,7 @@ final class TransferEngine {
             // 重叠 run 的错服务器写入事故由 run() 头部的**串行门**根治（并发 run
             // 不存在 = 共享接缝永远只有一个主人；见 runningFlag 注）；令牌是 belt-and-braces
             // （见 DirectSeamTokenBox 注，非安全机制）。
-            if let (ssrc, sdst) = Self.directSeamSources(src: srcSource, dst: dstSource) {
+            if let (ssrc, sdst) = seamPair {
                 engine.directCrossTransfer = Self.makeDirectSeam(
                     ssrc: ssrc, sdst: sdst, cancel: cancel, nameBox: nameBox,
                     tokenBox: seamToken, myToken: myToken)

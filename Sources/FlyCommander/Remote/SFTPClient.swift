@@ -89,7 +89,10 @@ final class SFTPConnection {
     /// 的后台块调用，与 lock 无涉）。读取（lastCopyRoute）无锁——UI 只经
     /// TransferEngine 的文件级帧拿值，竞态仅影响展示时机，不影响正确性。
     /// 供 TransferEngine 逐文件上报 CopyRoute，让 UI 显示「服务器端复制 / 本机中转（原因）」。
-    private(set) var lastCopyRoute: CopyRoute = .relayed(.channelGone)
+    /// **初值 nil = 还没走过任何复制 = 路由未知**（面板据此隐藏路由行）。旧初值
+    /// `.relayed(.channelGone)` 会在「接缝 gate 过但条目被目标同名守卫挡下走 pump」
+    /// 这类无写点场景露出 = 「命令通道异常」谎话上屏。未知就该显示未知。
+    private(set) var lastCopyRoute: CopyRoute?
 
     init(config: SFTPConnectionConfig, store: SFTPHostKeyStore) throws {
         let authMethod: SSHAuthenticationMethod

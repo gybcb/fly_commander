@@ -33,12 +33,56 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         XCTAssertEqual(f.fileDone, 1)
         XCTAssertEqual(f.fileTotal, 2)
         XCTAssertTrue(f.name.isEmpty, "字节帧不带名字（沿用上一帧）")
-        XCTAssertNil(f.route, "字节帧不带 route（文件级帧携带）")
+        XCTAssertNil(f.route, "默认无 route（引擎侧显式传帧路由）")
     }
 
     func testByteFramePassesPositiveTotalThrough() {
         let f = TransferEngine.byteFrame(done: 30, total: 100, fileDone: 0, fileTotal: 1)
         XCTAssertEqual(f.bytesTotal, 100)
+    }
+
+    /// 字节帧携带路由（用户可见性修复）：路由行此前只在**条目完成帧**出现 =
+    /// 单条目传输全程无点、多条目只有完成瞬间一闪。byteFrame 加 route 参数，
+    /// run() 的字节帧逐帧读当前路由（直传提前镜像/镜像回退都即时可见）。
+    /// 变异证伪：byteFrame 忽略 route 参数恒 nil → 断言挂。
+    func testByteFrameCarriesRoute() {
+        let f = TransferEngine.byteFrame(done: 30, total: 100, fileDone: 0, fileTotal: 1,
+                                         route: .directCrossHost)
+        XCTAssertEqual(f.route, .directCrossHost)
+    }
+
+    // MARK: - 帧路由计划（色点语义只覆盖跨双服务器）
+
+    /// 判定表：跨双 SFTP（sourceID 不等）才给路由（读目标连接的当前值）；
+    /// 任一端本地 / 同一服务器 → nil。本地↔远程的「中转」无判断价值（必然中转），
+    /// 且目标连接初值 .channelGone 会把「命令通道异常」这句谎话打上线——本函数把它挡住。
+    /// 变异证伪：frameRoute 删本地端守卫 → 本地两条断言挂（SFTPSource 未连接读 nil
+    /// 会假绿，故守卫必须显式在，不能靠 Optional chaining 兜）。
+    func testFrameRoutePlan() {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 2222)
+        let local = LocalFileSource()
+        XCTAssertNil(TransferEngine.frameRoute(src: local, dst: b), "上传（源本地）不给点")
+        XCTAssertNil(TransferEngine.frameRoute(src: a, dst: local), "下载（目标本地）不给点")
+        // 同一服务器：透传（cp 路的 .serverSide 绿点是既有可见行为，本函数不得砍）。
+        XCTAssertNil(TransferEngine.frameRoute(src: a, dst: a), "未连接透传 nil（连接后有 cp 真值）")
+        // 跨双 SFTP：透传目标连接当前值（未连接 = nil 是合法初值，连接后见 e2e 锁）。
+        XCTAssertNil(TransferEngine.frameRoute(src: a, dst: b), "未连接时透传 nil")
+    }
+
+    /// 无接缝跨服务器的种路由（诚实黄开局）：双 SFTP 异机但接缝不过 gate
+    /// （= 源端密码认证，先天无 A→B 信任可测）→ `.relayed(.needsAuth)`。
+    /// 变异证伪：noSeamSeedRoute 改成恒 nil → 首断言挂；同/本地端不守卫 → 其余挂。
+    func testNoSeamSeedRouteTable() {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 2222)
+        let pw = sftpSource(host: "gamma.example", port: 22, key: false)
+        let local = LocalFileSource()
+        XCTAssertNotNil(TransferEngine.noSeamSeedRoute(src: pw, dst: b))
+        XCTAssertEqual(TransferEngine.noSeamSeedRoute(src: pw, dst: b), .relayed(.needsAuth))
+        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: a, dst: b), "过 gate 的路由由接缝镜像写")
+        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: a, dst: a), "同源不种")
+        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: local, dst: b), "本地端不种")
     }
 
     /// 端到端语义：bytesTotal=nil 帧进面板 → 扫动态（不定量），不是 0/0 determinate。
@@ -368,6 +412,66 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         { _, _, _, _, onFile, _ in onFile("report.pdf"); return .handled(bytesTransferred: 1) }
         _ = try seam(fileItem(name: "report.pdf", dir: false, size: 1), TCPath("/dst/f"), nil)
         XCTAssertEqual(nameBox.name, "report.pdf")
+    }
+
+    /// 首帧提前镜像绿点：假 rsync 发出**第一行真实进度**（该闸门在 SFTPClient
+    /// 字节桥，能到这里 = 已连上 B 推字节）→ 接缝必须立刻把 `.directCrossHost`
+    /// 镜像给目标源，且**先于**帧抵达调用方（否则面板首帧仍无点）。后续帧不得
+    /// 重复提前镜像（收尾的真值镜像是另一次、应有的）。
+    /// 变异证伪：makeDirectSeam 里删 bridged 包装（bp 原样透传）→ 首帧时刻
+    /// mirrored 里还没有 directCrossHost → 红。
+    func testFirstDirectFrameMirrorsGreenEarly() throws {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 22)   // 无连接：镜像=记录
+        let box = DirectSeamTokenBox()
+        var mirroredAtFirstFrame: [CopyRoute] = []
+        let seam = TransferEngine.makeDirectSeam(
+            ssrc: a, sdst: b, cancel: CancelFlag(), nameBox: DirectNameBox(),
+            tokenBox: box, myToken: box.next())
+        { _, _, _, bp, _, _ in
+            // 真实顺序：rsync 解析出进度 → 桥发帧 → 收尾才 return。帧内必须已见绿。
+            bp?(5, 10)
+            mirroredAtFirstFrame = b.debugMirroredRoutes
+            bp?(10, 10)
+            return .handled(bytesTransferred: 10)
+        }
+        _ = try seam(fileItem(name: "f", dir: false, size: 10), TCPath("/dst/f")) { _, _ in }
+        XCTAssertEqual(mirroredAtFirstFrame, [.directCrossHost],
+                       "首帧抵达调用方时绿点已镜像（提前镜像先于帧），且只此一次")
+        XCTAssertEqual(b.debugMirroredRoutes.count, 2,
+                       "提前 1 次 + 收尾 1 次（收尾=src 无连接 nil 兜底黄=生产既有形状，本例不锁其值）")
+    }
+
+    /// 零字节回退路不得提前镜像：needsAuth 全程零帧（合同）→ 提前镜像的触发
+    /// 条件（有帧）永不满足 → 目标源只看到收尾镜像（黄，src 无连接 → nil 兜底）。
+    /// 变异证伪：把提前镜像挪到接缝入口（无条件写绿）→ 本锁的「无绿」断言挂。
+    func testZeroFrameFallbackNeverMirrorsGreen() throws {
+        let a = sftpSource(host: "alpha.example", port: 22)
+        let b = sftpSource(host: "beta.example", port: 22)
+        let box = DirectSeamTokenBox()
+        let seam = TransferEngine.makeDirectSeam(
+            ssrc: a, sdst: b, cancel: CancelFlag(), nameBox: DirectNameBox(),
+            tokenBox: box, myToken: box.next())
+        { _, _, _, _, _, _ in .unavailable("needsAuth") }   // 零帧
+        _ = try seam(fileItem(name: "f", dir: false, size: 10), TCPath("/dst/f")) { _, _ in }
+        XCTAssertFalse(b.debugMirroredRoutes.contains(.directCrossHost),
+                       "零帧回退绝无绿点：\(b.debugMirroredRoutes)")
+        XCTAssertEqual(b.debugMirroredRoutes.last, .relayed(.channelGone),
+                       "只有收尾镜像（src 无连接 → nil 兜底黄）")
+    }
+
+    /// run() 接线锁：跨双「SFTP 形」源过不了真接缝（假源非 SFTPSource）时，
+    /// 帧路由必须为 nil（本地/非 SFTP 端永不给点）。与 testSeamGateTable 互补：
+    /// 那条锁判定，这条锁**帧管线**确实消费它。
+    /// 变异证伪：run() 里把 route: frameRoute() 改成 route: .relayed(.channelGone)
+    /// → 字节帧 route 断言挂。
+    func testRunFramesHaveNoRouteForNonSFTPSources() throws {
+        let a = memPanes()
+        var frames: [TransferEngine.TransferProgressInfo] = []
+        a.te.run(true, a.srcPane, a.dstPane, cancel: CancelFlag()) { frames.append($0) }
+        XCTAssertFalse(frames.isEmpty, "传输须有帧")
+        XCTAssertTrue(frames.allSatisfy { $0.route == nil },
+                      "非 SFTP 端全程无路由：\(frames.compactMap(\.route))")
     }
 }
 

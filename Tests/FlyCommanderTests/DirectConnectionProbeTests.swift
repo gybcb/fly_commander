@@ -171,8 +171,14 @@ final class DirectConnectionProbeTests: XCTestCase {
         let routes = frames.all().compactMap(\.route)
         XCTAssertTrue(routes.contains(.relayed(.needsAuth)),
                       "文件级帧必须携 .relayed(.needsAuth)，实得 \(routes)")
+        // ②b 色点全程可见（用户可见性修复）：**字节帧**（传输中持续发）也必须携黄。
+        // 旧形只有文件级帧带 route = 单条目传输面板全程无点。
+        let byteRoutes = frames.all().filter { $0.bytesDone != nil }.compactMap(\.route)
+        XCTAssertTrue(byteRoutes.contains(.relayed(.needsAuth)),
+                      "字节帧必须携黄（传输中可见），实得 \(byteRoutes)")
         // ③ 无信任不得出现绿点。
         XCTAssertFalse(routes.contains(.directCrossHost), "无信任时直传绿点 = 谎报")
+        XCTAssertFalse(byteRoutes.contains(.directCrossHost), "字节帧同理")
     }
 
     /// 夹具小工具：在远端目录塞一个文件（makeDirectory + 一次性 streamWrite）。

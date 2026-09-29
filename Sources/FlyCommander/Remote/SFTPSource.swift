@@ -57,7 +57,16 @@ public final class SFTPSource: FileSource {
     /// 只写已有连接（显示字段不值得懒建连；无连接时 lastCopyRoute 本就读 nil）。
     func mirrorRoute(_ route: CopyRoute) {
         _connection?.setRoute(route)
+        #if DEBUG
+        debugMirroredRoutes.append(route)
+        #endif
     }
+
+    #if DEBUG
+    /// 测试用：本实例收到的全部镜像路由（含无连接时的 no-op 写——锁「镜像是否发生 +
+    /// 时机」的观测面；无连接时生产写不进连接，但帧管线锁只关心镜像调用本身）。
+    private(set) var debugMirroredRoutes: [CopyRoute] = []
+    #endif
 
     // MARK: - 连接
 
