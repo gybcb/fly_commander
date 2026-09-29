@@ -30,15 +30,10 @@ public final class SFTPSource: FileSource {
 
     /// 直传对端参数：**由本源自己的连接配置直接投影**（不走连接层——连接可能还没建）。
     /// 无 auth/密码字段：直传只认 A→B 密钥信任，密码绝不入命令行。
+    /// （A→B 有无信任不在本层预判——rsync 在源机上 exec 实测，见
+    /// TransferEngine.directSeamSources 注。Mac→本机的认证方式与 A→B 无关。）
     var peer: DirectRsync.Peer {
         DirectRsync.Peer(host: config.host, port: config.port, username: config.username)
-    }
-
-    /// 密码认证 → 直传先天不可用（不开 rsync）：密码不在信任链路里，A→B 必然要口令。
-    /// （引擎侧不判这个，本层判——supportsDirectCross 决定是否挂接缝。）
-    var supportsDirectCross: Bool {
-        if case .keyFile = config.auth { return true }
-        return false
     }
 
     /// 转发到内部连接（懒建复用）。路由镜像语义见 SFTPConnection.runDirectRsync 注释。

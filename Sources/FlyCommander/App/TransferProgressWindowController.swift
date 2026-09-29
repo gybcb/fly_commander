@@ -41,7 +41,7 @@ final class TransferProgressWindowController: NSWindowController {
     private let detailLabel = NSTextField(labelWithString: "")
     private let routeLabel = NSTextField(labelWithString: "")
     /// 路径色点：绿 = 字节不过本机（serverSide / directCrossHost），黄 = 本机中转。
-    private let routeDot = NSView()
+    private let routeDot = RouteDotView()
     private let progressBar = NSProgressIndicator()
     private let cancelButton = NSButton()
 
@@ -93,8 +93,6 @@ final class TransferProgressWindowController: NSWindowController {
         routeLabel.lineBreakMode = .byTruncatingTail
         routeLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        routeDot.wantsLayer = true
-        routeDot.layer?.cornerRadius = 4
         routeDot.isHidden = true
         routeDot.translatesAutoresizingMaskIntoConstraints = false
 
@@ -142,8 +140,8 @@ final class TransferProgressWindowController: NSWindowController {
             routeLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             routeLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
 
-            routeDot.widthAnchor.constraint(equalToConstant: 8),
-            routeDot.heightAnchor.constraint(equalToConstant: 8),
+            routeDot.widthAnchor.constraint(equalToConstant: 9),
+            routeDot.heightAnchor.constraint(equalToConstant: 9),
             routeDot.centerYAnchor.constraint(equalTo: routeLabel.centerYAnchor),
             routeDot.leadingAnchor.constraint(equalTo: routeLabel.leadingAnchor, constant: -12),
 
@@ -257,8 +255,7 @@ final class TransferProgressWindowController: NSWindowController {
         routeDotGreen = green
         #endif
         if let green {
-            routeDot.layer?.backgroundColor =
-                (green ? NSColor.systemGreen : NSColor.systemYellow).cgColor
+            routeDot.dotGreen = green
         }
         routeLabel.isHidden = route == nil
         routeDot.isHidden = route == nil
@@ -352,5 +349,32 @@ final class TransferProgressWindowController: NSWindowController {
             case .rsyncMissing: return L10n.t(.transRelayedRsyncMissing)
             }
         }
+    }
+}
+
+/// 路由色点：自绘实心圆 + 同色 25% 透明光晕环（LED 质感，替代旧平涂 layer 圆角方块）。
+/// 动态色必须在 draw 内、以视图自身 effectiveAppearance 为上下文解析——
+/// init 定格 cgColor 会在明暗切换/复用路径读旧 currentDrawing（2026-09-14 实测坑），
+/// 故颜色在 draw 里现取，绝不在赋值时算好存 layer。
+final class RouteDotView: NSView {
+    /// nil = 未上色（隐藏中）；true = 绿；false = 黄。setNeedsDisplay 驱动重绘。
+    var dotGreen: Bool? { didSet { needsDisplay = true } }
+
+    override var isFlipped: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let green = dotGreen, let ctx = NSGraphicsContext.current else { return }
+        ctx.saveGraphicsState()
+        ctx.cgContext.setShouldAntialias(true)
+        let color = green ? NSColor.systemGreen : NSColor.systemYellow
+        // 光晕环：外圈 1pt 宽、25% 透明同色（bounds 内缩 0.5 防裁切）。
+        color.withAlphaComponent(0.25).setStroke()
+        let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
+        ring.lineWidth = 1
+        ring.stroke()
+        // 实心核。
+        color.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).fill()
+        ctx.restoreGraphicsState()
     }
 }

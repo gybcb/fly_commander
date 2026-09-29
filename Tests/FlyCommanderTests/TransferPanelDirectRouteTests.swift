@@ -70,21 +70,6 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         XCTAssertNil(TransferEngine.frameRoute(src: a, dst: b), "未连接时透传 nil")
     }
 
-    /// 无接缝跨服务器的种路由（诚实黄开局）：双 SFTP 异机但接缝不过 gate
-    /// （= 源端密码认证，先天无 A→B 信任可测）→ `.relayed(.needsAuth)`。
-    /// 变异证伪：noSeamSeedRoute 改成恒 nil → 首断言挂；同/本地端不守卫 → 其余挂。
-    func testNoSeamSeedRouteTable() {
-        let a = sftpSource(host: "alpha.example", port: 22)
-        let b = sftpSource(host: "beta.example", port: 2222)
-        let pw = sftpSource(host: "gamma.example", port: 22, key: false)
-        let local = LocalFileSource()
-        XCTAssertNotNil(TransferEngine.noSeamSeedRoute(src: pw, dst: b))
-        XCTAssertEqual(TransferEngine.noSeamSeedRoute(src: pw, dst: b), .relayed(.needsAuth))
-        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: a, dst: b), "过 gate 的路由由接缝镜像写")
-        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: a, dst: a), "同源不种")
-        XCTAssertNil(TransferEngine.noSeamSeedRoute(src: local, dst: b), "本地端不种")
-    }
-
     /// 端到端语义：bytesTotal=nil 帧进面板 → 扫动态（不定量），不是 0/0 determinate。
     /// 变异证伪：面板 `total > 0` 放宽成 `bytesTotal != nil` → 0 总量条停扫不动。
     func testNilBytesTotalFrameRendersIndeterminate() {
@@ -253,16 +238,19 @@ final class TransferPanelDirectRouteTests: XCTestCase {
                  isHidden: false, isReadOnly: false, isExecutable: false)
     }
 
-    /// 判定表：双 SFTP 异机 + 源端 keyFile 才挂接缝；同源/密码认证/任一端本地 → nil。
-    /// 变异证伪：directSeamSources 里删 supportsDirectCross 条件 → 密码认证断言挂；
+    /// 判定表：双 SFTP 异机即挂接缝（**认证方式不参与判定**）；同源 / 任一端本地 → nil。
+    /// A→B 信任由接缝内 rsync batchmode **实测**，与 Mac→A 用密码还是 keyFile 无关
+    /// （rsync 在源机上跑、用源机自己的 ssh 密钥连目标，密码从不入命令行）。
+    /// 变异证伪：directSeamSources 若残留任何 auth/supportsDirectCross 判定 → 密码认证断言挂；
     /// 删 sourceID 不等条件 → 同源断言挂。
     func testSeamGateTable() {
         let a = sftpSource(host: "alpha.example", port: 22)
         let b = sftpSource(host: "beta.example", port: 2222)
         XCTAssertNotNil(TransferEngine.directSeamSources(src: a, dst: b))
         XCTAssertNil(TransferEngine.directSeamSources(src: a, dst: a), "同源不得挂接缝")
-        let pw = sftpSource(host: "beta.example", port: 2222, key: false)
-        XCTAssertNil(TransferEngine.directSeamSources(src: pw, dst: b), "源端密码认证无信任先天")
+        let pw = sftpSource(host: "gamma.example", port: 22, key: false)
+        XCTAssertNotNil(TransferEngine.directSeamSources(src: pw, dst: b),
+                        "认证方式与 A→B 信任无关：密码源端照样挂接缝真试 rsync")
         let local = LocalFileSource()
         XCTAssertNil(TransferEngine.directSeamSources(src: local, dst: b), "源端本地")
         XCTAssertNil(TransferEngine.directSeamSources(src: a, dst: local), "目标端本地")

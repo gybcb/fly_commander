@@ -193,30 +193,21 @@ final class TransferEngine {
         return sdst.lastCopyRoute
     }
 
-    /// 无接缝跨服务器的开局路由（诚实黄种子）：双 SFTP 异机但接缝不过 gate
-    /// （= 源端密码认证，先天无 A→B 信任）→ `.relayed(.needsAuth)`「双机免密信任
-    /// 未建立」。run() 在接缝判定 else 路把它种进目标连接，使字节帧从第一帧起
-    /// 就携黄——此前跨服务器 pump 全程读 `.channelGone` 初值（假文案）或 nil（无点）。
-    /// 过 gate 的路由由接缝镜像写真值，不种。
-    static func noSeamSeedRoute(src: FileSource, dst: FileSource) -> CopyRoute? {
-        guard let ssrc = src as? SFTPSource, dst is SFTPSource,
-              src.sourceID != dst.sourceID, !ssrc.supportsDirectCross
-        else { return nil }
-        return .relayed(.needsAuth)
-    }
-
     /// 直传名字框 → 帧名（纯函数，spec 决策 #2「当前文件名取 --progress 文件名行」）。
     /// nil（本周期无新文件名行）→ ""（面板沿用上一帧）。变异证伪见
     /// DirectRsyncTests.testParserFileNameReachesFrameName。
     static func directName(from box: DirectNameBox) -> String { box.name ?? "" }
 
-    /// 直传接缝的启用判定（纯函数，可单测）：两端皆 SFTP + 不同服务器 + 源端 keyFile
-    /// 认证（密码认证先天无 A→B 信任，A 上 ssh 必然要口令）才可能；否则不挂接缝
-    /// = 引擎零调用。锁在 TransferPanelDirectRouteTests.testSeamGateTable。
+    /// 直传接缝的启用判定（纯函数，可单测）：两端皆 SFTP + 不同服务器。
+    /// **认证方式不参与判定**：rsync 在源机上 exec、用源机自己的 ssh 密钥连目标机
+    /// （-oBatchMode=yes），与 Mac→源机这一跳用密码还是密钥无关（密码从不入命令行，
+    /// 见 DirectRsync.Peer 无 auth 字段）。A→B 有无免密信任由 rsync 自己实测：
+    /// 有 → .handled 绿点；无 → batchmode 立即失败 → classify 判真因回退 pump 黄点。
+    /// 锁在 TransferPanelDirectRouteTests.testSeamGateTable。
     static func directSeamSources(src: FileSource, dst: FileSource)
         -> (ssrc: SFTPSource, sdst: SFTPSource)? {
         guard let ssrc = src as? SFTPSource, let sdst = dst as? SFTPSource,
-              ssrc.sourceID != sdst.sourceID, ssrc.supportsDirectCross
+              ssrc.sourceID != sdst.sourceID
         else { return nil }
         return (ssrc, sdst)
     }
@@ -353,20 +344,12 @@ final class TransferEngine {
             }
 
             // 帧路由（色点全程可见）：= 目标连接的当前路由值，且仅跨双 SFTP 才给
-            // （本地端/同服务器 → nil，见 frameRoute 注）。
-            // 无接缝跨服务器（源端密码认证）的诚实黄种子在此算好：pump 路从不写路由，
-            // 帧读到的是连接初值 `.channelGone` = 「命令通道异常」谎话。种子在
-            // **帧时刻**补写（mirrorRoute 只写已有连接，而 pump 首帧必然晚于
-            // streamWrite 懒建连 = 必达；本 run 无接缝 = 该值永远不会被真值覆盖，
-            // 逐帧重复写幂等无害）。
+            // （本地端/同服务器 → nil，见 frameRoute 注）。跨双 SFTP 恒有接缝（gate
+            // 只判「双异机 SFTP」，认证方式不参与），路由真值由接缝镜像写入——
+            // 包括回退路（rsync 失败 → classify 真因 → mirrorRoute 抄进目标连接）。
             let seamPair = Self.directSeamSources(src: srcSource, dst: dstSource)
-            let routeSeed: CopyRoute? = seamPair == nil
-                ? Self.noSeamSeedRoute(src: srcSource, dst: dstSource) : nil
             let frameRoute: () -> CopyRoute? = {
-                if let seed = routeSeed, let sdst = dstSource as? SFTPSource {
-                    sdst.mirrorRoute(seed)
-                }
-                return TransferEngine.frameRoute(src: srcSource, dst: dstSource)
+                TransferEngine.frameRoute(src: srcSource, dst: dstSource)
             }
 
             // 文件级：工具栏百分比（既有语义）+ onProgress（必报，不节流）。
