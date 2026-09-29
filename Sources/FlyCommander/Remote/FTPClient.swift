@@ -1178,7 +1178,7 @@ public final class FTPClient: @unchecked Sendable {
     }
 }
 
-/// RETR 句柄状态（同 ReadCursor 先例：类盒，上层锁内使用）。
+/// RETR 句柄状态（同 CPSupport 先例：类盒，上层锁内使用）。
 /// expected = SIZE 权威预期字节（nil=服务器无 SIZE/取不到 → 不做字节校验）；
 /// transferStarted = RETR 已被 150/125 接受（此后弃用会在控制连接上滞留 226）；
 /// confirmedComplete = 排到了 226/250。

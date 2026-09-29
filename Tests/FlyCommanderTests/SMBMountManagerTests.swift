@@ -132,6 +132,19 @@ final class SMBMountManagerTests: XCTestCase {
             "已挂在本挂载点（root 下）返回 nil —— 由 isMounted 复用分支处理")
     }
 
+    // MARK: - 默认 runList 路径锁（不注入 fake——全部既有测试注入假表，
+    // 真路径 /usr/bin/mount 不存在被 exec 吞成错误文案 → shareMountedPoint/
+    // isMounted/reclaimStale 三判据一起静默死亡的 bug 从未见红。真身 = /sbin/mount。）
+
+    func testDefaultRunListReadsRealMountTable() {
+        let out = SMBMountManager.defaultRunList()
+        XCTAssertTrue(out.contains(" on /"),
+                      "默认挂载表必须来自 /sbin/mount（真挂载表含 \" on /\" 行），实得：\(out.prefix(160))")
+        // 排除 exec 吞错回吐的文案形态
+        XCTAssertFalse(out.contains("doesn't exist") || out.contains("No such file"),
+                       "runList 拿回的是执行错误文案而非挂载表：\(out.prefix(160))")
+    }
+
     // MARK: - mount 表含空格解析（按 " on "/" (" 切，不能按空格切列）
 
     func testParseMountLineWithSpacesInDeviceAndMountPoint() {

@@ -61,6 +61,12 @@ public final class SFTPSource: FileSource {
     /// 测试用：本实例收到的全部镜像路由（含无连接时的 no-op 写——锁「镜像是否发生 +
     /// 时机」的观测面；无连接时生产写不进连接，但帧管线锁只关心镜像调用本身）。
     private(set) var debugMirroredRoutes: [CopyRoute] = []
+
+    /// 测试用（PipelinedTransferTests 鉴别力锁）：本连接 pump 的读窗/写窗历史在途峰值。
+    /// 旧串行实现恒 1；流水线 > 1。连接未建（还没传过）→ 0。
+    var debugMaxReadInflight: Int { _connection?.transferPeaks.maxReadInflight ?? 0 }
+    var debugMaxWriteInflight: Int { _connection?.transferPeaks.maxWriteInflight ?? 0 }
+    func debugResetTransferPeaks() { _connection?.transferPeaks.reset() }
     #endif
 
     // MARK: - 连接
