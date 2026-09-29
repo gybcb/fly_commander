@@ -26,6 +26,43 @@ public final class SFTPSource: FileSource {
     /// TransferEngine 逐文件上报此值，让 UI 显示「服务器端复制 / 本机中转（原因）」。
     public var lastCopyRoute: CopyRoute? { _connection?.lastCopyRoute }
 
+    // MARK: - 跨服务器直传（Task 4 连接面）
+
+    /// 直传对端参数：**由本源自己的连接配置直接投影**（不走连接层——连接可能还没建）。
+    /// 无 auth/密码字段：直传只认 A→B 密钥信任，密码绝不入命令行。
+    /// （A→B 有无信任不在本层预判——rsync 在源机上 exec 实测，见
+    /// TransferEngine.directSeamSources 注。Mac→本机的认证方式与 A→B 无关。）
+    var peer: DirectRsync.Peer {
+        DirectRsync.Peer(host: config.host, port: config.port, username: config.username)
+    }
+
+    /// 转发到内部连接（懒建复用）。路由镜像语义见 SFTPConnection.runDirectRsync 注释。
+    func runDirectRsync(item: DirectRsync.ItemTarget, peer: DirectRsync.Peer,
+                        totalHint: Int64?,
+                        byteProgress: ((Int64, Int64) -> Void)?,
+                        onFile: ((String) -> Void)? = nil,
+                        cancel: CancelFlag?) throws -> DirectOutcome {
+        try conn().runDirectRsync(item: item, peer: peer, totalHint: totalHint,
+                                  byteProgress: byteProgress, onFile: onFile, cancel: cancel)
+    }
+
+    /// 接缝回传路由：直传跑在**源**连接上、route 写进源的 lastCopyRoute，
+    /// 面板 fileProgress 读的是**目标**源 → TransferEngine 拿到接缝结果后调本方法把
+    /// src 的路由抄进本连接。`.handled` 与 `.unavailable` 两条都要镜像（黄点靠这条）。
+    /// 只写已有连接（显示字段不值得懒建连；无连接时 lastCopyRoute 本就读 nil）。
+    func mirrorRoute(_ route: CopyRoute) {
+        _connection?.setRoute(route)
+        #if DEBUG
+        debugMirroredRoutes.append(route)
+        #endif
+    }
+
+    #if DEBUG
+    /// 测试用：本实例收到的全部镜像路由（含无连接时的 no-op 写——锁「镜像是否发生 +
+    /// 时机」的观测面；无连接时生产写不进连接，但帧管线锁只关心镜像调用本身）。
+    private(set) var debugMirroredRoutes: [CopyRoute] = []
+    #endif
+
     // MARK: - 连接
 
     private func conn() throws -> SFTPConnection {

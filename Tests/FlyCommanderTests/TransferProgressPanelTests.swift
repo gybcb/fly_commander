@@ -83,16 +83,17 @@ final class TransferProgressPanelTests: XCTestCase {
         XCTAssertEqual(f(.infinity), "")
     }
 
-    /// 全路由中文案非空且区分（服务器端 vs 四种回退原因各不同）。
+    /// 全路由中文案非空且两两不同（服务器端 / 直传 / 六种回退原因各自的串）。
     /// 变异证伪：任一 case 落到相同 L10nKey 或漏 case（编译挂）→ 相等断言挂。
     func testRouteTextDistinctPerCase() {
-        let texts = [CopyRoute.serverSide,
+        let texts = [CopyRoute.serverSide, .directCrossHost,
                      .relayed(.execRejected), .relayed(.cpMissing),
-                     .relayed(.unsupportedFlags), .relayed(.channelGone)].map {
+                     .relayed(.unsupportedFlags), .relayed(.channelGone),
+                     .relayed(.needsAuth), .relayed(.rsyncMissing)].map {
             TransferProgressWindowController.routeText($0)
         }
         for t in texts { XCTAssertFalse(t.isEmpty) }
-        XCTAssertEqual(Set(texts).count, 5, "五种路由文案应两两不同")
+        XCTAssertEqual(Set(texts).count, 8, "八种路由文案应两两不同")
     }
 
     // MARK: - headless 状态迁移
@@ -211,5 +212,67 @@ final class TransferProgressPanelTests: XCTestCase {
         TransferProgressWindowController.refreshLocalizedTextIfCreated()
         XCTAssertEqual(wc.window?.title, L10n.t(.transferring))
         XCTAssertNotEqual(wc.probe.cancel.title, "取消", "旧中文串不应残留")
+    }
+
+    // MARK: - 直传色点 + 文案（spec §3）
+
+    func testRouteTextDirectAndNewReasons() {
+        XCTAssertEqual(TransferProgressWindowController.routeText(.directCrossHost),
+                       L10n.t(.transDirectCrossHost))
+        XCTAssertEqual(TransferProgressWindowController.routeText(.relayed(.needsAuth)),
+                       L10n.t(.transRelayedNeedsAuth))
+        XCTAssertEqual(TransferProgressWindowController.routeText(.relayed(.rsyncMissing)),
+                       L10n.t(.transRelayedRsyncMissing))
+    }
+
+    /// 色点：绿 = serverSide|directCrossHost；黄 = relayed(任意原因)。
+    /// apply(route:) 把点色写进可探属性（真窗色彩断言在缩减 SDK 下不稳，探针先例）。
+    func testDotColorThreeStates() {
+        let wc = TransferProgressWindowController.createWithoutPresentingForTest()
+        wc.applyProbeRoute(.serverSide)
+        XCTAssertEqual(wc.probe.routeDotGreen, true)
+        wc.applyProbeRoute(.directCrossHost)
+        XCTAssertEqual(wc.probe.routeDotGreen, true)
+        wc.applyProbeRoute(.relayed(.needsAuth))
+        XCTAssertEqual(wc.probe.routeDotGreen, false)
+        wc.applyProbeRoute(nil)
+        XCTAssertNil(wc.probe.routeDotGreen, "无 route = 点隐藏（属性为 nil）")
+    }
+
+    /// 布局回归（用户报「路由行和速度/文件行重叠」）：旧形 routeLabel 与 detailLabel
+    /// 同基线一头一尾对钉，路由文案长就横向撞进字节+速度串。修法 = 路由行独立
+    /// 换行（detail 之下）。锁 = 强制布局后**几何断言**：路由 frame 完全在 detail
+    /// 之下（垂直无交叠），且两行都在窗口内容区内。
+    /// 变异证伪：routeLabel.top 改回 progressBar.bottom+8（同基线旧形）→
+    /// 「route.minY >= detail.maxY」断言挂（两 frame 垂直交叠）。
+    func testRouteLabelIsOwnRowBelowDetail() {
+        let wc = TransferProgressWindowController.createWithoutPresentingForTest()
+        wc.resetForTransferForTest(isCopy: true, fileTotal: 1, cancel: CancelFlag())
+        // 真值驱动（不走 applyProbeRoute——布局锁要的是真帧）：字节帧带定量+路由，
+        // 面板同时渲染 detail（字节/速度）与 route 行。
+        let info = TransferEngine.TransferProgressInfo(
+            name: "big.bin", fileDone: 0, fileTotal: 1,
+            bytesDone: 4_000_000, bytesTotal: 8_000_000, route: .relayed(.needsAuth))
+        wc.apply(info)
+        guard let content = wc.window?.contentView else { return XCTFail("无 contentView") }
+        content.layoutSubtreeIfNeeded()
+        let detail = wc.probe.detailLabel.frame
+        let route = wc.probe.routeLabel.frame
+        XCTAssertFalse(wc.probe.routeLabel.isHidden, "route 帧必须已渲染")
+        // 方向无关的重叠判据：两 label 的垂直区间不得相交（旧同基线形 = 区间重合 →
+        // 横向撞字；新独立成行 = 区间分离）。坐标系翻转与否不影响区间相交判定。
+        let disjoint = route.maxY <= detail.minY || detail.maxY <= route.minY
+        XCTAssertTrue(disjoint,
+                      "路由行与 detail 行垂直区间必须分离（重叠回归）detail=\(detail) route=\(route)")
+        XCTAssertGreaterThan(route.width, 10, "路由文案须有实宽（长文案场景）")
+        XCTAssertLessThanOrEqual(route.maxX, content.bounds.maxX, "不得越出内容区")
+        // 截图实证的第二种撞法（168 高旧窗口）：路由行被挤进取消按钮区 →
+        // 路由与按钮的垂直区间也不得相交 + 路由不得越出内容底界（非翻转 y=0 底）。
+        let cancel = wc.probe.cancel.frame
+        let cancelDisjoint = route.maxY <= cancel.minY || cancel.maxY <= route.minY
+        XCTAssertTrue(cancelDisjoint,
+                      "路由行不得撞取消按钮 route=\(route) cancel=\(cancel)")
+        XCTAssertGreaterThanOrEqual(route.minY, content.bounds.minY,
+                                    "路由行不得被窗口底裁切（固定高须够）")
     }
 }

@@ -4,6 +4,15 @@ public final class OperationEngine {
     private let fm: FileManager
     public init(fileManager: FileManager = .default) { self.fm = fileManager }
 
+    /// 跨机直传接缝（App 层注入；nil = 永远 pump）。粒度 = 顶层条目：
+    /// `.handled` 时**整条（含整棵目录树）已由实现方完成**，引擎不得再递归；
+    /// `.unavailable` 时**未传输任何字节**，引擎从干净状态走 pump。
+    /// 启用条件（两端皆 sftp 且不同服务器）由注入方自查，引擎不看 source 类型。
+    /// 契约：后台线程调用；抛错 = 传输失败（不回退）；byteProgress 第二参 0 = 总量未知。
+    public var directCrossTransfer: (
+        (_ item: FileItem, _ destDir: TCPath, _ byteProgress: ((Int64, Int64) -> Void)?) throws -> DirectOutcome
+    )?
+
     // MARK: - 按数据源分流（T3）
     // 同源（src.sourceID == dst.sourceID）：走源内快路径（本地 fm / SFTP 服务端 rename）。
     // 跨源：流式传输 src.openReader → dst.streamWrite（64KB 块）；
@@ -28,12 +37,27 @@ public final class OperationEngine {
                             cancel: CancelFlag? = nil) throws {
         var overwriteAll = false, skipAll = false
         var lastTotals: (done: Int64, total: Int64)?
+        // 直传粘连：整批只问一次，`.unavailable` 后同批不再问（失败原因在批量级别不会自愈）。
+        var directFailed = false
         let total = items.count
         let cross = srcSource.sourceID != dstSource.sourceID
         for (i, item) in items.enumerated() {
             if cancel?.isCancelled == true { throw TCError.cancelled }
             let dst = destDir.joining(item.name)
             if cross, item.isDirectory {
+                // 守卫：目标**任何同名在位**（目录=合并语义、文件=覆盖冲突）→ 接缝零调用，
+                // 全部交 copyDirectoryCross 既有语义判定（rsync 表达不了合并/冲突提示）。
+                // 只 stat 不弹提示：守卫若弹提示，copyDirectoryCross 会弹第二次（双弹窗回归）。
+                let destExists = directCrossTransfer != nil && !directFailed
+                    && (try? dstSource.stat(dst)) != nil
+                if !destExists, directCrossTransfer != nil, !directFailed {
+                    switch try askDirect(item, dst, byteProgress: byteProgress) {
+                    case .handled:
+                        progress?(i + 1, total)
+                        continue                                   // 整树已完成，引擎不递归
+                    case .unavailable: directFailed = true          // sticky
+                    }
+                }
                 // 目录冲突走 copyDirectoryCross 的**合并**语义——绝不进 resolveConflict
                 // （其 overwrite 分支 removeItem 会删掉整棵目标目录树，灾难级）。
                 let bytesBefore = lastTotals?.total
@@ -49,6 +73,12 @@ public final class OperationEngine {
                     progress?(i + 1, total); continue
                 }
                 if cross {
+                    // 文件：resolveConflict 已保证目标干净（不存在或覆盖已删）→ 可问接缝。
+                    if directCrossTransfer != nil, !directFailed,
+                       case .handled = try askDirect(item, dst, byteProgress: byteProgress) {
+                        progress?(i + 1, total)
+                        continue
+                    } else if directCrossTransfer != nil { directFailed = true }
                     try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
                                byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
                 } else {
@@ -72,6 +102,8 @@ public final class OperationEngine {
         // 同源 move 失败需回滚已完成项；跨源 move 传输成功后不回滚（删源失败只记警告）。
         var rolledBack: [(from: TCPath, to: TCPath)] = []
         var lastTotals: (done: Int64, total: Int64)?
+        // 直传粘连（语义同 performCopy）。
+        var directFailed = false
         let sameSource = srcSource.sourceID == dstSource.sourceID
         let total = items.count
         for (i, item) in items.enumerated() {
@@ -80,6 +112,22 @@ public final class OperationEngine {
                 // 取消检查放在 do **内**：抛 .cancelled 走下方 catch，回滚已完成的同源 move。
                 if cancel?.isCancelled == true { throw TCError.cancelled }
                 if !sameSource, item.isDirectory {
+                    // 守卫：目标**任何同名在位**（目录=合并语义、文件=覆盖冲突）→ 接缝零调用，
+                    // 全部交 copyDirectoryCross 既有语义判定（只 stat 不弹，弹提示会与
+                    // copyDirectoryCross 的提示叠成双弹窗）。
+                    let destExists = directCrossTransfer != nil && !directFailed
+                        && (try? dstSource.stat(dst)) != nil
+                    if !destExists, directCrossTransfer != nil, !directFailed {
+                        switch try askDirect(item, dst, byteProgress: byteProgress) {
+                        case .handled:
+                            // 整树已由接缝完成 → 删源根一次（递归删是各源 removeItem 的合同）。
+                            do { try srcSource.removeItem(at: item.path) }
+                            catch { onWarning?(item.name, asTCError(error)) }
+                            progress?(i + 1, total)
+                            continue
+                        case .unavailable: directFailed = true      // sticky → 落原合并路
+                        }
+                    }
                     // 目录：合并语义递归泵（不进 resolveConflict——其 overwrite 删目标树），
                     // 整体传完后删源根一次（源 removeItem 各实现皆递归）。
                     // 返回 true=整目录被 skip → 没传任何东西，**不得删源**。
@@ -107,6 +155,16 @@ public final class OperationEngine {
                         try dstSource.moveItem(from: item.path, to: dst)
                         rolledBack.append((from: dst, to: item.path))
                     } else {
+                        // 跨源文件：resolveConflict 已保证目标干净 → 可问接缝。
+                        // 接缝抛错进本 do 的 catch：rolledBack 在跨源路从不 append（回滚为空），
+                        // throw asTCError 原样上抛——与 pump 抛错同路。
+                        if directCrossTransfer != nil, !directFailed,
+                           case .handled = try askDirect(item, dst, byteProgress: byteProgress) {
+                            do { try srcSource.removeItem(at: item.path) }
+                            catch { onWarning?(item.name, asTCError(error)) }
+                            progress?(i + 1, total)
+                            continue
+                        } else if directCrossTransfer != nil { directFailed = true }
                         try stream(from: srcSource, to: dstSource, src: item.path, dst: dst,
                                    byteProgress: byteProgress, cancel: cancel, lastTotals: &lastTotals)
                         do { try srcSource.removeItem(at: item.path) }
@@ -265,6 +323,37 @@ public final class OperationEngine {
         case .cancel: throw TCError.cancelled
         }
     }
+
+    /// 问接缝，字节帧**逐条目原样透传**（spec §1：(本条目已传, 本条目总量)，
+    /// 0=未知——与 pump 的单文件语义逐字一致，终审 B2 裁定）。
+    /// 旧实现把已完成条目字节做基线加进帧里（跨条目累计），与接缝实现自报的
+    /// **当前文件** total 分母错配 → done>total 稳态、面板恒 100%。跨条目总量
+    /// 若将来要做，必须连全部 pump 路一起重设（carry），不在帧里偷加。
+    /// `.handled` 且最后一帧未满（含一帧未报）→ 引擎补一帧拉满，否则面板百分比残留
+    /// 在中间态（与 mergeDirectoryProgress 同合同、同触发形：done != total 才补；
+    /// total=0 的不定量帧恒不补）。
+    private func askDirect(_ item: FileItem, _ dst: TCPath,
+                           byteProgress: ((Int64, Int64) -> Void)?) throws -> DirectOutcome {
+        guard let seam = directCrossTransfer else { return .unavailable("no seam") }
+        let last = LastFrame()                     // 逃逸闭包不能捕获局部 var → 装箱
+        let wrapped: ((Int64, Int64) -> Void)? = byteProgress.map { bp in
+            { done, total in
+                last.raw = (done, total)
+                bp(done, total)                    // 逐条目合同：不加工，原样透传
+            }
+        }
+        let outcome = try seam(item, dst, wrapped)
+        // 一帧未报（raw==nil）或有帧但未满（且定量）→ 补拉满帧（`(nil)?.done !=
+        // (nil)?.total` 为 false，nil 须显式短路）。
+        if case .handled(let bytes) = outcome, bytes > 0,
+           last.raw == nil || (last.raw!.0 != last.raw!.1 && last.raw!.1 > 0) {
+            wrapped?(bytes, bytes)
+        }
+        return outcome
+    }
+
+    /// 接缝最后一帧（原始未累计值）的装箱（供 askDirect 的逃逸闭包使用）。
+    private final class LastFrame { var raw: (done: Int64, total: Int64)? }
 
     /// 跨源流式复制（64KB 块）。字节进度在 reader 闭包内累加（协议零改动）；
     /// totalBytes==0（stat 拿不到大小）**不报字节**——宁缺毋假（否则恒 100% 或除零）。

@@ -84,9 +84,15 @@ final class SFTPConnection {
     /// 服务器 cp 是否支持 -a（连接级缓存：nil=未知，false=BSD 方言用 -Rp）。
     /// 类盒先例 = ReadCursor：@Sendable 闭包捕获类常量、锁内改属性。
     private let cpFlags = CPSupport()
-    /// 上一次 copyFile 实际走过的路径（锁内写，无锁读——竞态仅影响 UI 展示时机，不影响正确性）。
+    /// 上一次复制实际走过的路径。写纪律：**后台传输线程**（copyFile 在 lock 内写；
+    /// runDirectRsync/setRoute 在接缝闭包里写——接缝本就只被 performCopy/performMove
+    /// 的后台块调用，与 lock 无涉）。读取（lastCopyRoute）无锁——UI 只经
+    /// TransferEngine 的文件级帧拿值，竞态仅影响展示时机，不影响正确性。
     /// 供 TransferEngine 逐文件上报 CopyRoute，让 UI 显示「服务器端复制 / 本机中转（原因）」。
-    private(set) var lastCopyRoute: CopyRoute = .relayed(.channelGone)
+    /// **初值 nil = 还没走过任何复制 = 路由未知**（面板据此隐藏路由行）。旧初值
+    /// `.relayed(.channelGone)` 会在「接缝 gate 过但条目被目标同名守卫挡下走 pump」
+    /// 这类无写点场景露出 = 「命令通道异常」谎话上屏。未知就该显示未知。
+    private(set) var lastCopyRoute: CopyRoute?
 
     init(config: SFTPConnectionConfig, store: SFTPHostKeyStore) throws {
         let authMethod: SSHAuthenticationMethod
@@ -246,6 +252,112 @@ final class SFTPConnection {
         }
     }
 
+    /// 跨服务器直传：本连接（A）上 exec rsync 推到 peer（B）。**不持 SFTP lock**
+    /// （exec 通道独立于 sftp 子系统；持锁会把目标窗格浏览挡到 rsync 结束——
+    /// copyFile 持锁是两阶段秒级操作，rsync 可分钟级，语义不同）。
+    /// 认证前提：A→B 密钥信任在场；B 需要口令 → 命令里的 -oBatchMode=yes 立即失败。
+    /// 调用方（TransferEngine 接缝）保证在后台线程。
+    ///
+    /// 路由回传约定（重要）：本方法把结果写进**本（src）连接**的 lastCopyRoute，
+    /// 但面板 fileProgress 读的是**目标**源的路由 → 调用方拿到返回值后必须
+    /// `dst.mirrorRoute(src.lastCopyRoute)`，且 `.handled` 与 `.unavailable` **两条都镜像**
+    /// （回退路的黄点就靠 unavailable 这条）。抛错路不镜像（面板走错误态）。
+    func runDirectRsync(item: DirectRsync.ItemTarget, peer: DirectRsync.Peer,
+                        totalHint: Int64?,
+                        byteProgress: ((Int64, Int64) -> Void)?,
+                        onFile: ((String) -> Void)? = nil,
+                        cancel: CancelFlag?) throws -> DirectOutcome {
+        try awaitBlocking { () -> DirectOutcome in
+            let session: SSHSession
+            do { session = try await self.conn.openExec(DirectRsync.command(item: item, peer: peer)) }
+            catch {
+                // 通道级失败也要写路由（终审 B3，见 channelIssue 注）：接缝随后把本连接
+                // lastCopyRoute 镜像给 dst，不写 = 镜像上一条 → 假绿点。
+                let issue = Self.channelIssue(error)
+                self.lastCopyRoute = issue.route
+                return issue.outcome
+            }
+            defer { Task { try? await session.close() } }  // 结束/取消统一关通道 → 远端 rsync 收 SIGHUP
+            let parser = RsyncProgressParser()
+            var stderrBuf = Data()
+            var exit: UInt32?
+            var cancelled = false
+            while true {
+                if cancel?.isCancelled == true { cancelled = true; break }
+                // nextEvent 真抛 = 通道级异常 → 转 .unavailable（与 copyFile 的 execute
+                // 抛错同政策：能力/通道问题回退 pump，不当传输失败）。
+                // 已知限制（终审 N4 carry）：取消只在事件边界生效，rsync 静默
+                // （无数据/无 exit）时延迟无上界——与 exec cp「等当前文件自然完成」同档。
+                let ev: SSHSessionEvent?
+                do { ev = try await session.nextEvent() }
+                catch {
+                    let issue = Self.channelIssue(error)   // 同上（B3）：不写 = 镜像假绿
+                    self.lastCopyRoute = issue.route
+                    return issue.outcome
+                }
+                guard let ev else { break }   // nil = 通道关
+                switch ev {
+                case .standardOutput(let b): parser.feed(String(decoding: b, as: UTF8.self))
+                case .standardError(let b):
+                    stderrBuf.append(contentsOf: b)
+                    parser.feed(String(decoding: b, as: UTF8.self))
+                case .exitStatus(let s): exit = s
+                case .exitSignal, .endOfFile: break
+                }
+                // 进度桥（合同：`.unavailable` 必须零字节帧）：只在解析出真实
+                // 进度行后才转帧——认证失败/rsync 缺失等「一字节未动」的回退路全程
+                // 静默。帧的**范围**由 progressFrame 按条目类型定（终审 B2：逐条目
+                // 合同，目录不得拿当前文件 total 当分母）；parser 每条目新建 →
+                // fileBytesDone 天然 = 本条目已传。名字（spec 决策 #2）= 本事件周期
+                // 内被数值行消费掉的文件名，拉取后清空（面板空名沿用上一帧）。
+                if parser.fileBytesDone > 0 {
+                    // 名字先拉后发帧：帧名 = 本事件周期被数值行消费掉的文件名
+                    // （spec 决策 #2；pump 路字节帧无名 = 面板沿用上一帧）。
+                    let name = parser.consumedFileName
+                    if let name { onFile?(name) }
+                    parser.consumedFileName = nil
+                    // 零字节帧闸门（Task 4 合同）：`.unavailable` 必须零帧——只在
+                    // 解析出真实进度后才转帧（认证失败/rsync 缺失等全程静默）。
+                    if let bp = byteProgress {
+                        let f = DirectRsync.progressFrame(isDirectory: item.isDirectory,
+                                                         entryDone: parser.fileBytesDone,
+                                                         totalHint: totalHint)
+                        bp(f.done, f.total)
+                    }
+                }
+            }
+            // 取消：上抛不回退（defer 已关通道，rsync 收 SIGHUP；非 --partial →
+            // rsync 自弃 .*.tmp，目标不留半截）。
+            if cancelled { throw TCError.cancelled }
+            switch DirectRsync.classify(exitStatus: exit,
+                                        stderr: String(decoding: stderrBuf, as: UTF8.self)) {
+            case .ok:
+                self.lastCopyRoute = .directCrossHost
+                return .handled(bytesTransferred: parser.fileBytesDone)
+            case .fail(let msg):
+                throw TCError.unknown("rsync: \(msg)")
+            case .relay(let reason):
+                self.lastCopyRoute = .relayed(reason)
+                return .unavailable(reason.diagnosticCode)
+            }
+        }
+    }
+
+    /// 通道级异常 → (路由, 接缝返回值)（终审 B3）：**两条异常路（openExec 抛 /
+    /// nextEvent 抛）必须写路由**——lastCopyRoute 是连接级持久态，不覆盖 = 面板
+    /// 镜像**上一条**（可能 .directCrossHost）→ 假绿点，违 spec 唯一硬承诺
+    /// （绿=字节不出本机）。真 SSHSession 无法伪造（Traversio 具体类型），
+    /// 本函数 = 两条 catch 共享的分类面，单测直锁；`lastCopyRoute = 路由` 这条
+    /// 赋值语句本身靠 belt-and-braces：接缝镜像的 nil 兜底恒黄不假绿。
+    static func channelIssue(_ error: Error) -> (route: CopyRoute, outcome: DirectOutcome) {
+        let reason = ServerSideCopy.relayReason(for: error)
+        return (.relayed(reason), .unavailable(reason.diagnosticCode))
+    }
+
+    /// 面板路由镜像写入（接缝用）：把 src 连接算出的 CopyRoute 抄给本连接，
+    /// 使 TransferEngine 对**目标**源 lastCopyRoute 的读取看到直传真值。
+    func setRoute(_ route: CopyRoute) { self.lastCopyRoute = route }
+
     func close() {
         lock.lock()
         guard !closed else { lock.unlock(); return }
@@ -274,6 +386,7 @@ final class SFTPConnection {
 /// public：经 SFTPSource.lastCopyRoute → TransferProgressInfo.route 抵达 UI 层。
 public enum CopyRoute: Equatable {
     case serverSide               // exec cp 成功（字节不出服务器）
+    case directCrossHost          // 跨服务器 rsync 直传（字节不出服务器对）
     case relayed(RelayReason)     // 本机中转（回退 pump），带原因
 }
 
@@ -283,6 +396,23 @@ public enum RelayReason: Equatable {
     case cpMissing           // 服务器无 cp（exit 127）
     case unsupportedFlags    // -a/-Rp 都不认（罕见 cp 方言），重试后仍不行
     case channelGone         // 通道级异常：无 exit 状态 / 空 stderr / execute 其它抛错
+    case needsAuth           // 双机免密信任未建立（或 B 端密码认证）
+    case rsyncMissing        // 源服务器无 rsync（exit 127）
+}
+
+extension RelayReason {
+    /// 稳定英文诊断码：仅作 DirectOutcome.unavailable(String) 的透传诊断
+    /// （日志/断言用）。UI 文案走 CopyRoute 枚举，绝不对此串做 round-trip。
+    var diagnosticCode: String {
+        switch self {
+        case .needsAuth:        return "needsAuth"
+        case .rsyncMissing:     return "rsyncMissing"
+        case .execRejected:     return "execRejected"
+        case .channelGone:      return "channelGone"
+        case .cpMissing:        return "cpMissing"
+        case .unsupportedFlags: return "unsupportedFlags"
+        }
+    }
 }
 
 enum ServerSideCopy {

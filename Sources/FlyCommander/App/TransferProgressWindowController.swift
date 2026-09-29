@@ -23,11 +23,14 @@ final class TransferProgressWindowController: NSWindowController {
     /// 测试用：模拟点取消按钮（同 #selector 目标，SPM 无 sendAction 便利）。
     func clickCancelButtonForTest() { cancelPressed() }
     /// 测试用：内部状态只读（构造断言 + 收口语义断言）。
+    /// routeDotGreen：nil = 点隐藏（无 route），true = 绿（字节不出服务器/服务器对），false = 黄（本机中转）。
     var probe: (ended: Bool, bar: NSProgressIndicator, title: NSTextField,
                 fileName: NSTextField, detailLabel: NSTextField, routeLabel: NSTextField,
-                cancel: NSButton) {
-        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, routeLabel, cancelButton)
+                cancel: NSButton, routeDotGreen: Bool?) {
+        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, routeLabel, cancelButton, routeDotGreen)
     }
+    /// 测试用：不经进度帧直接驱动色点/文案分支。
+    func applyProbeRoute(_ route: CopyRoute?) { apply(route: route) }
     #endif
 
     /// 语言变更后经主 VC 调用：仅当已创建才重刷静态文案，绝不建窗。
@@ -37,8 +40,15 @@ final class TransferProgressWindowController: NSWindowController {
     private let fileNameLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let routeLabel = NSTextField(labelWithString: "")
+    /// 路径色点：绿 = 字节不过本机（serverSide / directCrossHost），黄 = 本机中转。
+    private let routeDot = RouteDotView()
     private let progressBar = NSProgressIndicator()
     private let cancelButton = NSButton()
+
+    #if DEBUG
+    /// 色点当前语义色（内部状态，仅供 probe 读出；见 probe.routeDotGreen）。
+    private(set) var routeDotGreen: Bool?
+    #endif
 
     /// 本次传输的取消旗（present 时注入；按钮/Esc 置位）。
     private var cancel: CancelFlag?
@@ -52,7 +62,9 @@ final class TransferProgressWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 168),
+            // 168→190：路由行独立成行（旧形与 detail 同基线）后固定高容不下，
+            // 路由文案被切进取消按钮区（截图实证）。
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 190),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
@@ -81,6 +93,9 @@ final class TransferProgressWindowController: NSWindowController {
         routeLabel.lineBreakMode = .byTruncatingTail
         routeLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        routeDot.isHidden = true
+        routeDot.translatesAutoresizingMaskIntoConstraints = false
+
         cancelButton.title = L10n.t(.transCancel)
         cancelButton.bezelStyle = .rounded
         // Esc = 取消：直挂 keyEquivalent（本仓库 NSAlert 取消键同款先例）。
@@ -96,6 +111,7 @@ final class TransferProgressWindowController: NSWindowController {
         content.addSubview(progressBar)
         content.addSubview(detailLabel)
         content.addSubview(routeLabel)
+        content.addSubview(routeDot)
         content.addSubview(cancelButton)
         window.contentView = content
 
@@ -115,12 +131,27 @@ final class TransferProgressWindowController: NSWindowController {
 
             detailLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
             detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
 
-            routeLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
-            routeLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            routeLabel.widthAnchor.constraint(lessThanOrEqualTo: detailLabel.widthAnchor),
+            // 路由行 = detail 之下**独立一行**（旧形与 detail 同基线一头尾对钉，
+            // 路由文案变长就撞进「字节+速度」串里 = 用户报的重叠）。
+            // 色点在文本左侧（行左对齐后 trailing 不再由内容导出，点改钉 leading）。
+            routeLabel.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 4),
+            routeLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            routeLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
 
-            cancelButton.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 12),
+            routeDot.widthAnchor.constraint(equalToConstant: 9),
+            routeDot.heightAnchor.constraint(equalToConstant: 9),
+            routeDot.centerYAnchor.constraint(equalTo: routeLabel.centerYAnchor),
+            routeDot.leadingAnchor.constraint(equalTo: routeLabel.leadingAnchor, constant: -12),
+
+            // 按钮在两条信息行之下（隐藏的路由行仍占位=固定高窗口本有空间）。
+            // 双 required ≥：取 max(detail.bottom+12, route.bottom+4)，无歧义不冲突。
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: detailLabel.bottomAnchor,
+                                              constant: 12),
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: routeLabel.bottomAnchor,
+                                              constant: 4),
+
             cancelButton.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             cancelButton.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -14),
         ])
@@ -150,7 +181,7 @@ final class TransferProgressWindowController: NSWindowController {
         titleLabel.stringValue = L10n.t(isCopy ? .opCopying : .opMoving, "\(fileTotal)")
         fileNameLabel.stringValue = ""
         detailLabel.stringValue = ""
-        routeLabel.stringValue = ""
+        apply(route: nil)
         progressBar.isIndeterminate = true
         progressBar.startAnimation(nil)
         cancelButton.isEnabled = true
@@ -174,31 +205,60 @@ final class TransferProgressWindowController: NSWindowController {
             fileNameLabel.stringValue = info.name
         }
         if let route = info.route {
-            routeLabel.stringValue = Self.routeText(route)
+            apply(route: route)
         }
         if let done = info.bytesDone, let total = info.bytesTotal, total > 0 {
             progressBar.stopAnimation(nil)
             progressBar.isIndeterminate = false
-            progressBar.doubleValue = Double(done) / Double(total) * 100
+            // done>total 只可能是解析器对 openrsync 反推总量的整型瞬时误差（帧是逐条目
+            // 同源合同，终审 B2 后无稳态越界）→ 钳 100 防回绕显示。
+            progressBar.doubleValue = min(100, Double(done) / Double(total) * 100)
             samples.append((CFAbsoluteTimeGetCurrent(), done))
             if samples.count > 64 { samples.removeFirst(samples.count - 64) }
             // 字节计数纯数字+斜杠（无文案）不需 L10n 键。
             var detail = "\(Self.byteString(done)) / \(Self.byteString(total))"
             if let speed = TransferSpeed.estimate(samples: samples) {
                 detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
-                let remaining = Double(total - done) / speed
+                // 剩余钳 ≥0：done>total 的越界帧会给负剩余（同 reason 同钳位）。
+                let remaining = max(0, Double(total - done) / speed)
                 if remaining < 3600 * 24 {   // >24h 的估算没有意义，宁缺毋假
                     detail += "  " + L10n.t(.transRemaining, Self.durationString(remaining))
                 }
             }
             detailLabel.stringValue = detail
         } else {
-            // 文件级帧（或大小未知）：字节黑盒 → 扫动态。
+            // 无字节总量 = 不定量：条扫动（不假装 determinate），但字节数与速度**照给**
+            // ——spec §3「两路都有速度」：直传目录条目 total 恒 0（无预扫描）走过这里，
+            // 旧实现只扫条 → 面板无字节无速度（B2 后放大成必现）。无分母式 = 字节 · 速度。
             if !progressBar.isIndeterminate {
                 progressBar.isIndeterminate = true
                 progressBar.startAnimation(nil)
             }
+            if let done = info.bytesDone {
+                samples.append((CFAbsoluteTimeGetCurrent(), done))
+                if samples.count > 64 { samples.removeFirst(samples.count - 64) }
+                var detail = Self.byteString(done)
+                if let speed = TransferSpeed.estimate(samples: samples) {
+                    detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
+                }
+                detailLabel.stringValue = detail
+            }
         }
+    }
+
+    /// 路径副标题 + 色点。`route == nil`（引擎还没报路径）→ 整行隐藏。
+    /// 色点语义：**绿 = 字节从未过本机**（服务器端 cp / 跨服务器直传），黄 = 本机中转 pump。
+    private func apply(route: CopyRoute?) {
+        if let route { routeLabel.stringValue = Self.routeText(route) }
+        let green = route.map { $0 == .serverSide || $0 == .directCrossHost }
+        #if DEBUG
+        routeDotGreen = green
+        #endif
+        if let green {
+            routeDot.dotGreen = green
+        }
+        routeLabel.isHidden = route == nil
+        routeDot.isHidden = route == nil
     }
 
     /// 终态。OperationState 只用于 done/failed；**取消不走这里**——冲突对话框取消同样
@@ -278,13 +338,43 @@ final class TransferProgressWindowController: NSWindowController {
     static func routeText(_ route: CopyRoute) -> String {
         switch route {
         case .serverSide: return L10n.t(.transServerSide)
+        case .directCrossHost: return L10n.t(.transDirectCrossHost)
         case .relayed(let reason):
             switch reason {
             case .execRejected: return L10n.t(.transRelayedExecRejected)
             case .cpMissing: return L10n.t(.transRelayedCpMissing)
             case .unsupportedFlags: return L10n.t(.transRelayedUnsupportedFlags)
             case .channelGone: return L10n.t(.transRelayedChannelGone)
+            case .needsAuth: return L10n.t(.transRelayedNeedsAuth)
+            case .rsyncMissing: return L10n.t(.transRelayedRsyncMissing)
             }
         }
+    }
+}
+
+/// 路由色点：自绘实心圆 + 同色 25% 透明光晕环（LED 质感，替代旧平涂 layer 圆角方块）。
+/// 动态色必须在 draw 内、以视图自身 effectiveAppearance 为上下文解析——
+/// init 定格 cgColor 会在明暗切换/复用路径读旧 currentDrawing（2026-09-14 实测坑），
+/// 故颜色在 draw 里现取，绝不在赋值时算好存 layer。
+final class RouteDotView: NSView {
+    /// nil = 未上色（隐藏中）；true = 绿；false = 黄。setNeedsDisplay 驱动重绘。
+    var dotGreen: Bool? { didSet { needsDisplay = true } }
+
+    override var isFlipped: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let green = dotGreen, let ctx = NSGraphicsContext.current else { return }
+        ctx.saveGraphicsState()
+        ctx.cgContext.setShouldAntialias(true)
+        let color = green ? NSColor.systemGreen : NSColor.systemYellow
+        // 光晕环：外圈 1pt 宽、25% 透明同色（bounds 内缩 0.5 防裁切）。
+        color.withAlphaComponent(0.25).setStroke()
+        let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
+        ring.lineWidth = 1
+        ring.stroke()
+        // 实心核。
+        color.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).fill()
+        ctx.restoreGraphicsState()
     }
 }
