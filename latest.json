@@ -1,0 +1,16 @@
+{
+  "version": "0.0.12",
+  "assets": {
+    "arm64": {
+      "dmgURL": "https://github.com/gybcb/fly_commander/releases/download/v0.0.12/FlyCommander_0.0.12_arm64.dmg",
+      "sha256": "160cbb53ce285796ff22f9818b6a7c09970e7d664c403fdf2796af71bbb73d35"
+    },
+    "x86_64": {
+      "dmgURL": "https://github.com/gybcb/fly_commander/releases/download/v0.0.12/FlyCommander_0.0.12_x86_64.dmg",
+      "sha256": "95c85132e7ac5d479a22fa5b3d2049a98ab5f8068126d823615d0e2b8b1370c6"
+    }
+  },
+  "dmgURL": "https://github.com/gybcb/fly_commander/releases/download/v0.0.12/FlyCommander_0.0.12_arm64.dmg",
+  "sha256": "160cbb53ce285796ff22f9818b6a7c09970e7d664c403fdf2796af71bbb73d35",
+  "notes": "See the release page for changes."
+}
