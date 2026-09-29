@@ -154,14 +154,24 @@ final class FileCellView: NSTableCellView {
                     nameLabel.font = Style.cellNameFontFocused
                     layer?.backgroundColor = Style.rowFocusedInactive.cgColor
                 }
+                // 大小/日期随名字同反：活动焦点行是 accent 实底，灰字压上去不可读；
+                // 非活动=灰底，meta 维持 secondary。三分支恒显式赋值——cell 复用，
+                // 只在 setup 定一次会串色。
+                let meta = focus && paneActive ? Style.rowFocusedText : NSColor.secondaryLabelColor
+                sizeLabel.textColor = meta
+                dateLabel.textColor = meta
             } else if marked {
                 nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
                 nameLabel.font = Style.cellNameFont
                 layer?.backgroundColor = Style.rowMarked.cgColor
+                sizeLabel.textColor = .secondaryLabelColor
+                dateLabel.textColor = .secondaryLabelColor
             } else {
                 nameLabel.textColor = ThemeStore.shared.nameColor(for: item)
                 nameLabel.font = Style.cellNameFont
                 layer?.backgroundColor = (zebra ? Style.rowZebra : Style.rowPlain).cgColor
+                sizeLabel.textColor = .secondaryLabelColor
+                dateLabel.textColor = .secondaryLabelColor
             }
         }
     }

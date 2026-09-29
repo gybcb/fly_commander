@@ -83,4 +83,50 @@ final class FileCellViewStateTests: XCTestCase {
                        paneActive: true, zebra: false)
         XCTAssertEqual(bg(cell).alphaComponent, 1, accuracy: 0.01)
     }
+
+    // MARK: - 大小/日期标签随选中态反色（用户报「选中只反色文件名」）
+
+    /// 活动窗格焦点行 = accent 实底 → 三列标签全反白。旧 bug = 只 nameLabel 变白，
+    /// size/date 停 secondaryLabelColor 压实底上不可读。断言走各列 configure。
+    func testFocusedActiveRowInvertsSizeAndDateLabels() {
+        let cell = FileCellView(frame: .zero)
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 1,
+                       paneActive: true)
+        XCTAssertEqual(cell.sizeLabel.textColor, Style.rowFocusedText,
+                       "大小列焦点行应随名字反白")
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 2,
+                       paneActive: true)
+        XCTAssertEqual(cell.dateLabel.textColor, Style.rowFocusedText,
+                       "日期列焦点行应随名字反白")
+    }
+
+    /// 非活动窗格焦点行 = 灰底正文色 → meta 保持 secondary 灰（底不深，无需反白）。
+    func testFocusedInactiveRowKeepsMetaSecondary() {
+        let cell = FileCellView(frame: .zero)
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 1,
+                       paneActive: false)
+        XCTAssertEqual(cell.sizeLabel.textColor, NSColor.secondaryLabelColor)
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 2,
+                       paneActive: false)
+        XCTAssertEqual(cell.dateLabel.textColor, NSColor.secondaryLabelColor)
+    }
+
+    /// cell 复用串色守卫：先当过活动焦点行（meta 反白），再复用为普通/标记行 →
+    /// meta 必须显式复位 secondary 灰。configure 三分支任一漏设 meta 色即红。
+    func testMetaLabelsResetAfterReuseFromFocusedRow() {
+        let cell = FileCellView(frame: .zero)
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 1,
+                       paneActive: true)
+        XCTAssertEqual(cell.sizeLabel.textColor, Style.rowFocusedText, "前提：焦点行反白")
+        cell.configure(item: item("a.txt"), focus: false, marked: false, column: 1,
+                       paneActive: true)
+        XCTAssertEqual(cell.sizeLabel.textColor, NSColor.secondaryLabelColor,
+                       "复用为普通行必须复位")
+        cell.configure(item: item("a.txt"), focus: true, marked: false, column: 2,
+                       paneActive: true)
+        cell.configure(item: item("a.txt"), focus: false, marked: true, column: 2,
+                       paneActive: true)
+        XCTAssertEqual(cell.dateLabel.textColor, NSColor.secondaryLabelColor,
+                       "复用为标记行必须复位（标记底是淡色，灰字可读）")
+    }
 }
