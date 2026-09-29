@@ -109,9 +109,15 @@ final class SMBMountManager {
     private let runList: () -> String                        // `mount` 全文
     private let ensureDirectories: (String) throws -> Void   // 建 root+挂载点目录（测试可注 fake 免触 /Volumes）
 
+    /// 默认挂载表读取。真身 = **/sbin/mount**——/usr/bin/mount 不存在（实测），
+    /// 而 exec 吞错回吐错误文案曾让 shareMountedPoint/isMounted/reclaimStale
+    /// 三判据静默死亡（Finder 已挂的共享永不复用）。默认值单独成 static =
+    /// 真路径回归测试（testDefaultRunListReadsRealMountTable）可直打，不注入 fake。
+    static func defaultRunList() -> String { exec(["/sbin/mount"]).1 }
+
     init(runMount: @escaping ([String]) -> (Int32, String) = SMBMountManager.exec,
          runUnmount: @escaping ([String]) -> (Int32, String) = SMBMountManager.exec,
-         runList: @escaping () -> String = { SMBMountManager.exec(["/usr/bin/mount"]).1 },
+         runList: @escaping () -> String = SMBMountManager.defaultRunList,
          ensureDirectories: @escaping (String) throws -> Void = SMBMountManager.makeDirectories) {
         self.runMount = runMount
         self.runUnmount = runUnmount
