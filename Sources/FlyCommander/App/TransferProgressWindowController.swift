@@ -24,13 +24,19 @@ final class TransferProgressWindowController: NSWindowController {
     func clickCancelButtonForTest() { cancelPressed() }
     /// 测试用：内部状态只读（构造断言 + 收口语义断言）。
     /// routeDotGreen：nil = 点隐藏（无 route），true = 绿（字节不出服务器/服务器对），false = 黄（本机中转）。
+    /// speedLabel = 去闪改造后的右段（速度·剩余），见 setDetail。
     var probe: (ended: Bool, bar: NSProgressIndicator, title: NSTextField,
-                fileName: NSTextField, detailLabel: NSTextField, routeLabel: NSTextField,
+                fileName: NSTextField, detailLabel: NSTextField, speedLabel: NSTextField,
+                routeLabel: NSTextField,
                 cancel: NSButton, routeDotGreen: Bool?) {
-        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, routeLabel, cancelButton, routeDotGreen)
+        (ended, progressBar, titleLabel, fileNameLabel, detailLabel, speedLabel, routeLabel, cancelButton, routeDotGreen)
     }
     /// 测试用：不经进度帧直接驱动色点/文案分支。
     func applyProbeRoute(_ route: CopyRoute?) { apply(route: route) }
+    /// 测试用：detail 文本时钟注入（样本时间戳与 250ms 重写闸共用）。冻结 = 闸恒关。
+    var testDetailClock: (() -> TimeInterval)?
+    /// 测试用：detail 文本实际发生重写的次数（同内容去重 + 250ms 闸后计数）。
+    private(set) var detailRewriteCount = 0
     #endif
 
     /// 语言变更后经主 VC 调用：仅当已创建才重刷静态文案，绝不建窗。
@@ -38,7 +44,12 @@ final class TransferProgressWindowController: NSWindowController {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let fileNameLabel = NSTextField(labelWithString: "")
+    /// detail 行 = 左右两 label（去闪）：左 = 已传/总量（钉 leading），
+    /// 右 = 速度 · 剩余（右对齐钉 trailing）。单串拼接时三段各自变宽 →
+    /// 整行字符左右推挤（用户报「一跳一跳，字看不清楚」）；拆双锚后
+    /// 宽度波动被两侧吸收，数字不再互推。
     private let detailLabel = NSTextField(labelWithString: "")
+    private let speedLabel = NSTextField(labelWithString: "")
     private let routeLabel = NSTextField(labelWithString: "")
     /// 路径色点：绿 = 字节不过本机（serverSide / directCrossHost），黄 = 本机中转。
     private let routeDot = RouteDotView()
@@ -54,6 +65,40 @@ final class TransferProgressWindowController: NSWindowController {
     private var cancel: CancelFlag?
     /// 速度样本（时刻, 累计字节）——TransferSpeed.estimate 的输入。
     private var samples: [(t: TimeInterval, bytes: Int64)] = []
+    /// 平滑后速度（EMA）。TransferSpeed.estimate 的 0.5s 尾窗原始值逐帧抖动
+    /// （单个慢块进出窗口即跳），显示层用 α=0.25 一阶滤波吃掉抖动；
+    /// 原始估算与样本合同一字不动。resetForTransfer 清 nil。
+    private var smoothedSpeed: Double?
+    /// 上次 detail 文本重写时刻（与文本内容）——250ms 重写闸 + 同内容去重。
+    /// 节流闸 0.05s = 20Hz 整行重写是「闪」的直接来源；文本降到 ~4Hz 可读刷新率，
+    /// 进度条不受此闸（条走动是进度感）。resetForTransfer 清零。
+    private var lastDetailWriteTime: TimeInterval = -.infinity
+    private var lastDetailTexts: (left: String, right: String)?
+    private static let detailRewriteInterval: TimeInterval = 0.25
+    /// 条上次实际写入的百分比（像素量化闸）：变化 <0.25pt（≈1px，396pt 条）
+    /// 不写 —— 超大总量批次每帧增量是亚像素，逐帧写 = AppKit 插值重绘 =
+    /// 「滚来滚去」（真机日志实证 2026-10-08：112.5GB 批次条恒 determinate
+    /// 但全程肉眼不动）。收口 100 与首写不受闸。resetForTransfer 清 nil。
+    private var barLastPct: Double?
+    private static let barPixelGranularity: Double = 0.25
+    /// 取时（样本时间戳与重写闸共用）：测试注入假时钟，默认真实时钟。
+    private func nowTime() -> TimeInterval {
+        #if DEBUG
+        if let c = testDetailClock { return c() }
+        #endif
+        return CFAbsoluteTimeGetCurrent()
+    }
+    /// 上次成功写条用的是**字节坐标**（聚合 or 单文件字节）还是文件数/扫动。
+    /// 纯文件完成帧（无 overall、无字节）据此决定碰不碰条：字节真值已在场上 →
+    /// 不回退、不改值（锁 E）；只有文件数条或还在扫动 → 按文件完成度推进（锁 F）。
+    /// resetForTransfer 清 false。
+    private var lastBarIsByte = false
+    /// 聚合值闩（本次传输见过聚合帧 → 进度条/速度**永久**用聚合坐标）。
+    /// pump 路字节帧与聚合帧逐块交替到闸（两闸独立），无闩则条在「单文件% ↔
+    /// 全进度%」锯齿；且两套 done 混喂 samples → 文件切换瞬间 db<0 → 速度恒 nil
+    /// （TransferSpeed.estimate 的 db>=0 守卫）。resetForTransfer 清零（无聚合路
+    /// 恒 false = 现状行为一字不动）。
+    private var overallLatched = false
     /// 上一帧文件名（字节帧 name="" 时沿用）。
     private(set) var lastFileName = ""
     private var dismissWorkItem: DispatchWorkItem?
@@ -88,6 +133,11 @@ final class TransferProgressWindowController: NSWindowController {
         detailLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        speedLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        speedLabel.textColor = .secondaryLabelColor
+        speedLabel.alignment = .right
+        speedLabel.lineBreakMode = .byTruncatingTail
+        speedLabel.translatesAutoresizingMaskIntoConstraints = false
         routeLabel.font = .systemFont(ofSize: 11)
         routeLabel.textColor = .secondaryLabelColor
         routeLabel.lineBreakMode = .byTruncatingTail
@@ -110,6 +160,7 @@ final class TransferProgressWindowController: NSWindowController {
         content.addSubview(fileNameLabel)
         content.addSubview(progressBar)
         content.addSubview(detailLabel)
+        content.addSubview(speedLabel)
         content.addSubview(routeLabel)
         content.addSubview(routeDot)
         content.addSubview(cancelButton)
@@ -131,7 +182,14 @@ final class TransferProgressWindowController: NSWindowController {
 
             detailLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 8),
             detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
+            // 左右分栏：detail ≤80%、speed ≥20% 共存（左段短、右段可截尾不互推）。
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: speedLabel.leadingAnchor,
+                                                  constant: -8),
+
+            // 右段 = 速度·剩余：顶对齐 detail（同一行），右对齐钉 trailing。
+            speedLabel.topAnchor.constraint(equalTo: detailLabel.topAnchor),
+            speedLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailLabel.trailingAnchor),
+            speedLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
             // 路由行 = detail 之下**独立一行**（旧形与 detail 同基线一头尾对钉，
             // 路由文案变长就撞进「字节+速度」串里 = 用户报的重叠）。
@@ -177,10 +235,20 @@ final class TransferProgressWindowController: NSWindowController {
         ended = false
         lastFileName = ""
         samples = []
+        overallLatched = false
+        lastBarIsByte = false
+        smoothedSpeed = nil
+        lastDetailWriteTime = -.infinity
+        lastDetailTexts = nil
+        barLastPct = nil
+        #if DEBUG
+        detailRewriteCount = 0
+        #endif
         dismissWorkItem?.cancel()
         titleLabel.stringValue = L10n.t(isCopy ? .opCopying : .opMoving, "\(fileTotal)")
         fileNameLabel.stringValue = ""
         detailLabel.stringValue = ""
+        speedLabel.stringValue = ""
         apply(route: nil)
         progressBar.isIndeterminate = true
         progressBar.startAnimation(nil)
@@ -207,43 +275,125 @@ final class TransferProgressWindowController: NSWindowController {
         if let route = info.route {
             apply(route: route)
         }
+        // 聚合优先（spec §3.4）：见过聚合帧（本帧携带 or 闩已置）→ 条/百分比/
+        // 字节数/速度样本/剩余**全部**用聚合坐标；无 overall 的单文件帧只更新
+        // 标题/文件名/色点（上方已做），**不得**碰条与 samples——两套 done 混喂
+        // 会让文件切换的 done 回跳污染速度（db<0 → 速度恒 nil）+ 条锯齿。
+        // 速度样本喂聚合 done → 跨文件不重置、无 100%→0%（用户报障正面解）。
+        if let oDone = info.overallBytesDone, let oTotal = info.overallBytesTotal, oTotal > 0 {
+            overallLatched = true
+            lastBarIsByte = true
+            progressBar.stopAnimation(nil)
+            progressBar.isIndeterminate = false
+            setBar(Double(oDone) / Double(oTotal) * 100)
+            let t = nowTime()
+            samples.append((t, oDone))
+            if samples.count > 64 { samples.removeFirst(samples.count - 64) }
+            // 百分比数字必须上屏：超大总量（真机 112.5GB）下条增量恒亚像素
+            // = 肉眼不动，数字是唯一「进度在走」的可读信号（真机日志实证）。
+            let pct = String(format: " %.1f%%", min(100, Double(oDone) / Double(oTotal) * 100))
+            renderDetail(bytesText: "\(Self.byteString(oDone)) / \(Self.byteString(oTotal))" + pct,
+                         remainingAgainst: oTotal, done: oDone, at: t)
+            return
+        }
+        if overallLatched { return }   // 闩后单文件帧（无 overall）不碰条/速度
         if let done = info.bytesDone, let total = info.bytesTotal, total > 0 {
             progressBar.stopAnimation(nil)
             progressBar.isIndeterminate = false
             // done>total 只可能是解析器对 openrsync 反推总量的整型瞬时误差（帧是逐条目
             // 同源合同，终审 B2 后无稳态越界）→ 钳 100 防回绕显示。
-            progressBar.doubleValue = min(100, Double(done) / Double(total) * 100)
-            samples.append((CFAbsoluteTimeGetCurrent(), done))
+            lastBarIsByte = true
+            setBar(Double(done) / Double(total) * 100)
+            let t = nowTime()
+            samples.append((t, done))
             if samples.count > 64 { samples.removeFirst(samples.count - 64) }
             // 字节计数纯数字+斜杠（无文案）不需 L10n 键。
-            var detail = "\(Self.byteString(done)) / \(Self.byteString(total))"
-            if let speed = TransferSpeed.estimate(samples: samples) {
-                detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
-                // 剩余钳 ≥0：done>total 的越界帧会给负剩余（同 reason 同钳位）。
-                let remaining = max(0, Double(total - done) / speed)
-                if remaining < 3600 * 24 {   // >24h 的估算没有意义，宁缺毋假
-                    detail += "  " + L10n.t(.transRemaining, Self.durationString(remaining))
-                }
-            }
-            detailLabel.stringValue = detail
+            renderDetail(bytesText: "\(Self.byteString(done)) / \(Self.byteString(total))",
+                         remainingAgainst: total, done: done, at: t)
+        } else if let done = info.bytesDone {
+            // 有字节 done、无有效 total（直传目录条目 total=0→nil）：字节条算不出，
+            // 但**能算的地方用真条**——多文件按文件完成度走 determinate；
+            // 单文件 0/1 无比例意义 → 维持扫动（不卡 0% 假 determinate）。
+            // 字节数与速度**照给**（spec §3「两路都有速度」，无分母式 = 字节 · 速度）。
+            setFileCountBar(info: info)
+            let t = nowTime()
+            samples.append((t, done))
+            if samples.count > 64 { samples.removeFirst(samples.count - 64) }
+            renderDetail(bytesText: Self.byteString(done),
+                         remainingAgainst: nil, done: done, at: t)
         } else {
-            // 无字节总量 = 不定量：条扫动（不假装 determinate），但字节数与速度**照给**
-            // ——spec §3「两路都有速度」：直传目录条目 total 恒 0（无预扫描）走过这里，
-            // 旧实现只扫条 → 面板无字节无速度（B2 后放大成必现）。无分母式 = 字节 · 速度。
-            if !progressBar.isIndeterminate {
-                progressBar.isIndeterminate = true
-                progressBar.startAnimation(nil)
-            }
-            if let done = info.bytesDone {
-                samples.append((CFAbsoluteTimeGetCurrent(), done))
-                if samples.count > 64 { samples.removeFirst(samples.count - 64) }
-                var detail = Self.byteString(done)
-                if let speed = TransferSpeed.estimate(samples: samples) {
-                    detail += "  " + L10n.t(.transSpeed, Self.byteString(Int64(speed)))
+            // 纯文件完成/路由帧（bytesDone=nil、无 overall）：本帧无新字节信息。
+            // 假条根因修法——条**已是**字节真值（前一 pump/聚合帧走过 determinate）
+            // → 不回扫、不改值（旧 else 无条件 startAnimation = 每传完一个文件
+            // 真条闪回扫动 = 用户报「假进度条」）。条**还在扫动**（本批次尚无任何字节
+            // 坐标）→ 多文件按文件完成度走真条；单文件维持扫动。
+            if !lastBarIsByte { setFileCountBar(info: info) }   // 字节真值在场 → 完成帧不碰条
+            // detail 不重渲染（无新字节，条不闪）。
+        }
+    }
+
+    /// 条写入唯一入口（像素量化闸）：Δ<0.25pt（≈1px）跳过 = 超大总量下
+    /// 亚像素增量逐帧写会让条「原地滚」（真机实证）；收口 100 与首写必过。
+    private func setBar(_ pct: Double) {
+        let v = min(100, max(0, pct))
+        if let last = barLastPct, abs(v - last) < Self.barPixelGranularity, v < 100 { return }
+        barLastPct = v
+        progressBar.doubleValue = v
+    }
+
+    /// 无字节坐标时的条降级：多文件 → 按 fileDone/fileTotal 走 determinate 真条
+    /// （「能明确计算的地方用真条」）；单文件（fileTotal≤1）无比例意义 → 扫动。
+    /// 走过本函数 = 条离开字节坐标（锁 E 的「不回退」判据据此翻转）。
+    private func setFileCountBar(info: TransferEngine.TransferProgressInfo) {
+        if info.fileTotal > 1 {
+            lastBarIsByte = false
+            progressBar.stopAnimation(nil)
+            progressBar.isIndeterminate = false
+            setBar(Double(info.fileDone) / Double(info.fileTotal) * 100)
+        } else if !progressBar.isIndeterminate {
+            lastBarIsByte = false
+            progressBar.isIndeterminate = true
+            progressBar.startAnimation(nil)
+        }
+    }
+
+    /// detail 行刷新（去闪三合一定）：EMA 每帧推进（estimate 原始值不动，
+    /// 0.5s 尾窗抖动在显示层阻尼）；剩余额按平滑速度算（0.1s 位永远在跳，
+    /// durationString 本就四舍五入整秒）；文本经 250ms 重写闸 + 同内容去重
+    /// （NSTextField 空赋值也触发重绘，必须比对后跳过）。进度条由调用方
+    /// 先写、**不**走本闸——条走动是进度感，不是闪。
+    private func renderDetail(bytesText: String, remainingAgainst total: Int64?,
+                              done: Int64, at t: TimeInterval) {
+        smoothedSpeed = Self.smooth(prev: smoothedSpeed,
+                                    raw: TransferSpeed.estimate(samples: samples))
+        var right = ""
+        if let sp = smoothedSpeed, sp > 0 {
+            right = L10n.t(.transSpeed, Self.byteString(Int64(sp)))
+            if let total {
+                // 剩余钳 ≥0：done>total 的越界帧会给负剩余（同 reason 同钳位）。
+                let remaining = max(0, Double(total - done) / sp)
+                if remaining < 3600 * 24 {   // >24h 的估算没有意义，宁缺毋假
+                    right += "  " + L10n.t(.transRemaining, Self.durationString(remaining))
                 }
-                detailLabel.stringValue = detail
             }
         }
+        guard t - lastDetailWriteTime >= Self.detailRewriteInterval else { return }
+        guard lastDetailTexts?.left != bytesText || lastDetailTexts?.right != right else { return }
+        lastDetailWriteTime = t
+        lastDetailTexts = (bytesText, right)
+        detailLabel.stringValue = bytesText
+        speedLabel.stringValue = right
+        #if DEBUG
+        detailRewriteCount += 1
+        #endif
+    }
+
+    /// 速度 EMA（显示层）：α=0.25 ≈ 4 帧收敛大半；raw=nil（窗口不足/断流）
+    /// → 保持上次值——清零是新的闪源，残留旧值随后被新样本拉回。
+    static func smooth(prev: Double?, raw: Double?, alpha: Double = 0.25) -> Double? {
+        guard let raw else { return prev }
+        guard let prev else { return raw }
+        return prev + alpha * (raw - prev)
     }
 
     /// 路径副标题 + 色点。`route == nil`（引擎还没报路径）→ 整行隐藏。
@@ -271,7 +421,7 @@ final class TransferProgressWindowController: NSWindowController {
             dismissWorkItem?.cancel()
             progressBar.stopAnimation(nil)
             progressBar.isIndeterminate = false
-            progressBar.doubleValue = 100
+            setBar(100)
             titleLabel.stringValue = L10n.t(.transDone)
             cancelButton.isEnabled = false
             // 成功 0.8s 自动关（用户来得及瞥见 100%）。

@@ -98,8 +98,11 @@ final class TransferProgressPanelTests: XCTestCase {
 
     // MARK: - headless 状态迁移
 
-    /// 字节帧 → determinate + 百分比 + 明细含字节数；文件帧（bytes=nil）→ 回落扫动态。
-    /// 变异证伪：apply 里删 else 分支的 isIndeterminate 翻转 → 文件帧后条不回扫。
+    /// 字节帧 → determinate + 百分比 + 明细含字节数；文件完成帧（bytes=nil）→
+    /// **条保持字节真值不回扫**（原断言「文件帧回扫动态」编码的正是用户报的
+    /// 「假进度条」bug —— 每传完一个文件真条闪回扫动；2026-10-08 用户拍板
+    /// 「能算的地方都用真条」，本断言按批准反转，见 TransferPanelSmoothTests 锁 E）。
+    /// 变异证伪：else 分支恢复「无字节即无脑 startAnimation」→ 条回 isIndeterminate 红。
     func testApplySwitchesBarModeAndFillsDetail() {
         let wc = TransferProgressWindowController.createWithoutPresentingForTest()
         wc.resetForTransferForTest(isCopy: true, fileTotal: 2, cancel: CancelFlag())
@@ -112,7 +115,8 @@ final class TransferProgressPanelTests: XCTestCase {
         XCTAssertTrue(p.detailLabel.stringValue.contains("50"), "明细应含已传字节")
 
         wc.apply(info(name: "", fileDone: 1, fileTotal: 2))
-        XCTAssertTrue(p.bar.isIndeterminate, "文件帧（大小未知）应回扫动态")
+        XCTAssertFalse(p.bar.isIndeterminate, "文件完成帧不得把字节真条打回扫动")
+        XCTAssertEqual(p.bar.doubleValue, 50, accuracy: 0.001, "完成帧不改条值")
     }
 
     /// 字节帧 name="" 沿用上一文件名（TransferEngine 字节帧不带名字）。

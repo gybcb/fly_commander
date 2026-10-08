@@ -102,8 +102,8 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         XCTAssertLessThanOrEqual(wc.probe.bar.doubleValue, 100)
         XCTAssertEqual(wc.probe.bar.doubleValue, 100, accuracy: 0.001,
                        "越界帧应钳到 100 而非回绕")
-        XCTAssertTrue(wc.probe.detailLabel.stringValue.contains("0:00"),
-                      "剩余钳 ≥0 → 显示 0:00；实得: \(wc.probe.detailLabel.stringValue)")
+        XCTAssertTrue(wc.probe.speedLabel.stringValue.contains("0:00"),
+                      "剩余钳 ≥0 → 右段显示 0:00；实得: \(wc.probe.speedLabel.stringValue)")
     }
 
     // MARK: - B4 串行门（真安全机制：并发 run 不存在）
@@ -221,7 +221,9 @@ final class TransferPanelDirectRouteTests: XCTestCase {
         let detail = wc.probe.detailLabel.stringValue
         XCTAssertTrue(detail.contains(TransferProgressWindowController.byteString(900_000)),
                       "无分母字节文本；实得: \(detail)")
-        XCTAssertTrue(detail.contains("/s"), "速度须出现（喂样本 + L10n transSpeed）；实得: \(detail)")
+        // 去闪改造后速度段独立成右 label（speedLabel），字节段留在 detailLabel。
+        XCTAssertTrue(wc.probe.speedLabel.stringValue.contains("/s"),
+                      "速度须出现（喂样本 + L10n transSpeed）；实得: \(wc.probe.speedLabel.stringValue)")
     }
 
     // MARK: - 接缝启用判定 + 参数装配（peer 方向直锁）
