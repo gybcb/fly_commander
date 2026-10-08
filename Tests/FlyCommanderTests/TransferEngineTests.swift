@@ -257,23 +257,30 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertGreaterThan(progressCount, 0, "cancel 前应至少收到一次 onProgress")
     }
 
-    /// onProgress 帧形：跨源泵 + 冻结时钟 → 恰 [字节帧, 文件帧] 两帧。
+    /// onProgress 帧形：跨源泵 + 冻结时钟 → 恰 [字节帧, 文件帧] 两类各一。
     /// 字节帧 name=""/fileDone=0（文件未完成）；文件帧携完成名、bytesDone=nil、非 SFTP route=nil。
+    /// **聚合帧（第三类）按 kind 滤除**（本测锁单文件合同；聚合通道由
+    /// TransferAggregatePanelTests 专门锁）。
     /// 变异：文件帧 name 写死 "" / 字节帧误带 bytesDone=nil → 红。
     func testOnProgressReportsFileProgress() {
         let h = Harness()
         h.engine.progressClock = { 5 }   // 冻结：3 次引擎字节调用只剩哨兵首帧
         var infos: [TransferEngine.TransferProgressInfo] = []
         h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { infos.append($0) }
-        XCTAssertEqual(infos.count, 2, "冻结时钟下 1 字节帧 + 1 文件帧：\(infos.map { "\($0.name):\($0.bytesDone ?? -1)" })")
-        XCTAssertEqual(infos[0].bytesDone, 7, "字节帧 = 首 chunk 累计")
-        XCTAssertEqual(infos[0].name, "", "字节帧 name 恒空串（UI 保留上一帧）")
-        XCTAssertEqual(infos[0].fileDone, 0, "字节帧先于任何文件完成")
-        XCTAssertNil(infos[1].bytesDone, "文件帧不带字节字段")
-        XCTAssertEqual(infos[1].name, "a.txt", "文件帧携完成文件名")
-        XCTAssertEqual(infos[1].fileDone, 1)
-        XCTAssertEqual(infos[1].fileTotal, 1)
-        XCTAssertNil(infos[1].route, "MemSource 非 SFTP 源，route 恒 nil")
+        let byteFrames = infos.filter { $0.kind == .byte }
+        let fileFrames = infos.filter { $0.kind == .file }
+        XCTAssertEqual(byteFrames.count, 1, "冻结时钟下 1 字节帧")
+        XCTAssertEqual(fileFrames.count, 1, "冻结时钟下 1 文件帧")
+        let b = byteFrames[0]
+        XCTAssertEqual(b.bytesDone, 7, "字节帧 = 首 chunk 累计")
+        XCTAssertEqual(b.name, "", "字节帧 name 恒空串（UI 保留上一帧）")
+        XCTAssertEqual(b.fileDone, 0, "字节帧先于任何文件完成")
+        let f = fileFrames[0]
+        XCTAssertNil(f.bytesDone, "文件帧不带字节字段")
+        XCTAssertEqual(f.name, "a.txt", "文件帧携完成文件名")
+        XCTAssertEqual(f.fileDone, 1)
+        XCTAssertEqual(f.fileTotal, 1)
+        XCTAssertNil(f.route, "MemSource 非 SFTP 源，route 恒 nil")
         XCTAssertEqual(h.rec.entries.last, .done(label: .opCopying, args: ["1"], warningLines: []))
     }
 
@@ -442,7 +449,8 @@ final class TransferEngineTests: XCTestCase {
         h.engine.progressClock = { 5 }   // 冻结：不重置则第二文件字节帧全被吞
         var byteFrames = 0, fileFrames = 0
         h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
-            if info.bytesDone != nil { byteFrames += 1 } else { fileFrames += 1 }
+            if info.kind == .byte { byteFrames += 1 }
+            else if info.kind == .file { fileFrames += 1 }   // 聚合帧第三类不计（本测锁文件边界重置）
         }
         XCTAssertEqual(fileFrames, 2, "两个文件各一次文件级帧")
         XCTAssertEqual(byteFrames, 2, "每文件各 1 首帧（重置生效），同刻其余吞掉：\(byteFrames)")
@@ -458,7 +466,8 @@ final class TransferEngineTests: XCTestCase {
         var fileNames: [String] = []
         var byteNames: [String] = []
         h.engine.run(true, h.left, h.right, cancel: CancelFlag()) { info in
-            if info.bytesDone == nil { fileNames.append(info.name) } else { byteNames.append(info.name) }
+            if info.kind == .file { fileNames.append(info.name) }
+            else if info.kind == .byte { byteNames.append(info.name) }   // 聚合帧不计
         }
         XCTAssertEqual(fileNames, ["a.txt"], "文件帧携完成文件名")
         XCTAssertEqual(byteNames, [""], "字节帧 name 恒空串（UI 保留上一帧）")

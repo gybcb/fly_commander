@@ -66,6 +66,8 @@ public final class SFTPSource: FileSource {
     /// 旧串行实现恒 1；流水线 > 1。连接未建（还没传过）→ 0。
     var debugMaxReadInflight: Int { _connection?.transferPeaks.maxReadInflight ?? 0 }
     var debugMaxWriteInflight: Int { _connection?.transferPeaks.maxWriteInflight ?? 0 }
+    /// 同服务器 cp 黑盒轮询的历史轮数（旧实现无轮询 = 恒 0；>0 = 轮询确有发生）。
+    var debugCpPollRoundCount: Int { _connection?.transferPeaks.cpPollRoundCount ?? 0 }
     func debugResetTransferPeaks() { _connection?.transferPeaks.reset() }
     #endif
 
@@ -212,8 +214,14 @@ public final class SFTPSource: FileSource {
     // MARK: - 元操作
 
     public func copyItem(from src: TCPath, to dst: TCPath) throws {
+        try copyItem(from: src, to: dst, byteProgress: nil)
+    }
+
+    /// 黑盒进度通道（同服务器 cp 的 stat 轮询在连接层实现，见 SFTPConnection.copyFile）。
+    public func copyItem(from src: TCPath, to dst: TCPath,
+                         byteProgress: ((Int64, Int64) -> Void)?) throws {
         let from = remotePath(src), to = remotePath(dst)
-        try mapped(to) { try conn().copyFile(from: from, to: to) }
+        try mapped(to) { try conn().copyFile(from: from, to: to, byteProgress: byteProgress) }
     }
 
     public func moveItem(from: TCPath, to: TCPath) throws {

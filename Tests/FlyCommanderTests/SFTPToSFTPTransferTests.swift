@@ -141,6 +141,26 @@ final class SFTPToSFTPTransferTests: XCTestCase {
         }
     }
 
+    /// e2e 锁 10（真 sshd 跨源目录）：聚合通道端到端合同——帧存在、total = 预扫描
+    /// 树和（AAA+BBBB=7）、done 单调、末帧 done==total。修复前无 aggregate 参数。
+    func testDirectoryAggregateFramesEndAtPrescanPlan() throws {
+        try makeRemoteTree(sourceA, serverA, name: "agg",
+                           files: ["a.txt": "AAA", "sub/b.txt": "BBBB"])
+        let item = try XCTUnwrap(
+            try sourceA.listDirectory(TCPath(root(serverA))).first { $0.name == "agg" })
+        var frames: [(Int64, Int64)] = []
+        try runWithTimeout {
+            try self.engine.performCopy([item], to: TCPath(self.root(self.serverB)),
+                                        srcSource: self.sourceA, dstSource: self.sourceB,
+                                        aggregate: { d, t in frames.append((d, t)) })
+        }
+        XCTAssertFalse(frames.isEmpty, "真 SFTP 跨源目录必须有聚合帧")
+        XCTAssertTrue(frames.allSatisfy { $0.1 == 7 }, "total = 预扫描树和 7，实得 \(frames.map(\.1))")
+        let dones = frames.map { $0.0 }
+        XCTAssertEqual(dones, dones.sorted(), "done 单调")
+        XCTAssertEqual(dones.last, 7, "末帧 done==total")
+    }
+
     /// 整档读回（测试用：小文件一次读完）。
     private func readAll(_ source: SFTPSource, _ path: TCPath) throws -> Data {
         let reader = try source.openReader(path)

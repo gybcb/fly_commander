@@ -207,22 +207,101 @@ final class SFTPConnection {
     /// 回退可见化：每次复制把**实际路径与原因**写进 lastCopyRoute（锁内），
     /// 供 UI 显示「服务器端复制 / 本机中转（原因）」。pump 不是失败——它是
     /// 受限服务器上的正解路径，只是字节过本机；用户有权知道是哪条。
-    func copyFile(from src: String, to dst: String) throws {
+    /// 同服务器 cp 黑盒的字节进度轮询间隔（秒）。太小 = stat 风暴挤占 cp；
+    /// 太大 = 面板刷新迟钝（0.1s 对 0.05s 面板节流 → 每节流窗至少一次新观测）。
+    static let cpPollIntervalNanoseconds: UInt64 = 100_000_000
+
+    func copyFile(from src: String, to dst: String,
+                  byteProgress: ((Int64, Int64) -> Void)? = nil) throws {
         lock.lock()
         defer { lock.unlock() }
         try awaitBlocking {
-            // 阶段 1：exec cp。cpFlags.supportsA 是连接级缓存：不同服务器 cp 方言不同
-            // （GNU 有 -a；BSD/macOS 只有 -Rp），首次撞 unknown option 后换 flag 重试。
+            // 路由**乐观预置**（色点全程可见）：本函数唯一「进行中」窗口 = cp 执行期，
+            // 期间帧路由读 .serverSide = 绿点；回退路进入阶段 2 前覆写 .relayed。
+            // 假绿窗口 = runCp 判 .relay 到覆写之间（毫秒级，错误/回退帧随后到达）。
+            self.lastCopyRoute = .serverSide
+
+            // 目标量测定（launch cp 之前，锁内串行）：文件 = src size；目录 = 源树
+            // 求和快照（launch 之后取 = 目标已有同名 partial 不污染源侧真值……
+            // 目录的 total 从**源**树求，见 directoryTreeBytes）。测定失败 → total=0
+            // 不定量帧（宁缺毋假，面板有进度条无百分比）。
+            let measurement = try? await self.cpTotalEstimate(src: src)
+
+            // 阶段 1：exec cp + **并发 stat 轮询**（黑盒回传进度）。轮询与 cp 在同一
+            // awaitBlocking 块内并发：Traversio SSHSFTPClient 是 actor、请求按 id 多路
+            // 复用（核查见 SameServerCopyProgressE2ETests 头注），exec 通道与 SFTP 通道
+            // 相互独立 → 挂起的 execute(cp) 不阻塞 stat（同锁 ≠ 同执行域，lock 只串
+            // FC 侧调用者）。轮询状态全在本闭包体内（块即临界区），单 Task 无竞争。
             let useA = self.cpFlags.supportsA != false
-            var outcome = await self.runCp(src: src, dst: dst, useA: useA)
-            if case .relay(.unsupportedFlags) = outcome, useA {
-                self.cpFlags.supportsA = false
-                outcome = await self.runCp(src: src, dst: dst, useA: false)
+            let cpTask = Task { () -> ServerSideCopy.Result in
+                // 首次探明 supportsA 的两段重试都在轮询任务体内：cp 的 stderr 分类
+                // 需要跑完才知，重试期间轮询继续（total 测定已冻结，帧仍单调）。
+                var r = await self.runCp(src: src, dst: dst, useA: useA)
+                if case .relay(.unsupportedFlags) = r, useA {
+                    self.cpFlags.supportsA = false
+                    r = await self.runCp(src: src, dst: dst, useA: false)
+                }
+                return r
             }
+            let pollBox = CpPollState()   // done 单调钳 + 轮数观测（盒纪律同 PrefetchReader）
+            // 首帧**同步发出**（锁内、cp 启动前）：(0, total) 让面板立即显示 0% 进度条
+            // + 绿点（路由已乐观预置）。放这里而非轮询 Task 首轮 = 消除「局域网 cp
+            // 毫秒级完成、轮询来不及跑首轮 → 小文件全程 0 帧」的时序依赖，
+            // count≥2（首帧 + 收尾帧）恒成立。total==0（未知）也发 → 不定量可见帧。
+            let firstTotal = measurement?.total ?? 0
+            byteProgress?(pollBox.noteDone(0), firstTotal)
+            let pollTask: Task<Void, Never>?
+            if let bp = byteProgress {
+                pollTask = Task { [weak self] in
+                    guard let self else { return }
+                    // repeat-while（非 while）：pollTask 调度可能晚于 cp 完成（局域网
+                    // 小/热文件 cp 毫秒级 → cpFinished 已 true）。do-while 保证**至少跑满
+                    // 一轮**再判退出 → noteCpPoll 确定性 ≥1（debugCpPollRoundCount 鉴别锁
+                    // 不 flaky），且多报的那一帧 done 经单调钳 + 面板节流吸收（无害）。
+                    // 变异证伪：删整个 pollTask 创建 → 该计数器恒 0 仍红，鉴别力不损。
+                    repeat {
+                        // 每轮实测一次目标量；实测值 < 上次已报 = 回退（目录树 partial
+                        // 可见性抖动 / 覆盖重建）→ max 钳制保单调。
+                        var done: Int64?
+                        if measurement?.isDirectory == true {
+                            // 目标树求和失败（还没建 / 抖动）→ 视为 0 = 首帧 0%。
+                            done = try? await self.directoryTreeBytes(path: dst) ?? 0
+                        } else if measurement?.total != nil {
+                            // stat 目标未出现/异常 → 0（首帧即 (0,total)，随后单调上升；
+                            // noteDone 的 max 钳制保证「测得变小」不回退）。
+                            let size = try? await self.sftp.stat(dst).size
+                            done = Int64(size ?? 0)
+                        }
+                        if let done, let total = measurement?.total, total > 0 {
+                            let clamped = pollBox.noteDone(done)
+                            bp(clamped, total)
+                        }
+                        self.transferPeaks.noteCpPoll()
+                        try? await Task.sleep(nanoseconds: Self.cpPollIntervalNanoseconds)
+                    } while !pollBox.cpFinished
+                }
+            } else {
+                pollTask = nil
+            }
+            let outcome = await cpTask.value
+            pollBox.cpFinished = true
+            pollTask?.cancel()
+            // **join 轮询 Task**（在返回/进入阶段 2 之前）：不等 = pollTask 可能仍
+            // 卡在一次 stat/sleep 里，其 bp() 回调携带**本条目 total** 漏到下一条目
+            // → 面板瞬时错帧。cancel 打断 sleep 后 await 收尾（pollTask 不持本锁，
+            // 锁内 await 它无死锁：它跑在 actor/全局执行器上，完成不需我们的锁）。
+            await pollTask?.value
+
             let relayReason: RelayReason
             switch outcome {
             case .ok:
-                self.lastCopyRoute = .serverSide
+                // 收尾帧（done==total 拉回 100%，面板语义同 pump 路）：cp 完成即收口，
+                // 不依赖轮询恰好抓到末值（服务器视图 vs 实际写出）。
+                if let bp = byteProgress, let total = measurement?.total, total > 0 {
+                    _ = pollBox.noteDone(total)
+                    bp(total, total)
+                }
+                // lastCopyRoute 已乐观 = .serverSide，无需再写。
                 return
             case .fail(let msg):
                 // 命令级失败：不回退（pump 会撞同一错误且诊断更差）。
@@ -238,11 +317,18 @@ final class SFTPConnection {
             let writerHandle = try await self.sftp.openFile(dst, flags: [.write, .create, .truncate])
             let reader = PrefetchReader(handle: readerHandle, peaks: self.transferPeaks)
             let writer = WriteWindow(handle: writerHandle, peaks: self.transferPeaks)
+            // 回退泵也有字节帧（旧实现同样全程无进度 = 同一用户症状）：total 用
+            // 测定值（文件 = size；目录求和过则 = 树和；未知 → 0 不定量），done =
+            // writer 已入窗字节（offset 语义 = 已发出，非已确认——与 pump 进度同档）。
+            let relayTotal = measurement?.total ?? 0
+            var pumpDone: Int64 = 0
             do {
                 // pull 同步语义：每次从读窗要一块，nil(EOF) → 空 Data 结束写窗。
                 try await writer.pump {
                     guard let chunk = try await reader.next(want: SFTPTransfer.chunkSize),
                           !chunk.isEmpty else { return Data() }
+                    pumpDone += Int64(chunk.count)
+                    byteProgress?(pumpDone, relayTotal)
                     return chunk
                 }
             } catch {
@@ -254,7 +340,39 @@ final class SFTPConnection {
             try await writer.drain(cancelRemaining: false)
             try? await readerHandle.close()
             try? await writerHandle.close()
+            if let bp = byteProgress, relayTotal > 0 { bp(relayTotal, relayTotal) }
         }
+    }
+
+    /// cp 前的目标量测定：文件 = src stat size；目录 = 源树递归求和快照。
+    /// 任何一步失败 → nil（= total 未知，轮询报不定量帧）。
+    private func cpTotalEstimate(src: String) async throws -> (total: Int64, isDirectory: Bool)? {
+        let attrs: SSHSFTPFileAttributes
+        do { attrs = try await self.sftp.stat(src) } catch { return nil }
+        let isDir = (attrs.permissions ?? 0) & 0o170000 == 0o040000
+        if !isDir { return (Int64(attrs.size ?? 0), false) }
+        let sum = try? await directoryTreeBytes(path: src)
+        return (sum ?? 0, true)
+    }
+
+    /// 远端目录树字节求和（轮询/测定共享面）。上限防超大目录把轮询拖成扫描风暴：
+    /// 深度 24 / 条目 2000，超限 = 求和不可信 → nil（调用方退化不定量帧）。
+    func directoryTreeBytes(path: String, budget: CpTreeBudget = CpTreeBudget()) async throws -> Int64 {
+        guard budget.enterDir() else { throw TCError.unknown("cp poll: tree too deep") }
+        defer { budget.leaveDir() }
+        var total: Int64 = 0
+        let entries = try await self.sftp.listDirectory(path)
+        for entry in entries where entry.filename != "." && entry.filename != ".." {
+            guard budget.consume() else { throw TCError.unknown("cp poll: too many entries") }
+            let joined = path.hasSuffix("/") ? path + entry.filename : path + "/" + entry.filename
+            let a = entry.attributes
+            if (a.permissions ?? 0) & 0o170000 == 0o040000 {
+                total += try await directoryTreeBytes(path: joined, budget: budget)
+            } else {
+                total += Int64(a.size ?? 0)
+            }
+        }
+        return total
     }
 
     /// 在 copyFile 的锁内执行一次远程 cp 并分类结果。**调用方必须已持 lock**。
@@ -515,6 +633,10 @@ final class PumpPeaks: @unchecked Sendable {
     private let lock = NSLock()
     private var read = 0
     private var write = 0
+    /// cp 轮询的历史轮数（同服务器 cp 黑盒期并发 stat 轮询；旧实现无轮询 = 恒 0）。
+    /// 「轮数」而非「在途数」：轮询与 cp 串行交替、每轮至多 1 个 stat 在飞，
+    /// 鉴别面 = 「是否轮询过」而非「并发度」→ 计数 >1 即证轮询发生。
+    private var cpPollRounds = 0
 
     func noteRead(_ inflight: Int) {
         lock.lock(); if inflight > read { read = inflight }; lock.unlock()
@@ -522,9 +644,11 @@ final class PumpPeaks: @unchecked Sendable {
     func noteWrite(_ inflight: Int) {
         lock.lock(); if inflight > write { write = inflight }; lock.unlock()
     }
+    func noteCpPoll() { lock.lock(); cpPollRounds += 1; lock.unlock() }
     var maxReadInflight: Int { lock.lock(); defer { lock.unlock() }; return read }
     var maxWriteInflight: Int { lock.lock(); defer { lock.unlock() }; return write }
-    func reset() { lock.lock(); read = 0; write = 0; lock.unlock() }
+    var cpPollRoundCount: Int { lock.lock(); defer { lock.unlock() }; return cpPollRounds }
+    func reset() { lock.lock(); read = 0; write = 0; cpPollRounds = 0; lock.unlock() }
 }
 
 /// openReader 的预取读窗。**全部状态变更只发生在 src 连接 NSLock 临界区内**
@@ -707,6 +831,52 @@ final class WriteWindow: @unchecked Sendable {
 /// 属性变更全部发生在 lock 临界区内，无并发。
 final class CPSupport {
     var supportsA: Bool?
+}
+
+/// cp 轮询状态盒：done 单调钳 + 结束标志。lastDone 只在轮询 Task 内读写、
+/// cpFinished 块写 Task 读 → 全部过自身 NSLock（PumpPeaks 同纪律：跨线程观测面自带锁）。
+final class CpPollState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastDone: Int64 = -1
+    private var finished = false
+
+    var cpFinished: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return finished }
+        set { lock.lock(); finished = newValue; lock.unlock() }
+    }
+
+    /// 记录并返回单调钳后的 done（实测变小 = 抖动/重建 → 保持已报值）。
+    func noteDone(_ done: Int64) -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        if done > lastDone { lastDone = done }
+        return lastDone
+    }
+}
+
+/// 目录树求和预算（深度 + 条目上限，防轮询把超大目录扫成风暴）。
+/// 引用盒 + 自带锁：递归的多次调用共享同一份预算（值类型预算会让子递归各得
+/// 一份新额度 = 上限失效）。
+final class CpTreeBudget: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maxDepth: Int
+    private let maxEntries: Int
+    private var depth = 0
+    private var entries = 0
+
+    init(maxDepth: Int = 24, maxEntries: Int = 2000) {
+        self.maxDepth = maxDepth; self.maxEntries = maxEntries
+    }
+    func enterDir() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard depth < maxDepth else { return false }
+        depth += 1; return true
+    }
+    func leaveDir() { lock.lock(); depth -= 1; lock.unlock() }
+    func consume() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard entries < maxEntries else { return false }
+        entries += 1; return true
+    }
 }
 
 // MARK: - async → sync 桥接 helper（Task + DispatchSemaphore，不建任何队列）

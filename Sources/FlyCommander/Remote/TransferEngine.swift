@@ -139,12 +139,37 @@ final class TransferEngine {
     ///   同源 copyItem / exec cp 是黑盒，文件级帧里为 nil）；
     /// route = 刚完成文件的实际传输路径（服务器端 cp / 本机中转+原因），非 SFTP 目标恒 nil。
     struct TransferProgressInfo {
+        /// 帧种别：文件完成帧 / 单文件字节帧 / 聚合全进度帧（spec §3.4）。
+        /// 消费侧与测试按种别过滤——`bytesDone == nil` 不再唯一识别文件帧
+        /// （聚合帧也 nil，文件帧可能借用 overall），kind 是显式判据。
+        /// nil = 手工构造的旧形帧（面板测试/演示），不表种别。
+        enum FrameKind { case file, byte, aggregate }
+        let kind: FrameKind?
         let name: String
         let fileDone: Int
         let fileTotal: Int
         let bytesDone: Int64?
         let bytesTotal: Int64?
         let route: CopyRoute?
+        /// 全批次聚合字节进度（预扫描账本产，见 OperationEngine 聚合账本注）。
+        /// 两者同时非 nil（且 total>0）→ 面板进度条/百分比/字节数/速度/剩余改用聚合值
+        /// （跨文件不重置、无 100%→0% 锯齿）；任一 nil = 无全进度 → 面板回退单文件帧。
+        /// 默认 nil = 既有全部构造点/测试零改动。
+        let overallBytesDone: Int64?
+        let overallBytesTotal: Int64?
+        init(kind: FrameKind? = nil, name: String, fileDone: Int, fileTotal: Int,
+             bytesDone: Int64?, bytesTotal: Int64?, route: CopyRoute?,
+             overallBytesDone: Int64? = nil, overallBytesTotal: Int64? = nil) {
+            self.kind = kind
+            self.name = name
+            self.fileDone = fileDone
+            self.fileTotal = fileTotal
+            self.bytesDone = bytesDone
+            self.bytesTotal = bytesTotal
+            self.route = route
+            self.overallBytesDone = overallBytesDone
+            self.overallBytesTotal = overallBytesTotal
+        }
     }
 
     /// 字节级上报节流间隔（秒）。文件级上报（每文件完成）不节流。
@@ -156,6 +181,18 @@ final class TransferEngine {
         var lastByteReportTime: TimeInterval = -ThrottleState.sentinel
         /// 已完成文件数（文件级回调写入；字节帧借用，UI 可同屏显示「第 N/M 个 + 字节%」）。
         var fileDone: Int = 0
+        /// 最近一次聚合账本值（aggregate 闭包写入；文件级帧借用 → 完成瞬间进度条
+        /// 即时反映全进度，不受字节节流闸）。nil = 尚无聚合帧（无全进度）。
+        var overall: (done: Int64, total: Int64)? = nil
+        var lastAggregateReportTime: TimeInterval = -ThrottleState.sentinel
+        /// 聚合帧上报判定：**独立闸**（同间隔另一时钟）。与字节帧共闸必死：
+        /// pump 每块两通道连发，字节先过闸刷新时间戳 → 聚合恒被吞 = 修复不可见。
+        func shouldReportAggregate() -> Bool {
+            let t = now()
+            guard t - lastAggregateReportTime >= TransferEngine.progressThrottleInterval else { return false }
+            lastAggregateReportTime = t
+            return true
+        }
         var now: () -> TimeInterval = { CFAbsoluteTimeGetCurrent() }
         /// 初值/文件完成重置用的哨兵（比任何真实时钟都小 → 下一报必达）。
         static let sentinel: TimeInterval = 1e18
@@ -178,8 +215,19 @@ final class TransferEngine {
     static func byteFrame(done: Int64, total: Int64, fileDone: Int, fileTotal: Int,
                           name: String = "", route: CopyRoute? = nil)
         -> TransferProgressInfo {
-        TransferProgressInfo(name: name, fileDone: fileDone, fileTotal: fileTotal,
+        TransferProgressInfo(kind: .byte, name: name, fileDone: fileDone, fileTotal: fileTotal,
                              bytesDone: done, bytesTotal: total > 0 ? total : nil, route: route)
+    }
+
+    /// 聚合帧构造（全批次账本值）：overall 携聚合 (done,total)，单文件字段留 nil
+    /// （聚合帧不表当前文件进度，面板 overall 优先消费）。internal 供帧管线锁直测。
+    static func aggregateFrame(overallDone: Int64, overallTotal: Int64,
+                               fileDone: Int, fileTotal: Int, route: CopyRoute?)
+        -> TransferProgressInfo {
+        TransferProgressInfo(kind: .aggregate, name: "", fileDone: fileDone, fileTotal: fileTotal,
+                             bytesDone: nil, bytesTotal: nil, route: route,
+                             overallBytesDone: overallDone,
+                             overallBytesTotal: overallTotal > 0 ? overallTotal : nil)
     }
 
     /// 帧路由计划：两端皆 SFTP（含同一服务器 = cp 路的 .serverSide 语义既有可见
@@ -276,11 +324,14 @@ final class TransferEngine {
     /// pump 字节帧携带条目 1 的文件名，面板错名直到条目 2 完成帧），再构造文件完成帧。
     /// 生产 fileProgress 与本函数调用方共享这唯一实现（镜像锁=真代码，非抄写形状）。
     static func fileLevelFrame(nameBox: DirectNameBox, targets: [FileItem],
-                               done: Int, total: Int, route: CopyRoute?) -> TransferProgressInfo {
+                               done: Int, total: Int, route: CopyRoute?,
+                               overall: (done: Int64, total: Int64)? = nil) -> TransferProgressInfo {
         nameBox.name = nil
         let name = (1...targets.count).contains(done) ? targets[done - 1].name : ""
-        return TransferProgressInfo(name: name, fileDone: done, fileTotal: total,
-                                    bytesDone: nil, bytesTotal: nil, route: route)
+        return TransferProgressInfo(kind: .file, name: name, fileDone: done, fileTotal: total,
+                                    bytesDone: nil, bytesTotal: nil, route: route,
+                                    overallBytesDone: overall?.done,
+                                    overallBytesTotal: overall?.total)
     }
 
     /// 兼容入口：无取消/无逐文件进度（既有工具栏语义原样保留）。
@@ -358,8 +409,11 @@ final class TransferEngine {
                                          progress: total == 0 ? 0 : Double(done) / Double(total))) }
                 throttle.fileDone = done
                 // N-a 清盒在 fileLevelFrame 内（与单测锁同一实现）。
+                // overall 借用（文件完成必达帧携最新聚合值 → 完成瞬间进度条即时全进度，
+                // 不受字节节流闸）；nil = 尚无聚合帧（无全进度路）。
                 let info = TransferEngine.fileLevelFrame(nameBox: nameBox, targets: targets,
-                                                         done: done, total: total, route: frameRoute())
+                                                         done: done, total: total, route: frameRoute(),
+                                                         overall: throttle.overall)
                 guard onProgress != nil else { return }
                 // 文件完成 → 重置节流，保证下一文件的首个字节帧立即可报。
                 throttle.lastByteReportTime = -ThrottleState.sentinel
@@ -374,6 +428,17 @@ final class TransferEngine {
                                                     fileTotal: targets.count,
                                                     name: TransferEngine.directName(from: nameBox),
                                                     route: frameRoute())
+                onMain { onProgress?(info) }
+            }
+            // 聚合级（全批次账本帧）：与字节帧**同闸节流**（spec §3.4——同一
+            // shouldReportByte 时钟）。单文件帧合同不受影响（引擎双通道并行发帧）。
+            let aggregate: (Int64, Int64) -> Void = { done, total in
+                throttle.overall = (done, total)
+                guard onProgress != nil, throttle.shouldReportAggregate() else { return }
+                let info = TransferEngine.aggregateFrame(overallDone: done, overallTotal: total,
+                                                         fileDone: throttle.fileDone,
+                                                         fileTotal: targets.count,
+                                                         route: frameRoute())
                 onMain { onProgress?(info) }
             }
 
@@ -402,12 +467,14 @@ final class TransferEngine {
                 if isCopy {
                     try engine.performCopy(targets, to: dstDir, srcSource: srcSource, dstSource: dstSource,
                                             prompt: prompt, progress: fileProgress,
-                                            byteProgress: byteProgress, cancel: cancel)
+                                            byteProgress: byteProgress, cancel: cancel,
+                                            aggregate: onProgress == nil ? nil : aggregate)
                 } else {
                     try engine.performMove(targets, to: dstDir, srcSource: srcSource, dstSource: dstSource,
                                             prompt: prompt, progress: fileProgress,
                                             byteProgress: byteProgress, cancel: cancel,
-                                            onWarning: { warnings.append(($0, $1)) })
+                                            onWarning: { warnings.append(($0, $1)) },
+                                            aggregate: onProgress == nil ? nil : aggregate)
                 }
                 // 警告成品串（"源端残留：X（…）"）在本层（持 L10n 的 AppKit 边界）组装，
                 // 与 CommandRouter 的 warnFormatter 注入同级；放进 onMain 块内，

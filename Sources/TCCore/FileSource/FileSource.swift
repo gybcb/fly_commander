@@ -21,6 +21,14 @@ public protocol FileSource {
     func stat(_ path: TCPath) throws -> FileItem?
     /// 同源内复制（目标已存在 → throw，冲突检查由引擎层先做）。
     func copyItem(from: TCPath, to: TCPath) throws
+    /// 同源内复制 + 字节进度回传（黑盒实现的进度通道）。
+    /// 合同与跨源 pump 的 byteProgress 一致：单文件内 (done, total)，
+    /// total==0 = 总量未知（宁缺毋假）；帧 done 单调、末帧 done==total。
+    /// 默认实现转调旧签名 = 既有后端零改动；能报进度的实现（同机 SFTP cp 的
+    /// stat 轮询）覆盖本方法。**必须是协议要求**（非仅 extension），
+    /// 否则 `any FileSource` 上静态派发 → 实现方永不命中。
+    func copyItem(from: TCPath, to: TCPath,
+                  byteProgress: ((Int64, Int64) -> Void)?) throws
     /// 同源内移动（本地跨卷自动退化为 copy+remove）。
     func moveItem(from: TCPath, to: TCPath) throws
     /// 重命名（目标已存在 → throw）。
@@ -40,4 +48,9 @@ public protocol FileSource {
 public extension FileSource {
     var isRemote: Bool { false }
     var supportsTransfer: Bool { false }
+    /// 默认实现 = 转调旧签名（黑盒给不了字节则不报，维持「同源无字节帧」旧行为）。
+    func copyItem(from: TCPath, to: TCPath,
+                  byteProgress: ((Int64, Int64) -> Void)?) throws {
+        try copyItem(from: from, to: to)
+    }
 }
