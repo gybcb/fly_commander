@@ -542,7 +542,7 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     /// internal（非 private）：暴露给结构守卫测，锁"成品句误投"不变量。
     static let appendCompleteLabels: Set<L10nKey> = [.opCopying, .opMoving]
 
-    /// 工具栏右侧的状态文本（操作进度/结果/已选 N 项）。
+    /// 工具栏右侧的状态文本（操作进度/结果；「已选 N 项」归底部状态栏）。
     private var statusLabel: NSTextField?
 
     func setStatus(_ text: String) {
@@ -552,10 +552,9 @@ final class MainViewController: NSViewController, NSSplitViewDelegate, NSMenuIte
     private func updateBars() {
         let a = workspace.activePane
         view.window?.title = a.path.displayString()
-        // operationTargets（可见感知）：筛选无命中时 marked 已被内核剪空、focusID 仍指向
-        // 隐藏项，operationIDs 会回退成 [focusID]——用它状态栏会谎报「已选 1 项」。
-        let op = a.operationTargets.count
-        statusLabel?.stringValue = op > 0 ? L10n.t(.selectedCount, "\(op)") : ""
+        // 2026-10-09 用户拍板：右上角不再显示「已选 N 项」——底部状态栏已有
+        // 「已选 N 项 · 合计 …」（updateBottomStatus，同款可见感知 operationTargets
+        // 门禁）。statusLabel 槽位保留给 setStatus 的操作进度/结果/回显文案。
         updateBottomStatus(for: a)
     }
 

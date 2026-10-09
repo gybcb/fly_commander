@@ -192,11 +192,13 @@ final class FilterBarWiringTests: XCTestCase {
         XCTAssertEqual(again.state, .off)
     }
 
-    // MARK: - 7. updateBars 用 operationTargets（carry-forward）
+    // MARK: - 7. updateBars：右上角不再显已选（2026-10-09 用户拍板，计数归底部状态栏）
 
-    /// 变异：把 `updateBars()` 的 `a.operationTargets.count` 改回 `a.selection.operationIDs.count`
-    /// → 空可见集时 operationIDs 回退成 [focusID] → 状态栏显示「1 selected」→ 本用例红。
-    func testUpdateBarsIgnoresHiddenFocusWhenFilterHasNoMatch() throws {
+    /// 用户定档：已选计数只归底部状态栏（BottomStatusBarTests 锁），工具栏槽位
+    /// 留给操作进度/结果（setStatus）。本用例锁「即使有实选中项，工具栏
+    /// statusLabel 也恒空」。
+    /// 变异：恢复 updateBars 里 `statusLabel?.stringValue = …selectedCount…` → 红。
+    func testToolbarStatusLabelNeverShowsSelectionCount() throws {
         let suiteName = "fly.test.filterbar.\(UUID().uuidString)"
         let suite = UserDefaults(suiteName: suiteName)!
         defer { suite.removePersistentDomain(forName: suiteName) }
@@ -206,20 +208,16 @@ final class FilterBarWiringTests: XCTestCase {
 
         let vc = MainViewController(sessionStore: store)
         _ = vc.view   // 强制 loadView（按快照恢复到夹具目录）
-        XCTAssertEqual(vc.workspace.active, .left)
         let active = vc.workspace.activePane
-        XCTAssertNotNil(active.selection.focusID, "前置：目录非空 → 焦点落在首项")
-        XCTAssertEqual(active.itemCount, 3)
-
-        active.setFilter("no-such-name-xyz")   // 零命中：可见集空
-        XCTAssertEqual(active.operationTargets.count, 0, "前置：无命中 → 操作目标为空")
-        XCTAssertEqual(active.selection.operationIDs.count, 1,
-                       "前置：selection 回退成 [focusID]，旧写法正是被它骗到")
+        XCTAssertEqual(active.itemCount, 3, "前置：夹具装载")
+        active.toggleMark(at: 0)
+        active.toggleMark(at: 1)
+        XCTAssertEqual(active.operationTargets.count, 2, "前置：确有 2 项选中")
 
         let label = NSTextField(labelWithString: "")
-        vc.attachStatusLabel(label)   // 内部调 updateBars()
+        vc.attachStatusLabel(label)   // 内部走 updateBars()
         XCTAssertTrue(label.stringValue.isEmpty,
-                      "筛选无命中时状态栏不得显示已选计数，实际：\(label.stringValue)")
+                      "工具栏不得显已选计数，实际：\(label.stringValue)")
     }
 
     // MARK: - 8. 标签条按钮 → 活动窗格筛选行的接线
