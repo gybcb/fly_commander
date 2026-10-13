@@ -1,12 +1,14 @@
 #!/bin/bash
-# FlyCommander 一键发布：bump → commit → push → [确认] → tag → push tag → 盯 CI 到出 release。
+# FlyCommander 一键发布（自动无人值守）：bump → commit → push → tag → push tag → 盯 CI 到出 release。
 #
 # 存在意义（2026-10-10）：发布链曾断在「改完忘提交」——代码测绿后停在未提交，
 # tag 从未创建 → Release workflow 从未触发，用户以为「打包没成功」。本脚本把
-# 五步锁成原子动作 + 前置校验，任一步失败即中止（tag 之前零对外副作用）。
+# 五步锁成原子动作 + 前置校验，任一步失败即中止。
 #
 # 用法:  ./scripts/release.sh 0.0.14
-# 闸：  打 tag 前必须人工确认（tag 一推 = 不可逆对外发布）；非交互环境直接拒跑。
+# 自动发布（2026-10-14 拍板）：确认闸已撤——前置校验全绿即一路推到 tag + 盯 CI。
+# 安全全压在第 1 步：脏树 / 非 main / 落后分叉 / 版本格式 / 不高于最大 tag /
+# tag 占用，任一命中即在任何对外副作用之前中止。
 # CI 事实（.github/workflows/release.yml）：构建版本取自 tag（xcodebuild 位置参数
 # 覆盖 MARKETING_VERSION），project.yml 的值只是本地默认——bump 它 = 维持仓库惯例
 # （每版一笔 chore(release) commit），非发布必需但保持本地产物与线上默认一致。
@@ -35,7 +37,13 @@ BRANCH="$(git branch --show-current)"
 git fetch origin main --quiet
 LOCAL="$(git rev-parse main)"
 REMOTE="$(git rev-parse origin/main)"
-[ "$LOCAL" = "$REMOTE" ] || die "main 与 origin/main 不同步（本地 $LOCAL ≠ 远端 $REMOTE）——先 push 或 pull"
+if [ "$LOCAL" != "$REMOTE" ]; then
+  # 允许「本地领先远端」（未推的 commit = 本脚本要发布的正主，第 4 步推）；
+  # 落后或分叉必须人工先处理（自动 rebase/merge = 拿发布链做合并，风险不对等）。
+  git merge-base --is-ancestor "$REMOTE" "$LOCAL" \
+    || die "main 落后或与 origin/main 分叉（本地 $LOCAL ≠ 远端 $REMOTE 且非快进）——先 pull/rebase 理顺再发布"
+  info "main 领先 origin/main $(git rev-list --count "$REMOTE".."$LOCAL") 个 commit（第 4 步推送）"
+fi
 
 # 新版本必须严格高于远端最大 tag（防重发/降级；CI 侧无此闸，靠这里补）
 git fetch origin --tags --quiet
@@ -85,22 +93,14 @@ fi
 git push origin main
 info "main 已推送"
 
-# ---- 5) 人工闸：tag 前确认 ----
-[ -t 0 ] || die "非交互终端：拒绝自动打 tag（发布是不可逆对外动作，须人工确认）"
-echo
-echo "即将打 tag v$VERSION 并推送 —— tag 匹配 v*.*.* 会立即触发对外发布（不可逆）。"
-read -r -p "确认发布 v$VERSION ？[y/N] " ANSWER
-case "$ANSWER" in
-  y|Y) ;;
-  *) die "已取消 tag（main 已含 bump commit；回滚: git revert HEAD 或手动改回后 push）";;
-esac
-
-# ---- 6) tag + push（发布触发点）----
+# ---- 5) tag + push（发布触发点，自动无人值守）----
+# 自动发布（2026-10-14 改）：前置校验全绿即直打 tag，无 tty 人工确认闸。
+# 安全全压在第 1 步——脏树/错版/降级/tag 占用/落后远端任一命中即已在此中止。
 git tag -a "v$VERSION" -m "Release v$VERSION"
 git push origin "v$VERSION"
 info "tag v$VERSION 已推送 → Release workflow 触发"
 
-# ---- 7) 盯 CI 到出结果（触发成功 ≠ 打包成功，一次验完）----
+# ---- 6) 盯 CI 到出结果（触发成功 ≠ 打包成功，一次验完）----
 info "等待 Release run 出现（tag 触发有秒级延迟）…"
 RUN_ID=""
 for _ in $(seq 1 30); do

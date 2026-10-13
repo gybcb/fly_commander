@@ -28,9 +28,10 @@ swift test --filter 'PaneTableViewTests/testKeyboardNav'
 xcodegen generate
 xcodebuild test -scheme FlyCommander -destination 'platform=macOS'
 
-# One-shot release: bump project.yml → commit → push → [confirm] → tag → push tag → watch CI
-# Aborts on any failed precheck (dirty tree / off main / out-of-sync / bad or non-higher
-# version / tag exists). Refuses to tag without a TTY. Requires gh CLI. See scripts/release.sh.
+# One-shot automatic release: bump project.yml → commit → push → tag → push tag → watch CI
+# Aborts on any failed precheck (dirty tree / off main / behind-or-diverged / bad or
+# non-higher version / tag exists). Unattended — tag fires without a confirmation prompt.
+# Requires gh CLI. See scripts/release.sh.
 ./scripts/release.sh 0.0.14
 ```
 
