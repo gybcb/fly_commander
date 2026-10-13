@@ -414,57 +414,94 @@ final class SFTPConnection {
                 return issue.outcome
             }
             defer { Task { try? await session.close() } }  // 结束/取消统一关通道 → 远端 rsync 收 SIGHUP
+            // 看门狗注入面（单测脚本化假步进器；生产 nil = 真 session 三竞速泵）。
+            #if DEBUG
+            let stepper: any RsyncStepper = self.debugPumpFactory.map { $0(self, session) }
+                ?? Self.makeRsyncIdlePump(session: session,
+                                          idleTimeout: Self.rsyncIdleTimeoutSeconds,
+                                          cancel: cancel)
+            #else
+            let stepper: any RsyncStepper = Self.makeRsyncIdlePump(
+                session: session, idleTimeout: Self.rsyncIdleTimeoutSeconds, cancel: cancel)
+            #endif
             let parser = RsyncProgressParser()
             var stderrBuf = Data()
             var exit: UInt32?
             var cancelled = false
-            while true {
+            var idleTimedOut = false
+            loop: while true {
                 if cancel?.isCancelled == true { cancelled = true; break }
-                // nextEvent 真抛 = 通道级异常 → 转 .unavailable（与 copyFile 的 execute
-                // 抛错同政策：能力/通道问题回退 pump，不当传输失败）。
-                // 已知限制（终审 N4 carry）：取消只在事件边界生效，rsync 静默
-                // （无数据/无 exit）时延迟无上界——与 exec cp「等当前文件自然完成」同档。
-                let ev: SSHSessionEvent?
-                do { ev = try await session.nextEvent() }
+                // 每圈 = 事件与「空闲超时 / 取消轮询」三竞速（见 RsyncIdlePump）。
+                // 静默超时 = 本连接随即整体作废（僵尸收包者占死共享收包闸）——治愈
+                // 旧「已知限制 N4：取消/进度延迟无上界」。泵抛错 = nextEvent 真抛
+                // （通道级异常）→ 转 .unavailable（与 copyFile 的 execute 抛错同政策）。
+                let step: RsyncPumpStep
+                do { step = try await stepper.next() }
                 catch {
                     let issue = Self.channelIssue(error)   // 同上（B3）：不写 = 镜像假绿
                     self.lastCopyRoute = issue.route
                     return issue.outcome
                 }
-                guard let ev else { break }   // nil = 通道关
-                switch ev {
-                case .standardOutput(let b): parser.feed(String(decoding: b, as: UTF8.self))
-                case .standardError(let b):
-                    stderrBuf.append(contentsOf: b)
-                    parser.feed(String(decoding: b, as: UTF8.self))
-                case .exitStatus(let s): exit = s
-                case .exitSignal, .endOfFile: break
-                }
-                // 进度桥（合同：`.unavailable` 必须零字节帧）：只在解析出真实
-                // 进度行后才转帧——认证失败/rsync 缺失等「一字节未动」的回退路全程
-                // 静默。帧的**范围**由 progressFrame 按条目类型定（终审 B2：逐条目
-                // 合同，目录不得拿当前文件 total 当分母）；parser 每条目新建 →
-                // fileBytesDone 天然 = 本条目已传。名字（spec 决策 #2）= 本事件周期
-                // 内被数值行消费掉的文件名，拉取后清空（面板空名沿用上一帧）。
-                if parser.fileBytesDone > 0 {
-                    // 名字先拉后发帧：帧名 = 本事件周期被数值行消费掉的文件名
-                    // （spec 决策 #2；pump 路字节帧无名 = 面板沿用上一帧）。
-                    let name = parser.consumedFileName
-                    if let name { onFile?(name) }
-                    parser.consumedFileName = nil
-                    // 零字节帧闸门（Task 4 合同）：`.unavailable` 必须零帧——只在
-                    // 解析出真实进度后才转帧（认证失败/rsync 缺失等全程静默）。
-                    if let bp = byteProgress {
-                        let f = DirectRsync.progressFrame(isDirectory: item.isDirectory,
-                                                         entryDone: parser.fileBytesDone,
-                                                         totalHint: totalHint)
-                        bp(f.done, f.total)
+                switch step {
+                case .event(let ev):
+                    guard let ev else { break loop }   // nil = 通道关（switch 内 break 只出 switch → 必须带标签出圈）
+                    // 事件处理（原 while 循环体原样内移，仅换来源 = 泵）：
+                    switch ev {
+                    case .standardOutput(let b): parser.feed(String(decoding: b, as: UTF8.self))
+                    case .standardError(let b):
+                        stderrBuf.append(contentsOf: b)
+                        parser.feed(String(decoding: b, as: UTF8.self))
+                    case .exitStatus(let s): exit = s
+                    case .exitSignal, .endOfFile: break
                     }
+                    // 进度桥（合同：`.unavailable` 必须零字节帧）：只在解析出真实
+                    // 进度行后才转帧——认证失败/rsync 缺失等「一字节未动」的回退路全程
+                    // 静默。帧的**范围**由 progressFrame 按条目类型定（终审 B2：逐条目
+                    // 合同，目录不得拿当前文件 total 当分母）；parser 每条目新建 →
+                    // fileBytesDone 天然 = 本条目已传。名字（spec 决策 #2）= 本事件周期
+                    // 内被数值行消费掉的文件名，拉取后清空（面板空名沿用上一帧）。
+                    if parser.fileBytesDone > 0 {
+                        // 名字先拉后发帧：帧名 = 本事件周期被数值行消费掉的文件名
+                        // （spec 决策 #2；pump 路字节帧无名 = 面板沿用上一帧）。
+                        let name = parser.consumedFileName
+                        if let name { onFile?(name) }
+                        parser.consumedFileName = nil
+                        // 零字节帧闸门（Task 4 合同）：`.unavailable` 必须零帧——只在
+                        // 解析出真实进度后才转帧（认证失败/rsync 缺失等全程静默）。
+                        if let bp = byteProgress {
+                            let f = DirectRsync.progressFrame(isDirectory: item.isDirectory,
+                                                             entryDone: parser.fileBytesDone,
+                                                             totalHint: totalHint)
+                            bp(f.done, f.total)
+                        }
+                    }
+                case .idleTimedOut: idleTimedOut = true
+                case .cancelled: cancelled = true
                 }
+                if idleTimedOut || cancelled { break }
             }
             // 取消：上抛不回退（defer 已关通道，rsync 收 SIGHUP；非 --partial →
             // rsync 自弃 .*.tmp，目标不留半截）。
             if cancelled { throw TCError.cancelled }
+            // 空闲超时：静默回退 pump（用户拍板 2026-10-09「静默回退，只换色点」）。
+            // 顺序铁律（假绿点防线，同 B3）：route 必须在连接整体作废**之前**写——
+            // dropConnection 后 SFTPSource.lastCopyRoute 读 nil，接缝收尾镜像
+            // （TransferEngine makeDirectSeam）回落 `?? .relayed(.channelGone)` 恒黄，
+            // 恰好合拍；但本连接内的显式写仍是「面板镜像真值」的第一现场，不留白。
+            // 数据安全性：rsync 无 --partial 自弃 .tmp + streamWrite truncate 重写
+            // （bail 违 DirectOutcome.unavailable「零字节」字面合同 = 已批准的例外，
+            // 见 DirectTransfer.swift 合同注）。
+            if idleTimedOut {
+                self.transferPeaks.noteRsyncIdleTimeoutFired()
+                self.lastCopyRoute = .relayed(.channelGone)
+                // 本连接整体作废：僵尸 nextEvent 占死共享收包闸（Traversio 收包路硬编码
+                // 不理 cancellation，只有传输层拆除才叫得醒）→ close 的 detached Task
+                // 跑 sftp.close + conn.close（NWConnection.cancel）顺带收尸。
+                // pump 侧存活 = SFTPSource.runDirectRsync 转发层认超时码 closeConnection
+                // 懒重建（两处缺一 = pump 撞死连接或僵尸永在）。
+                self.close()
+                return .unavailable(DirectOutcome.rsyncIdleTimeoutCode)
+            }
             switch DirectRsync.classify(exitStatus: exit,
                                         stderr: String(decoding: stderrBuf, as: UTF8.self)) {
             case .ok:
@@ -488,6 +525,109 @@ final class SFTPConnection {
     static func channelIssue(_ error: Error) -> (route: CopyRoute, outcome: DirectOutcome) {
         let reason = ServerSideCopy.relayReason(for: error)
         return (.relayed(reason), .unavailable(reason.diagnosticCode))
+    }
+
+    // MARK: - rsync 空闲看门狗（2026-10-09 挂死修复）
+
+    /// 空闲超时阈值：距**上一个 session 事件**的静默上限（非总时长——健康 rsync
+    /// 分钟级持续吐行不误伤）。拍板依据：真机 20G 批 rsync 静默永久挂死现场 +
+    /// Traversio 连接建立档 30s（SSHTimeoutPolicy.defaultConnectionSetupTimeInterval）
+    /// 同量级；健康链路 rsync --progress 节奏 ≤1s，30s 静默 = 对端必死。
+    static let rsyncIdleTimeoutSeconds: TimeInterval = 30
+
+    /// 测试注入点（#if DEBUG）：假步进器工厂（生产恒 nil = 真 session 三竞速泵）。
+    /// 真 SSHSession 无法伪造（Traversio 具体类型，channelIssue 注同源）→ 循环的
+    /// 每圈结果走此缝脚本化（先例 = TransferEngine 接缝 rsync 闭包注入面）。
+    /// 工厂带本连接 = 测试顺手捕获连接引用断言超时收口（路由/计数/close）。
+    #if DEBUG
+    var debugPumpFactory: ((SFTPConnection, SSHSession) -> any RsyncStepper)?
+    #endif
+
+    static func makeRsyncIdlePump(session: SSHSession, idleTimeout: TimeInterval,
+                                  cancel: CancelFlag?) -> RsyncIdlePump {
+        RsyncIdlePump(idleTimeout: idleTimeout, cancel: cancel,
+                      nextEvent: { try await session.nextEvent() })
+    }
+
+    /// 事件泵三态（单测经假步进器直锁循环，生产经 makeRsyncIdlePump 绑真 session）。
+    enum RsyncPumpStep: Sendable {
+        case event(SSHSessionEvent?)      // 正常事件（nil = 通道关）
+        case idleTimedOut                 // 静默超阈值（真 session 路：僵尸收包者待拆闸）
+        case cancelled                    // 看门狗期轮询到用户取消
+    }
+
+    /// 循环依赖的每圈步进协议（生产 = RsyncIdlePump 三竞速；测试 = 脚本序列）。
+    protocol RsyncStepper: Sendable {
+        func next() async throws -> RsyncPumpStep
+    }
+
+    /// 单圈事件泵：nextEvent 与「空闲超时」「取消轮询」三赛跑。**不用
+    /// withThrowingTaskGroup**（FTPTask.withTimeout 同坑注释：组等卡死 body 收尾 =
+    /// 超时假性永不返回）→ 三独立 Task 抢写一次性盒（RaceBox 先例，锁 + 首写生效）。
+    /// 超时赢：真 session 路 nextEvent 的僵尸 Task 占死共享收包闸（Traversio 收包
+    /// 硬编码不理 cancellation），调用方必须随即整连接作废（runDirectRsync 超时路
+    /// close → conn.close → NWConnection.cancel 拆闸收尸）。
+    struct RsyncIdlePump: RsyncStepper {
+        let idleTimeout: TimeInterval
+        let cancel: CancelFlag?
+        let nextEvent: @Sendable () async throws -> SSHSessionEvent?
+
+        func next() async throws -> RsyncPumpStep {
+            let box = RsyncRaceBox()
+            let nextEvent = self.nextEvent
+            let nanos = UInt64(max(0.001, idleTimeout) * 1_000_000_000)
+            let work = Task {
+                do { box.fill(.event(try await nextEvent())) }
+                catch { box.fillError(error) }
+            }
+            // 定时器：Task.sleep 睡满独占 cooperative 线程 → 结果一出立即 cancel（FTP 坑同避）。
+            let timer = Task {
+                try? await Task.sleep(nanoseconds: nanos)
+                if !Task.isCancelled { box.fill(.idleTimedOut) }
+            }
+            let watcher: Task<Void, Never>? = cancel.map { flag in Task {
+                // 取消轮询 = 50ms 档（面板按钮响应级），睡到阈值自退让位定时器。
+                var waited: UInt64 = 0
+                let poll: UInt64 = 50_000_000
+                while waited < nanos {
+                    try? await Task.sleep(nanoseconds: poll)
+                    if Task.isCancelled { return }
+                    if flag.isCancelled { box.fill(.cancelled); return }
+                    waited += poll
+                }
+            } }
+            defer { timer.cancel(); watcher?.cancel() }
+            // work 不 cancel：叫不醒（Traversio Q1），僵尸交连接作废收尸（见类型注释）。
+            return try await box.value()
+        }
+    }
+
+    /// 一次性结果盒（RaceBox 先例 FTPClient.swift:510——private 不可跨文件复用，同形本地盒）。
+    final class RsyncRaceBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var result: Result<RsyncPumpStep, Error>?
+        private var conts: [CheckedContinuation<RsyncPumpStep, Error>] = []
+
+        func fill(_ step: RsyncPumpStep) { setResult(.success(step)) }
+        func fillError(_ error: Error) { setResult(.failure(error)) }
+
+        private func setResult(_ r: Result<RsyncPumpStep, Error>) {
+            lock.lock()
+            guard result == nil else { lock.unlock(); return }
+            result = r
+            let pending = conts; conts = []
+            lock.unlock()
+            for c in pending { c.resume(with: r) }
+        }
+
+        func value() async throws -> RsyncPumpStep {
+            try await withCheckedThrowingContinuation { (k: CheckedContinuation<RsyncPumpStep, Error>) in
+                lock.lock()
+                if let r = result { lock.unlock(); k.resume(with: r); return }
+                conts.append(k)
+                lock.unlock()
+            }
+        }
     }
 
     /// 面板路由镜像写入（接缝用）：把 src 连接算出的 CopyRoute 抄给本连接，
@@ -637,6 +777,8 @@ final class PumpPeaks: @unchecked Sendable {
     /// 「轮数」而非「在途数」：轮询与 cp 串行交替、每轮至多 1 个 stat 在飞，
     /// 鉴别面 = 「是否轮询过」而非「并发度」→ 计数 >1 即证轮询发生。
     private var cpPollRounds = 0
+    /// rsync 空闲看门狗触发次数（2026-10-09 挂死修复；直传泵超时路计数）。
+    private var rsyncIdleTimeoutFired = 0
 
     func noteRead(_ inflight: Int) {
         lock.lock(); if inflight > read { read = inflight }; lock.unlock()
@@ -645,10 +787,12 @@ final class PumpPeaks: @unchecked Sendable {
         lock.lock(); if inflight > write { write = inflight }; lock.unlock()
     }
     func noteCpPoll() { lock.lock(); cpPollRounds += 1; lock.unlock() }
+    func noteRsyncIdleTimeoutFired() { lock.lock(); rsyncIdleTimeoutFired += 1; lock.unlock() }
     var maxReadInflight: Int { lock.lock(); defer { lock.unlock() }; return read }
     var maxWriteInflight: Int { lock.lock(); defer { lock.unlock() }; return write }
     var cpPollRoundCount: Int { lock.lock(); defer { lock.unlock() }; return cpPollRounds }
-    func reset() { lock.lock(); read = 0; write = 0; cpPollRounds = 0; lock.unlock() }
+    var rsyncIdleTimeoutFiredCount: Int { lock.lock(); defer { lock.unlock() }; return rsyncIdleTimeoutFired }
+    func reset() { lock.lock(); read = 0; write = 0; cpPollRounds = 0; rsyncIdleTimeoutFired = 0; lock.unlock() }
 }
 
 /// openReader 的预取读窗。**全部状态变更只发生在 src 连接 NSLock 临界区内**

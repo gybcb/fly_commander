@@ -37,13 +37,19 @@ public final class SFTPSource: FileSource {
     }
 
     /// 转发到内部连接（懒建复用）。路由镜像语义见 SFTPConnection.runDirectRsync 注释。
+    /// **连接回收**：看门狗超时路（rsyncIdleTimeoutCode）在连接层已 close，但僵尸
+    /// nextEvent 占死旧传输的收包闸（Traversio 收包不理 cancellation）→ 本层必须
+    /// `_connection = nil`，pump 的 stat/openReader 走 conn() 懒重建拿全新 TCP。
+    /// dst 端不被 rsync 烧、不动。一次性码 → 下条目起 seam 再懒建新连接。
     func runDirectRsync(item: DirectRsync.ItemTarget, peer: DirectRsync.Peer,
                         totalHint: Int64?,
                         byteProgress: ((Int64, Int64) -> Void)?,
                         onFile: ((String) -> Void)? = nil,
                         cancel: CancelFlag?) throws -> DirectOutcome {
-        try conn().runDirectRsync(item: item, peer: peer, totalHint: totalHint,
-                                  byteProgress: byteProgress, onFile: onFile, cancel: cancel)
+        let out = try conn().runDirectRsync(item: item, peer: peer, totalHint: totalHint,
+                                            byteProgress: byteProgress, onFile: onFile, cancel: cancel)
+        if out.isRsyncIdleTimeout { _connection = nil }
+        return out
     }
 
     /// 接缝回传路由：直传跑在**源**连接上、route 写进源的 lastCopyRoute，
@@ -58,6 +64,17 @@ public final class SFTPSource: FileSource {
     }
 
     #if DEBUG
+    /// 测试用：透传注入假步进器工厂（RsyncStepper 脚本化 runDirectRsync 事件圈）。
+    /// 懒建时序 = 工厂先存本属性，conn() 建连时补注入（首次操作前设置即生效）。
+    var debugPumpFactory: ((SFTPConnection, SSHSession) -> any SFTPConnection.RsyncStepper)? {
+        get { _debugPumpFactory }
+        set {
+            _debugPumpFactory = newValue
+            _connection?.debugPumpFactory = newValue
+        }
+    }
+    private var _debugPumpFactory: ((SFTPConnection, SSHSession) -> any SFTPConnection.RsyncStepper)?
+
     /// 测试用：本实例收到的全部镜像路由（含无连接时的 no-op 写——锁「镜像是否发生 +
     /// 时机」的观测面；无连接时生产写不进连接，但帧管线锁只关心镜像调用本身）。
     private(set) var debugMirroredRoutes: [CopyRoute] = []
@@ -76,6 +93,9 @@ public final class SFTPSource: FileSource {
     private func conn() throws -> SFTPConnection {
         if let c = _connection { return c }
         let c = try SFTPConnection(config: config, store: store)
+        #if DEBUG
+        c.debugPumpFactory = _debugPumpFactory   // 懒建时序补注入（测试脚本化直传泵）
+        #endif
         _connection = c
         return c
     }
